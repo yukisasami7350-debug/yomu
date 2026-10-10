@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.0
+// @version      0.1.1
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.0 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.1 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.0',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.1',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -3620,6 +3620,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   // ---- 聞く ----
+  // 答えの終わりに AI が付ける、文字数の添え書き「(115文字)」を除く(指示文が長さを頼んでいるので、数えて書いてくることがある。工程5a・実機)
+  const TAIL = /[\s\u3000]*[((][\s\u3000]*(?:約|計|全|合計)?[\s\u3000]*[0-90-9]+[\s\u3000]*(?:文字|字)[\s\u3000]*[))][\s\u3000]*$/;
+  const clean = text => { let t = String(text || '').trim(); while (TAIL.test(t)) t = t.replace(TAIL, '').trim(); return t; };
   const flying = new Map();     // いま聞いている最中のもの(同じ語・同じ文を続けて押しても、通信は1回)
   async function send(a, o){
     await settings.load();                                     // 別のタブで変えた設定を取り直す
@@ -3627,7 +3630,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const prompt = prompts.dict({ q: a.q, en: a.en, jp: o.jp, scene: o.scene });
     await gate(model);
     const r = await llm.call({ role: 'dict', model, think: 'none', prompt, json: false, signal: o.signal, onText: typeof o.onText === 'function' ? o.onText : undefined });
-    const text = String(r.text || '').trim();
+    const text = clean(r.text);
     if (r.finish === 'blocked') throw util.error('blocked', '内容で断られた', { sent: true, model: r.model, block: r.block });
     if (!text) throw util.error('parse', '返事が空だった', { sent: true, model: r.model });
     // 途中で切れた答えは、見せるが、残さない(次に押したら、聞き直す)
@@ -3643,7 +3646,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (!isPlain(o)) throw bad('aidict.ask: 渡すものがおかしい');
       const a = args(o.q, o.en, true);
       const hit = await find(a);
-      if (hit.same) return { text: hit.same.text, cached: true, saved: true, partial: false };
+      if (hit.same) return { text: clean(hit.same.text), cached: true, saved: true, partial: false };   // 前の版が残した答えにも、添え書きがある
       if (flying.has(a.key)) return flying.get(a.key);
       const p = send(a, o);
       flying.set(a.key, p);
@@ -3655,12 +3658,13 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     peek: (q, en) => attempt(async () => {
       const hit = await find(args(q, en, false));
       const rec = hit.same || hit.other;
-      return rec ? { text: rec.text, same: !!hit.same, at: rec.at || null } : null;
+      return rec ? { text: clean(rec.text), same: !!hit.same, at: rec.at || null } : null;
     }),
     // 残っている結果の件数(設定の画面や検査で使う)
     count: () => attempt(all).then(list => list.length)
   };
 
+  aidict.clean = clean;
   Yomu.aidict = aidict;
 })();
 
