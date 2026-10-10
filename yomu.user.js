@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.1
+// @version      0.1.2
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.1 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.2 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.1',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.2',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -3620,8 +3620,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   // ---- 聞く ----
-  // 答えの終わりに AI が付ける、文字数の添え書き「(115文字)」を除く(指示文が長さを頼んでいるので、数えて書いてくることがある。工程5a・実機)
-  const TAIL = /[\s\u3000]*[((][\s\u3000]*(?:約|計|全|合計)?[\s\u3000]*[0-90-9]+[\s\u3000]*(?:文字|字)[\s\u3000]*[))][\s\u3000]*$/;
+  // 答えの終わりに AI が付ける、文字数の添え書き「(115文字)」を除く(指示文が長さを頼んでいるので、数えて書いてくることがある。工程5a・実機。全角のかっこと数字は、番号で書く=書く道具が半角に変えるため)
+  const TAIL = /[\s\u3000]*[(\uFF08][\s\u3000]*(?:約|計|全|合計)?[\s\u3000]*[0-9\uFF10-\uFF19]+[\s\u3000]*(?:文字|字)[\s\u3000]*[)\uFF09][\s\u3000]*$/;
   const clean = text => { let t = String(text || '').trim(); while (TAIL.test(t)) t = t.replace(TAIL, '').trim(); return t; };
   const flying = new Map();     // いま聞いている最中のもの(同じ語・同じ文を続けて押しても、通信は1回)
   async function send(a, o){
