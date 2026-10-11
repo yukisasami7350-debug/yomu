@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.7
+// @version      0.1.8
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.7 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.8 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.7',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.8',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -3392,7 +3392,15 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return { start, tab: text.indexOf('\t', start), end };
   }
   const headOf = ln => text.slice(ln.start, ln.tab);
-  const entryOf = ln => ({ head: headOf(ln), mean: text.slice(ln.tab + 1, ln.end) });
+  // 冠詞(a・an・the)の意味が、うしろにある見出しは、それを先に出す(元の辞書の a・an は、answer・ampere・アルファベットの第1字 が先で、
+  //   「不定冠詞」が終わり=工程5b-2 利用者: いちばんよく出る語で、おかしい。辞書データは変えない=端末に、取り直させない)
+  const ARTICLE = String.fromCharCode(0x51A0, 0x8A5E);   // 冠詞
+  function articleFirst(mean){
+    const parts = mean.split(' / ');
+    const i = parts.findIndex(p => p.slice(0, 12).indexOf(ARTICLE) >= 0);
+    return i > 0 ? [parts[i]].concat(parts.slice(0, i), parts.slice(i + 1)).join(' / ') : mean;
+  }
+  const entryOf = ln => ({ head: headOf(ln), mean: articleFirst(text.slice(ln.tab + 1, ln.end)) });
   // 小文字にすると key になる見出しの全部(並んでいる)→ [{ head, mean }]
   function run(key){
     let lo = 0, hi = text.length - 1, hit = null;   // 行の頭の位置で、はさむ
@@ -3427,8 +3435,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const tidy = q => String(q == null ? '' : q).split(RSQ).join("'").replace(/\s+/g, ' ').trim();
   const clean = q => q.replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N}.]+$/u, '');   // 前後の記号を除く(「ひろげる」で付いた , や " など)
 
-  // 頭の1字だけが大文字の語(In・May)。I は、いつも大文字なので外す
-  const CAPPED = /^\p{Lu}[^\p{Lu}]+$/u;
+  // 頭の1字だけが大文字の語(In・May・A)。I は、いつも大文字なので外す
+  const CAPPED = /^\p{Lu}[^\p{Lu}]*$/u;
   // opt.first = 文の頭の語(大文字は、文の頭だからかもしれない)
   function lookup(query, opt){
     if (text === null) return null;
@@ -3442,7 +3450,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const tries = a < 0 ? cands.map(c => ({ q: c.lemma, c }))
       : lemma.candidates(q.slice(b + 1)).map(c => ({ q: q.slice(0, b + 1) + c.lemma, c }))
         .concat(lemma.candidates(q.slice(0, a)).map(c => ({ q: c.lemma + q.slice(a), c })));
-    let hit = find(q, !!(opt && opt.first) && a < 0 && CAPPED.test(q)), via = null;
+    let hit = find(q, !!(opt && opt.first) && a < 0 && q !== 'I' && CAPPED.test(q)), via = null;
     if (!hit && !q.endsWith('.')) hit = find(q + '.');                      // approx → approx.
     if (!hit){
       for (const t of tries){                                               // went → go
@@ -5942,6 +5950,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'word.aiEmpty': '答えが返ってきませんでした。もう一度押してください',
     'word.add': '単語帳に追加',
     'word.added': '単語帳に入っています',
+    'word.addedHint': '外すときは、ここを押す',
     'word.removeArmed': 'もう一度押すと外します',
     'word.removed': '単語帳から外しました',
     'word.addFail': '単語帳に入れられませんでした',
@@ -6411,6 +6420,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.word .acts button { flex: 1 1 0; min-height: ' + BIG + 'px; border-radius: 28px; font-weight: 700; line-height: ' + TIGHT + '; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 16px; text-align: left; }',
       '.word .acts .star { background: ' + v('go') + '; color: ' + v('goInk') + '; font-size: ' + BODY + 'px; }',
       '.word .acts .star.in { background: ' + v('well') + '; color: ' + v('accent') + '; }',
+      '.word .acts .star .two { display: flex; flex-direction: column; }',
+      '.word .acts .star .sub { ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; }',
       '.word .acts .star[data-armed] { background: ' + v('key') + '; color: ' + v('keyInk') + '; }',
 
       // 画面いっぱいに出す板(設定・最初の設定。§9-2・§9-6)。上の行(もどる・題・とじる)は上に、下の行(主なボタン)は下に残し、間を送る。広い画面では、右に寄せた細い板
@@ -7814,7 +7825,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (r.inVocab){
       const on = armed(r);
       starBtn = ui.el('button', { class: 'star in', 'data-act': 'star', 'data-armed': on, disabled: !!r.starring, onclick: () => unstar(p) },
-        [ui.icon('bookmarkCheck', 20, 2), ui.el('span', { text: ui.t(on ? 'word.removeArmed' : 'word.added') })]);
+        [ui.icon('bookmarkCheck', 20, 2), on ? ui.el('span', { text: ui.t('word.removeArmed') })
+          // 入っている間は、押すと外せることを、下に小さく書く(工程5b-2 利用者: 知らなければ、もう一度押そうと思わない)
+          : ui.el('span', { class: 'two' }, [ui.el('span', { text: ui.t('word.added') }), ui.el('span', { class: 'sub', text: ui.t('word.addedHint') })])]);
     } else {
       starBtn = ui.el('button', { class: 'star', 'data-act': 'star', disabled: r.inVocab === null || tooLong || !!r.starring, onclick: () => star(p, true) },
         [ui.icon('bookmarkPlus', 20, 2), ui.el('span', { text: ui.t('word.add') })]);
