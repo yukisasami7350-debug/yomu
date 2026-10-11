@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.11
+// @version      0.1.12
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.11 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.12 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.11',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.12',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -5251,6 +5251,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   let rec = null;               // 今のレベルの保存(PageRec)。訳している間は、書いている最中のもの
   let have = new Map();         // sid → rec.s の1件(今のページの文に付く訳)
   let view = false;             // 英語まじりで出したいか(ブレンド・自動で戻す のあと true)。縦組みの間は、出したくても描かない
+  let lapsed = false;           // 英語まじりで出していたのに、訳の無いレベルへ変えたので、日本語に戻してある(need-translate)。訳のあるレベルへ戻したら、押さなくても、英語まじりに戻す(工程5b-2b)
   let vertical = false;
   let state = 'none';           // 'none'(本文ページでない・止めた)/ 'off'(日本語のまま)/ 'busy'(訳している)/ 'on'(英語まじり)
   let notice = null;            // 今の知らせ { kind, …中身 }(1つだけ。新しいものが前のものを置きかえる。失敗の種類は cause)
@@ -5570,7 +5571,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     }
     const j = job = { kind, ctrl: new AbortController(), rec: work, got: [], held: [], model };
     const view0 = view;
-    view = true;
+    view = true; lapsed = false;
     setState('busy');
     if (switched) tell('switched-lite', switched);
     paint();
@@ -5721,7 +5722,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     drawQ.length = 0;
     if (render.attached()){ render.detach(); logHook('close'); }
     unhook.splice(0).forEach(fn => { try { fn(); } catch (e){} });
-    info = null; model = null; ranks = null; rec = null; have = new Map(); view = false; vertical = false; orig = false; saved = {};
+    info = null; model = null; ranks = null; rec = null; have = new Map(); view = false; lapsed = false; vertical = false; orig = false; saved = {};
     clearNotice();                           // 知らせが出ていたら、消したことを知らせる(状態が none のままでも、画面が古い知らせを残さないように)
     setState('none');
     return done.then(() => status());
@@ -5785,7 +5786,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (have.size){
         if (!view){
           clearNotice();
-          view = true; setState(job ? 'busy' : 'on'); paint();
+          view = true; lapsed = false; setState(job ? 'busy' : 'on'); paint();
           quiet(store.pages.touch(info.pageKey, level));
           if (!job) partialNotice(rec);
         }
@@ -5823,7 +5824,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (!ready()) return;
       if (arming) cancels++;                     // 確かめの最中: 送らない(送ってから英語に戻るのを防ぐ)
       if (job) job.ctrl.abort();
-      view = false;
+      view = false; lapsed = false;
       paint();
       clearNotice(['vertical', 'partial']);
       setState(job ? 'busy' : 'off');
@@ -5868,9 +5869,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       } finally { if (my === epoch) switching = false; }
       if (!ok) return status();
       clearNotice();
-      if (view){
-        if (have.size){ repaint(); setState('on'); quiet(store.pages.touch(info.pageKey, level)); if (vertical) tell('vertical'); else partialNotice(rec); }
-        else { view = false; paint(); setState('off'); tell('need-translate', { level: id }); }
+      if (view || lapsed){
+        if (have.size){ view = true; lapsed = false; repaint(); setState('on'); quiet(store.pages.touch(info.pageKey, level)); if (vertical) tell('vertical'); else partialNotice(rec); }
+        else { lapsed = true; view = false; paint(); setState('off'); tell('need-translate', { level: id }); }
       }
       logHook('change', { level: id });
       emit('state', status());
@@ -5976,7 +5977,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'note.limitMinSoon': '混み合っています。少し待ってから、もう一度押してください',
     'note.switched': '{from} が今日の上限のため、{to} で訳しました',
     'note.partial': '残り {n} 文は未訳です',
-    'note.needTranslate': 'このレベルではまだ訳していません',
+    'note.needTranslate': 'この目標では、まだ訳していません',
     'note.blocked': 'この話は、AI が内容を理由に訳せませんでした(届いた分は出ています)',
     'note.idioms': '熟語さがしができませんでした(英文は読めます)',
     'note.idiomsLimit': '今日の上限のため、熟語さがしができませんでした(英文は読めます)',
