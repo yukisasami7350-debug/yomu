@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.5
+// @version      0.1.6
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.5 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.6 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.5',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.6',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -197,6 +197,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     pages: {
       keep: { idb: 300, ls: 40 },  // 訳したページを何件まで残すか(§8-4)
       evictShare: 0.1, evictMin: 3,   // 保存がいっぱいのとき、1回に捨てる割合と、最少の件数(§8-1)
+      drawLateMs: 250,             // 届いた文を描くのを、画面の1コマの合図が来なくても、これだけ待ったら描く(ms。裏に回っている間は、合図が来ない)
       saveEveryMs: 3000
     },
     voice: { rate: 0.95, delayMs: 15 },   // 読み上げの速さの初期値(§8-3)・iPhone 以外で、鳴らし始めを遅らせる時間(止める処理とぶつからないように。§9-7)
@@ -5176,7 +5177,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   function drawSoon(fn){
     drawQ.push(fn);
     if (drawT) return;
-    drawT = win && win.requestAnimationFrame ? { raf: win.requestAnimationFrame(drawNow) } : { t: setTimeout(drawNow, 16) };
+    // 画面の1コマの合図(requestAnimationFrame)だけに頼らない: ページが裏に回っている間は、合図が来ない(戻っても来ないことがある=工程5b-2
+    //   iPhone で、訳している間にほかのアプリへ行って戻ると、その間に届いた文が日本語のままだった、という利用者の報告)。時間でも描く。表に戻ったときにも描く(下の onShow)
+    drawT = { t: setTimeout(drawNow, win && win.requestAnimationFrame ? config.pages.drawLateMs : 16) };
+    if (win && win.requestAnimationFrame) drawT.raf = win.requestAnimationFrame(drawNow);
   }
   function drawNow(){
     if (drawT){
@@ -5349,7 +5353,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       mo.observe(doc.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
       unhook.push(() => mo.disconnect());
     }
-    const onHide = () => { if (doc.visibilityState === 'hidden') flush(); };
+    const onHide = () => { if (doc.visibilityState === 'hidden') flush(); else drawNow(); };   // 表に戻った: 裏にいる間に届いた文を、描く
     doc.addEventListener('visibilitychange', onHide);
     unhook.push(() => doc.removeEventListener('visibilitychange', onHide));
     if (win){
