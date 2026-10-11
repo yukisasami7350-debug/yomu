@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.2
+// @version      0.1.3
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.2 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.3 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.2',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.3',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -231,6 +231,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     ui: {                          // 操作部(§9-2・§9-3)
       bottom: 12,                  // 操作部の、画面の下のふちからの高さ(px。Safari の帯と安全な余白の上)
       wideMin: 560, wideWidth: 358,   // 画面の幅がこれ以上なら、操作部を右下に寄せて、この幅にする(px)
+      themePick: false,            // テーマを手で選ぶ所を出すか(false = いつもサイトの色に合わせる。手で選ぶと、サイトの色と合わずに浮く=設計メモ 2-5。機能は残す: サイトを足すときに確かめ直す)
       hideOnScroll: true,          // 下へ読み進めている間は、操作部を隠す(設計メモ 2-5)
       hideDy: 40, showDy: 12,      // 下へこれだけ送ったら隠す・上へこれだけ戻したら出す(px)
       quietMs: 600,                // 操作のすぐあと(表示が変わって、読んでいる場所を合わせ直している間)は、隠す・出すを決めない
@@ -5319,9 +5320,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     saved = sv;
     return true;
   }
-  // 今使う色の組: 設定が「サイトの色に合わせる」なら、本文の背景の色に近い組(読めなければ、初めの組)
+  // 今使う色の組: 手で選ぶ所を出していない(config.ui.themePick が false)か、設定が「サイトの色に合わせる」なら、本文の背景の色に近い組(読めなければ、初めの組)
   function themeOf(){
-    if (themeSet !== theme.AUTO) return theme.has(themeSet) ? themeSet : theme.initial;
+    if (config.ui.themePick && themeSet !== theme.AUTO) return theme.has(themeSet) ? themeSet : theme.initial;
     return info ? theme.pick(sites.background(info, doc)) : theme.initial;
   }
   // 色の組を決め直す(設定を変えた・サイトの側で背景の色を変えた)。変わったら、描いて知らせる
@@ -5920,7 +5921,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'word.retry': 'もう一度',
     'word.say': '発音を聞く',
     'word.saySent': 'この文を聞く',
-    'word.ask': '文脈の意味をAIに聞く',
+    'word.ask': 'この文での意味をAIに聞く',
     'word.asking': 'AIに聞いています…',
     'word.aiSame': 'AI(この文での意味)',
     'word.aiOther': 'AI(前に、別の文で聞いた意味)',
@@ -6384,7 +6385,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.word .alert svg { ' + iconTop(BASE) + ' }',
       '.word .alert .msg { flex: 1 1 auto; min-width: 0; ' + t(BODY, 700, BASE) + ' }',
       '.word .alert .link { align-self: center; flex: none; margin: 0 -8px 0 0; color: inherit; text-decoration: underline; }',
-      // 「文脈の意味をAIに聞く」は、意味のすぐ下(答えが出る所)に置く。通信の数は、メニューの札と同じく、下に小さく
+      // 「この文での意味をAIに聞く」は、意味のすぐ下(答えが出る所)に置く。通信の数は、メニューの札と同じく、下に小さく
       '.word .ask { align-self: flex-start; margin-top: 12px; min-height: ' + BTN + 'px; border-radius: ' + PILL + '; background: ' + v('soft') + '; color: ' + v('softInk') + '; ' + t(BODY, 700, TIGHT) + ' display: flex; align-items: center; gap: 8px; padding: 4px 20px 4px 16px; text-align: left; }',
       '.word .ask .two { display: flex; flex-direction: column; }',
       '.word .ask .cost { ' + t(CAP, 500, TIGHT) + ' }',
@@ -7298,7 +7299,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     moreLabel.textContent = ui.t('menu.more', { n: s.n.missing });
     idiomsBtn.hidden = !(has && (s.idioms === 'failed' || s.idioms === 'partial'));   // 熟語さがしが失敗・途中のときだけ(§9-3)
     idiomsBtn.disabled = s.busy;
-    lookVal.textContent = s.theme === Y.theme.AUTO || !Y.theme.has(s.theme) ? ui.t('look.autoShort') : ui.t('theme.' + s.theme);   // 行の右に、今のテーマ(キャンバス3ページ目)
+    lookVal.textContent = !Y.config.ui.themePick || s.theme === Y.theme.AUTO || !Y.theme.has(s.theme) ? ui.t('look.autoShort') : ui.t('theme.' + s.theme);   // 行の右に、今のテーマ(キャンバス3ページ目)
   }
 
   ui.part(NAME, {
@@ -7355,6 +7356,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   function build(){
+    const pick = !!Y.config.ui.themePick;
     picks = STYLES.map(([name, key, cls]) => card(name, key, cls));
     autoTick = tickOf();
     autoNow = ui.el('span', { class: 'now' });
@@ -7371,16 +7373,18 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         ui.el('div', { class: 'heading', text: ui.t('menu.look') }),
         ui.el('button', { class: 'iconbtn end', 'data-act': 'close', 'data-focus': '', 'aria-label': ui.t('note.close'), onclick: () => ui.unsheet(NAME) }, [ui.icon('close', 20, 2)])
       ]),
+    ].concat(pick ? [                                        // テーマを手で選ぶ所(config.ui.themePick。出さないときは、いつもサイトの色に合わせる)
       ui.el('div', { class: 'label', text: ui.t('look.theme') }),
       autoBtn,
-      ui.el('div', { class: 'grid4' }, sets.map(x => x.b)),
+      ui.el('div', { class: 'grid4' }, sets.map(x => x.b))
+    ] : [], [
       ui.el('div', { class: 'label', text: ui.t('look.style') }),
       ui.el('div', { class: 'grid2' }, picks.map(p => p.b)),
       ui.el('div', { class: 'label', text: ui.t('look.font') }),
       f.box,
       ui.el('div', { class: 'label', text: ui.t('look.size') }),
       z.box
-    ]);
+    ]));
   }
   function sync(s){
     picks.forEach(p => {
@@ -7511,7 +7515,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 // ui/word.js — 単語の板(部品の約束 §9-4。キャンバス 4・4b・3ページ目の「単語の板 — もとの語」)
 //   英文の語をタップすると、下から出る。持つのは「どの文(sid)の、何番目から何番目の語か」。「前へ/後ろへひろげる」は、この範囲を1語ずつ広げる(通信なし)。
 //   意味を出す順(設計メモ 2-4): 範囲が熟語と同じ → 熟語さがしの意味/内蔵辞書(活用形は原形に直して引く。初めての1回だけ、辞書を取ってくる)/無ければ「内蔵辞書にありません」。
-//   「文脈の意味をAIに聞く」は、押したときだけ1回通信する(保存にあれば、通信なしで出す。板を閉じたら・範囲を変えたら、中止)。「単語帳に追加」は、保存だけ(復習はフェーズ2)。
+//   「この文での意味をAIに聞く」は、押したときだけ1回通信する(保存にあれば、通信なしで出す。板を閉じたら・範囲を変えたら、中止)。「単語帳に追加」は、保存だけ(復習はフェーズ2)。
 //   音声(ui/speech.js): 「発音を聞く」(選んだ語句)・「この文を聞く」。同じボタンをもう一度押したら止める。板を閉じたら・範囲を変えたら、止める。
 //   品詞の札は出さない(内蔵辞書に品詞の欄が無い=2026-10-09 利用者)。試験の級・「この作品で○回目」の場所は、空けてある。
 //   外から来た文字(辞書・訳)は textContent だけで出す。板が持つ文の英文が変わったら(訳し直し)、閉じる
@@ -7681,7 +7685,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     setTimeout(() => { if (r.armedAt === at){ r.armedAt = 0; if (cur === mine && mine.r === r && isOpen()) paint(); } }, cfg.ui.twoTapMs);
     paint();
   }
-  // 「文脈の意味をAIに聞く」: 意味のすぐ下(答えが出る所)。通信の数は、下に小さく。聞いている間・この文での答えが出ているときは、出さない
+  // 「この文での意味をAIに聞く」: 意味のすぐ下(答えが出る所)。通信の数は、下に小さく。聞いている間・この文での答えが出ているときは、出さない
   function askPart(){
     const r = cur.r;
     const done = !!(r.ai && r.ai.same && !r.ai.partial);         // この文での答えが、もう出ている(聞き直す口は、無い)。途中で切れた答えは、聞き直せる
