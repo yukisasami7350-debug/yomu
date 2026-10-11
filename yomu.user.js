@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.4
+// @version      0.1.5
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.4 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.5 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.4',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.5',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -243,7 +243,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       twoTapMs: 4000,              // 2回タップで確かめる操作の、2回目を待つ時間
       twoTapMinMs: 350,            // 1回目から、これより早い2回目は数えない(指が弾んだ二度押し)
       guardMs: 300,                // 入口の台が出てきたすぐあと(隠れていたのが出た・中止で戻った)は、この間「ブレンド」を受けつけない(押しまちがいで回数を使わない。§9-3)
-      dragPx: 6,                   // 指でつまみに触れたあと、横にこれだけ動いたら、つまみを動かし始める(縦に送り始めたときは、動かさない)
+      foldMs: 4000,                // 操作部: ひらいたつまみを、さわらずにこれだけたったら、たたむ(ロゴと「60%」だけの形に。設計メモ 2-5)
+      lift: { on: true, max: 160, everyMs: 2000 },   // サイトが画面の下に固定しているもの(広告など)があれば、その上へ、操作部を上げる(上げる高さの上限 px・見に行く間隔)
       noteMax: 120,                // 知らせの行に添える、相手の返した文の長さ
       meanLines: 3,                // 単語の板: 内蔵辞書の意味を、はじめに何行まで出すか(残りは「ほかの意味も見る」)
       meanChars: 44,               // 単語の板: 内蔵辞書の意味の1行を、はじめに何文字まで出すか(長い行は、区切りのよい所で切って「…」。全部は「ほかの意味も見る」「つづきを見る」)
@@ -393,7 +394,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       quietInk: '#1F2A5C', quietIdiom: '#0B7A5B', quietBack: '#2F3E9E', quietChipBd: '#C9CCD6', quietChipInk: '#5B6072',
       // 操作部・板・メニュー
       panel: '#FFFFFF', panelInk: '#14181F', panelMuted: '#5A6372',
-      well: '#F3F5F8', line: '#E3E7ED', grip: '#D5DAE2',
+      well: '#F3F5F8', line: '#E3E7ED', grip: '#D5DAE2', ring: '#878D98',
       accent: '#0B6E49', soft: '#E8EBFF', softInk: '#2A38B0',
       go: '#0B8457', goInk: '#FFFFFF', key: '#3D4EDB', keyInk: '#FFFFFF',
       warnBg: '#FDECEA', warnInk: '#A5281B',                    // うまくいかなかったことの知らせ(板の中。答えや意味と、見分けがつくように)
@@ -412,7 +413,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       wait: '#A9BE86', backBg: '#E4E3F3', backBd: '#B9BCE8', backInk: '#2A38B0',
       quietInk: '#2B3470', quietIdiom: '#4E7F2E', quietBack: '#2F3E9E', quietChipBd: '#CFC6AC', quietChipInk: '#6A5D49',
       panel: '#FBF6E6', panelInk: '#2E261B', panelMuted: '#6A5D49',
-      well: '#EFE6CF', line: '#E3D9BD', grip: '#D3C7A6',
+      well: '#EFE6CF', line: '#E3D9BD', grip: '#D3C7A6', ring: '#8D826F',
       accent: '#3F6622', soft: '#E4E3F3', softInk: '#2A38B0',
       go: '#3F6F22', goInk: '#FFFFFF', key: '#3D4EDB', keyInk: '#FFFFFF',
       warnBg: '#F8E1D8', warnInk: '#9C2A1C',
@@ -431,7 +432,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       wait: '#2F6B55', backBg: '#2B3166', backBd: '#4A54A8', backInk: '#C5CBFF',
       quietInk: '#B9C3FF', quietIdiom: '#3CC28E', quietBack: '#C5CBFF', quietChipBd: '#454A55', quietChipInk: '#A3AAB7',
       panel: '#22252C', panelInk: '#ECEEF2', panelMuted: '#A3AAB7',
-      well: '#2D313A', line: '#363B45', grip: '#454A55',
+      well: '#2D313A', line: '#363B45', grip: '#454A55', ring: '#757A85',
       accent: '#7FDDB4', soft: '#2B3166', softInk: '#C5CBFF',
       go: '#0B8457', goInk: '#FFFFFF', key: '#5565EC', keyInk: '#FFFFFF',
       warnBg: '#4A1F1B', warnInk: '#FFB4A8',
@@ -450,7 +451,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       wait: '#7CC7A6', backBg: '#D9DBFA', backBd: '#AEB6F5', backInk: '#2A38B0',
       quietInk: '#1F2A5C', quietIdiom: '#0B7A5B', quietBack: '#2F3E9E', quietChipBd: '#B4C3CF', quietChipInk: '#52606C',
       panel: '#F4F9FC', panelInk: '#14202A', panelMuted: '#52606C',
-      well: '#E3EDF4', line: '#D3E0EA', grip: '#BCCCD8',
+      well: '#E3EDF4', line: '#D3E0EA', grip: '#BCCCD8', ring: '#7E8993',
       accent: '#0B6E49', soft: '#DEE3FF', softInk: '#2A38B0',
       go: '#0B8457', goInk: '#FFFFFF', key: '#3D4EDB', keyInk: '#FFFFFF',
       warnBg: '#FBE4E1', warnInk: '#A5281B',
@@ -3411,10 +3412,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return out;
   }
   // q そのもの → 全部が小文字の見出し → 最初の1つ、の順で選ぶ。残りは others
-  function find(q){
+  //   low(文の頭の語)なら、全部が小文字の見出しを先に(In = indium より in)。無ければ、いつもの順
+  function find(q, low){
     const list = run(fold(q));
     if (!list.length) return null;
-    const best = list.find(e => e.head === q) || list.find(e => e.head === fold(e.head)) || list[0];
+    const exact = list.find(e => e.head === q), lower = list.find(e => e.head === fold(e.head));
+    const best = (low ? lower || exact : exact || lower) || list[0];
     return { best, others: list.filter(e => e !== best) };
   }
   // 「goの過去」「leafの複数形」のように、ほかの語を指しているだけの意味 → 指している語
@@ -3423,7 +3426,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const tidy = q => String(q == null ? '' : q).split(RSQ).join("'").replace(/\s+/g, ' ').trim();
   const clean = q => q.replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N}.]+$/u, '');   // 前後の記号を除く(「ひろげる」で付いた , や " など)
 
-  function lookup(query){
+  // 頭の1字だけが大文字の語(In・May)。I は、いつも大文字なので外す
+  const CAPPED = /^\p{Lu}[^\p{Lu}]+$/u;
+  // opt.first = 文の頭の語(大文字は、文の頭だからかもしれない)
+  function lookup(query, opt){
     if (text === null) return null;
     const raw = tidy(query);
     if (!raw || raw.length > C.qMax) return null;
@@ -3435,7 +3441,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const tries = a < 0 ? cands.map(c => ({ q: c.lemma, c }))
       : lemma.candidates(q.slice(b + 1)).map(c => ({ q: q.slice(0, b + 1) + c.lemma, c }))
         .concat(lemma.candidates(q.slice(0, a)).map(c => ({ q: c.lemma + q.slice(a), c })));
-    let hit = find(q), via = null;
+    let hit = find(q, !!(opt && opt.first) && a < 0 && CAPPED.test(q)), via = null;
     if (!hit && !q.endsWith('.')) hit = find(q + '.');                      // approx → approx.
     if (!hit){
       for (const t of tries){                                               // went → go
@@ -4644,7 +4650,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // 英文: マーカー(初期値)
     R + ' > .yomu-en { font-family: ' + FE + '; font-size: calc(var(--yomu-en-base, ' + BASE.sans + ') * var(--yomu-en-mul, ' + MUL.m + ') * 1em); font-weight: 500; font-style: normal; color: ' + c('enInk') + '; background: ' + c('enBg') + '; border-radius: 6px;'
       + ' padding: 0.15em 0.3em; margin: 0 2px; -webkit-box-decoration-break: clone; box-decoration-break: clone; letter-spacing: normal; text-indent: 0; line-height: 1;'
-      + ' -webkit-text-emphasis: none; text-emphasis: none; word-break: normal; overflow-wrap: break-word; }',
+      + ' -webkit-text-emphasis: none; text-emphasis: none; word-break: normal; overflow-wrap: break-word; -webkit-hyphens: manual; hyphens: manual; }',
     R + ' .yomu-w { cursor: pointer; padding: 0.25em 0; }',
     R + ' .yomu-i { font-weight: 700; border-bottom: 2px solid ' + c('idiom') + '; padding-bottom: 0; }',
     // 利用者が「あ」で戻した日本語
@@ -5811,6 +5817,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'dock.ratio': '英語の割合',
     'dock.ratioValue': '{v}%',
     'dock.orig': '原文',
+    'dock.fold': '英語の割合 {v}%',
     'dock.progress': '英訳しています',
     'dock.count': '{got} / {total} 文',
     'dock.cancel': '中止する',
@@ -5859,7 +5866,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'menu.page': 'このページ',
     'menu.offline': 'オフライン保存',
     'menu.redo': '訳し直す',
-    'menu.redoArmed': 'もう一度押す',
+    'menu.redoArmed': 'もう一度押すと、訳し直します',
     'menu.more': '続きを訳す(残り {n} 文)',
     'menu.idioms': '熟語さがしをやり直す',
     'menu.look': '見た目',
@@ -6261,12 +6268,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.serif { font-family: ' + FS + '; }',
 
       // 画面の下の置き場(知らせ・入口のボタン・操作部を、下から積む)。下へ読み進めている間は、下へ引っこめる(data-away)
-      '.bay { position: fixed; left: calc(16px + env(safe-area-inset-left, 0px)); right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(' + u.bottom + 'px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column;'
+      '.bay { position: fixed; left: calc(16px + env(safe-area-inset-left, 0px)); right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(' + u.bottom + 'px + var(--lift, 0px) + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column;'
         + ' align-items: stretch; gap: ' + GAP + 'px; pointer-events: none; transition: transform ' + ms(MO.bay) + ' ease-out, opacity ' + ms(MO.bay) + ' ease-out, visibility 0s linear 0s; }',
       // 段(上から 知らせ・操作部)。空いている所のタップは、下のページに通す(押せるのは、部品そのものだけ)
       '.slot { display: flex; flex-direction: column; align-items: stretch; gap: ' + GAP + 'px; pointer-events: none; }',
       '.slot > * { pointer-events: auto; }',
-      '.bay[data-away] { transform: translateY(calc(100% + ' + (u.bottom + 28) + 'px)); opacity: 0; visibility: hidden; transition-delay: 0s, 0s, ' + ms(MO.bay) + '; }',   // 隠れたあとは、キーボードでも入れない
+      '.bay[data-away] { transform: translateY(calc(100% + var(--lift, 0px) + ' + (u.bottom + 28) + 'px)); opacity: 0; visibility: hidden; transition-delay: 0s, 0s, ' + ms(MO.bay) + '; }',   // 隠れたあとは、キーボードでも入れない
       '.bay[data-away] .slot > * { pointer-events: none; }',
       // ロゴ(重なる2枚の栞)
       '.mark .a { fill: ' + v('logoA') + '; }',
@@ -6562,8 +6569,16 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.pill { height: ' + BTN + 'px; flex: none; padding: 0 16px 0 12px; border-radius: ' + PILL + '; background: ' + v('well') + '; color: ' + v('panelInk') + ';'
         + ' ' + t(BODY, 700, TIGHT) + ' display: flex; align-items: center; gap: 4px; white-space: nowrap; }',
       '.pill[aria-pressed="true"] { background: ' + v('key') + '; color: ' + v('keyInk') + '; }',
+      // ロゴの丸には、細い輪(丸の地は、台の地と明るさがほとんど同じ=比 1.1〜1.2。輪は 3 以上。工程5b-2: 暗いテーマで、丸が見分けにくかった)
+      '.round[data-act="menu"] { box-shadow: inset 0 0 0 1px ' + v('ring') + '; }',
+      // たたんだ形(ロゴと、今の割合)。ひらくと、つまみと「原文」(今の割合のボタンは、消える)
+      '.dock[data-fold] { align-self: flex-end; }',
+      '.dock[data-fold] .ratio, .dock[data-fold] .pill[data-act="orig"], .dock:not([data-fold]) .pct { display: none; }',
+      '.pct { padding: 0 16px; gap: 8px; }',
+      '.pct .mini { position: relative; width: 24px; height: 4px; border-radius: 2px; background: ' + v('grad') + '; }',
+      '.pct .mini i { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; transform: translate(-50%, -50%); border-radius: 50%; background: ' + v('knob') + '; box-shadow: ' + v('knobShadow') + '; }',
       // 割合のつまみ(見た目は .track と .knob。input は、キーボードと読み上げのために置く=見えない)
-      '.ratio { flex: 1 1 auto; min-width: 0; position: relative; height: ' + BTN + 'px; cursor: pointer; touch-action: pan-y; -webkit-user-select: none; user-select: none; }',
+      '.ratio { flex: 1 1 auto; min-width: 0; position: relative; height: ' + BTN + 'px; cursor: pointer; touch-action: none; -webkit-user-select: none; user-select: none; }',
       '.ratio .track { position: absolute; left: 0; right: 0; top: ' + ((BTN - 8) / 2) + 'px; height: 8px; border-radius: 4px; background: ' + v('grad') + '; }',
       '.ratio input { position: absolute; left: 0; top: 0; width: 100%; height: ' + BTN + 'px; margin: 0; opacity: 0; pointer-events: none; }',
       '.ratio .knob, .ratio .tip { left: calc(' + (KNOB / 2) + 'px + (100% - ' + KNOB + 'px) * var(--p, 0)); }',
@@ -6697,6 +6712,34 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     away = v;
     if (!v) backAt = Date.now();                         // 出てきた時刻(fresh が使う)
     if (v) bay.setAttribute('data-away', ''); else bay.removeAttribute('data-away');
+  }
+  // サイトが、画面の下に固定しているもの(なろうの、ついてくる広告 など)があれば、その上へ、置き場を上げる(広告と、その「×」を隠さない。工程5b-2)
+  //   画面の下のふちのすぐ上(左・まん中・右)に、いちばん手前で当たるものを見て、固定(fixed・sticky)された親をさがす。画面の下半分にあって、下のふちに付いているものだけ
+  let lifted = 0;
+  function liftNow(){
+    const L = cfg.ui.lift;
+    if (!L || !L.on || typeof doc.elementsFromPoint !== 'function' || !win.getComputedStyle) return 0;
+    const W = win.innerWidth || 0, H = win.innerHeight || 0;
+    let best = 0;
+    [0.25, 0.5, 0.75].forEach(k => {
+      const top = (doc.elementsFromPoint(W * k, H - 4) || []).find(e => e !== host);
+      for (let n = top; n && n !== doc.body && n !== doc.documentElement; n = n.parentElement){
+        const pos = win.getComputedStyle(n).position;
+        if (pos !== 'fixed' && pos !== 'sticky') continue;
+        const r = n.getBoundingClientRect();
+        if (r.bottom >= H - 2 && r.top >= H / 2 && r.height > 0) best = Math.max(best, H - r.top);
+        break;
+      }
+    });
+    return Math.min(L.max, Math.ceil(best / cfg.ui.grid) * cfg.ui.grid);
+  }
+  function lift(){
+    if (!bay || sheetNow) return;                          // 板が出ている間は、板(こちらの物)が下のふちを覆っている
+    let v = 0;
+    try { v = liftNow(); } catch (e){ v = lifted; }
+    if (v === lifted) return;
+    lifted = v;
+    if (v) bay.style.setProperty('--lift', v + 'px'); else bay.style.removeProperty('--lift');
   }
   function onScroll(){
     const y = scrollTop(), dy = y - lastY;
@@ -6882,6 +6925,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     doc.addEventListener('click', onDocClick);
     doc.addEventListener('keydown', onDocKey);
     win.addEventListener('scroll', onScroll, { passive: true });
+    win.addEventListener('resize', lift);
+    if (cfg.ui.lift && cfg.ui.lift.on){ const t = setInterval(lift, cfg.ui.lift.everyMs); if (t && t.unref) t.unref(); }   // 広告は、あとから出る・閉じられる(unref = 検査の node を、待たせない)
+    lift();
     lastY = scrollTop();
     draw();
   }
@@ -6915,6 +6961,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     el, icon, mark,
     hold, quiet, draw, run,
     away: () => away,
+    lift, lifted: () => lifted,
     fresh: () => Date.now() - backAt < cfg.ui.guardMs,   // 隠れていた置き場が、出てきたすぐあとか(回数を使うボタンが、押しまちがいを受けないために聞く)
     status: () => cur,
     mounted: () => !!host,
@@ -6926,7 +6973,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
 /* ---- ui/dock.js ---- */
 // ui/dock.js — 入口のボタン・進み具合・操作部(部品の約束 §9-3。キャンバス 1・2・3)
-//   状態 off = 1本の台に、ロゴ(メニュー)と「ブレンド」 / busy = 進み具合と中止 / on = ロゴ(メニュー)・割合のつまみ・「原文」。none(本文ページでない)では何も出さない。
+//   状態 off = 1本の台に、ロゴ(メニュー)と「ブレンド」 / busy = 進み具合と中止 / on = ロゴ(メニュー)と、今の割合(たたんだ形)。none(本文ページでない)では何も出さない。
+//   on の台は、ふだんは、たたんでおく(ロゴと「60%」だけ。本文と、サイトの下の広告を、隠しすぎない=設計メモ 2-5)。「60%」を押すと、つまみと「原文」がひらく。
+//   ひらいたあと、さわらずに ui.foldMs たつ・台の外を押す・下へ読み進めて台が隠れる、で、たたむ。「原文」を押している間は、たたまない(押している印が見えるように)。
 //   つまみは、動かしている間 setRatio(v, { save:false })、指を離したら setRatio(v)。どれも通信しない(通信するのは「ブレンド」だけ)
 (function(){
   'use strict';
@@ -6937,7 +6986,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   let entry = null, launch = null, cost = null, main = null, prog = null;
   let ratioBox = null, input = null, knob = null, tip = null, origBtn = null, origOff = null, origOn = null;
   let fill = null, countEl = null;
+  let pctBtn = null, pctTxt = null;
   let value = 0, dragging = false, tipT = null, entryAt = 0, was = '';
+  let open = false, openAt = 0, foldT = null;
 
   const openMenu = () => { if (!ui.show('menu')) ui.toast(ui.t('soon')); };
   const logoBtn = () => ui.el('button', { class: 'round', 'data-act': 'menu', 'aria-label': ui.t('dock.menu'), onclick: openMenu }, [ui.mark(24)]);
@@ -6950,7 +7001,27 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     tip.textContent = ui.t('dock.ratioValue', { v });
     if (input.value !== String(v)) input.value = String(v);
     input.setAttribute('aria-valuetext', ui.t('dock.ratioValue', { v }));
+    pctTxt.textContent = ui.t('dock.ratioValue', { v });
+    pctBtn.setAttribute('aria-label', ui.t('dock.fold', { v }));
   }
+  // ---- たたむ・ひらく ----
+  function touch(){                                // さわった(たたむまでの時間を、数え直す)
+    clearTimeout(foldT);
+    if (open) foldT = setTimeout(() => { const s = ui.status(); if (dragging || (s && s.orig)) touch(); else setOpen(false); }, cfg.ui.foldMs);
+  }
+  function setOpen(v, byKey){
+    v = !!v;
+    if (v === open){ if (v) touch(); return; }
+    open = v;
+    if (v) openAt = Date.now();
+    if (v) main.removeAttribute('data-fold'); else main.setAttribute('data-fold', '');
+    pctBtn.setAttribute('aria-expanded', v ? 'true' : 'false');
+    touch();
+    if (v && byKey) input.focus();                 // キーボードでひらいたら、つまみへ(見えなくなったボタンに、フォーカスを残さない)
+  }
+  // 台の外を押した(合図は、Shadow DOM の外では、入れ物=host に当たったように見える)・下へ読み進めて、台が隠れた
+  function onOutside(e){ if (open && !dragging && !(ui.status() && ui.status().orig) && !ui.root().host.contains(e.target)) setOpen(false); }
+  function onScrollFold(){ if (open && !dragging && ui.away()) setOpen(false); }
   function valueAt(x){
     const r = ratioBox.getBoundingClientRect();
     const w = r.width - KNOB;
@@ -6963,19 +7034,21 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     else tipT = setTimeout(() => ratioBox.removeAttribute('data-live'), cfg.ui.tipMs);
   }
   function slide(v){                               // 動かしている間(保存しない)
+    touch();
     ui.quiet();
     place(v);
     Y.page.setRatio(v, { save: false });
   }
   function settle(){                               // 指を離した(保存する)
+    touch();
     ui.quiet();
     Y.page.setRatio(value);
     live(false);
   }
-  // 指・マウス。マウスは、押した所へすぐ動かす。指(touch)は、触れただけでは動かさない:
-  //   横に ui.dragPx 動いたら動かし始め、動かさずに離したら「押した所へ」。縦に送り始めたとき(pointercancel)は、何もしない
-  //   (つまみは操作部の幅の大半を占める。読み進める指がつまみの上から始まっても、割合を変えない)
-  let pending = null, before = 0;               // pending = 指が触れただけの間 { x }。before = 動かし始める前の割合
+  // 指・マウス。どちらも、押した所へすぐ動かす(つまみは、「60%」を押してひらいたときだけ出ている=読み進める指が、たまたま乗ることは無い。
+  //   工程5b-2: iPhone で、動かし始めが重かった=横に動いたと分かるまで待つ作りをやめた。CSS は touch-action: none)。
+  //   ひらいたすぐあと(ui.guardMs)は、受けない(「60%」を押した指の、弾んだ二度押しで、割合が変わらないように)
+  let before = 0;                               // 動かし始める前の割合
   function begin(e){
     dragging = true;
     before = value;
@@ -6984,7 +7057,6 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     try { ratioBox.setPointerCapture(e.pointerId); } catch (x){}
   }
   function finish(save){
-    pending = null;
     if (!dragging) return;
     dragging = false;
     ui.hold('ratio', false);
@@ -6999,31 +7071,17 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (e.button) return;
     const v = valueAt(e.clientX);
     if (v == null) return;
-    if (e.pointerType === 'touch'){ pending = { x: e.clientX }; return; }   // 指: まだ動かさない(縦に送るのかもしれない)
+    if (Date.now() - openAt < cfg.ui.guardMs) return;
     e.preventDefault();
     begin(e);
     slide(v);
   }
   function onMove(e){
-    if (pending){
-      if (Math.abs(e.clientX - pending.x) < cfg.ui.dragPx) return;
-      pending = null;
-      begin(e);
-    }
     if (!dragging) return;
     const v = valueAt(e.clientX);
     if (v != null && v !== value) slide(v);
   }
-  function onUp(e){
-    if (pending){                                 // 指で、動かさずに離した = 押した所へ
-      const v = valueAt(e.clientX);
-      pending = null;
-      if (v == null) return;
-      begin(e);
-      slide(v);
-    }
-    finish(true);
-  }
+  const onUp = () => finish(true);
   const onCancel = () => finish(false);
 
   // 「ブレンド」: 押したら、進行役が動き出すまで押せなくする(訳す前の確かめの間。終わったら、今の状態で描き直す)
@@ -7059,12 +7117,19 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       onchange: () => { place(clamp(Number(input.value))); settle(); } });
     knob = ui.el('span', { class: 'knob' });
     tip = ui.el('span', { class: 'tip', 'aria-hidden': 'true' });
+    // たたんだ形: 今の割合(小さなつまみの絵と、数字)。押すと、つまみと「原文」がひらく
+    pctTxt = ui.el('span');
+    pctBtn = ui.el('button', { class: 'pill pct', 'data-act': 'unfold', 'aria-expanded': 'false', onclick: e => setOpen(true, e && e.detail === 0) },
+      [ui.el('span', { class: 'mini', 'aria-hidden': 'true' }, [ui.el('i')]), pctTxt]);
     ratioBox = ui.el('div', { class: 'ratio', onpointerdown: onDown, onpointermove: onMove, onpointerup: onUp, onpointercancel: onCancel, onlostpointercapture: onCancel },
       [ui.el('span', { class: 'track' }), input, knob, tip]);
     place(cfg.ratio.initial);
     origBtn = ui.el('button', { class: 'pill', 'data-act': 'orig', 'aria-pressed': 'false',
-      onclick: () => { ui.quiet(); Y.page.setOrig(!(ui.status() && ui.status().orig)); } }, [origOff = ui.icon('swap', 18, 2), origOn = ui.icon('check', 18, 2.6), ui.el('span', { text: ui.t('dock.orig') })]);
-    main = ui.el('div', { class: 'dock', 'data-dock': 'main', hidden: true }, [logoBtn(), ratioBox, origBtn]);
+      onclick: () => { touch(); ui.quiet(); Y.page.setOrig(!(ui.status() && ui.status().orig)); } }, [origOff = ui.icon('swap', 18, 2), origOn = ui.icon('check', 18, 2.6), ui.el('span', { text: ui.t('dock.orig') })]);
+    main = ui.el('div', { class: 'dock', 'data-dock': 'main', 'data-fold': '', hidden: true }, [logoBtn(), pctBtn, ratioBox, origBtn]);
+    const doc = slot.ownerDocument, win = doc.defaultView;
+    doc.addEventListener('pointerdown', onOutside, true);
+    if (win) win.addEventListener('scroll', onScrollFold, { passive: true });
 
     // 進み具合(キャンバス 2)
     fill = ui.el('div', { class: 'fill' });
@@ -7094,6 +7159,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     entry.hidden = s.state !== 'off';              // ロゴ(メニュー)は、1日の上限のカードが出ている間も残す(設定へ行ける)
     launch.hidden = s.state !== 'off' || !!(s.notice && s.notice.kind === 'limit-day');   // 1日の上限のカードが出ている間は、カードの2つのボタンだけ(キャンバス)
     main.hidden = s.state !== 'on';
+    if (s.state !== 'on') setOpen(false);
     prog.hidden = s.state !== 'busy';
     if (s.state === 'off'){
       const saved = !!s.saved[s.level];
@@ -7724,6 +7790,16 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       .then(() => { if (isOpen()) paint(); });
   }
 
+  // その語が、文の頭か(前に語が無い・前が . ! ? で終わっている)。文の頭の大文字は、小文字の見出しを先に引く(dict.lookup の first)
+  const ENDED = /[.!?][^\p{L}\p{N}]*\s[^\p{L}\p{N}]*$/u;
+  function atHead(i){
+    let gap = '';
+    for (let k = i - 1; k >= 0; k--){
+      if (cur.tokens[k].t !== 'x') return ENDED.test(gap);
+      gap = String(cur.tokens[k].s) + gap;
+    }
+    return true;
+  }
   // 今の範囲 → { text, idiom? | hit? }
   function pick(){
     const text = Y.tokens.phrase(cur.tokens, cur.from, cur.to);
@@ -7732,7 +7808,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       const w = cur.words[span.i] || {};
       return { text, idiom: { head: String(w.b || w.w || text), mean: String(w.m || '') } };
     }
-    return { text, hit: Y.dict.ready() ? Y.dict.lookup(text) : null };
+    return { text, hit: Y.dict.ready() ? Y.dict.lookup(text, { first: cur.from === cur.to && atHead(cur.from) }) : null };
   }
 
   const dictErrText = () => ui.t(dictErr === 'network' ? 'word.dictNet' : 'word.dictBad');
