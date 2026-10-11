@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.6
+// @version      0.1.7
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.6 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.7 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.6',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.7',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -245,7 +245,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       twoTapMinMs: 350,            // 1回目から、これより早い2回目は数えない(指が弾んだ二度押し)
       guardMs: 300,                // 入口の台が出てきたすぐあと(隠れていたのが出た・中止で戻った)は、この間「ブレンド」を受けつけない(押しまちがいで回数を使わない。§9-3)
       foldMs: 4000,                // 操作部: ひらいたつまみを、さわらずにこれだけたったら、たたむ(ロゴと「60%」だけの形に。設計メモ 2-5)
-      lift: { on: true, max: 160, everyMs: 2000 },   // サイトが画面の下に固定しているもの(広告など)があれば、その上へ、操作部を上げる(上げる高さの上限 px・見に行く間隔)
+      lift: { on: true, max: 120, everyMs: 2000, sideGain: 0.5 },   // サイトが画面の下に固定しているもの(広告など)をよける: 低い帯(高さ max まで)は、その上へ上げる/もっと大きいものは、左へよける(重なりが、右に置くときの sideGain 倍より小さくなるときだけ)。everyMs = 見に行く間隔
       noteMax: 120,                // 知らせの行に添える、相手の返した文の長さ
       meanLines: 3,                // 単語の板: 内蔵辞書の意味を、はじめに何行まで出すか(残りは「ほかの意味も見る」)
       meanChars: 44,               // 単語の板: 内蔵辞書の意味の1行を、はじめに何文字まで出すか(長い行は、区切りのよい所で切って「…」。全部は「ほかの意味も見る」「つづきを見る」)
@@ -5823,6 +5823,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'dock.orig': '原文',
     'dock.fold': '英語の割合 {v}%',
     'dock.progress': '英訳しています',
+    'dock.stay': 'この画面のままで、お待ちください',
     'dock.count': '{got} / {total} 文',
     'dock.cancel': '中止する',
     // 知らせの行(§9-5)。押せる所のうち、回数を使うものには、部品が通信の数を足す(Yomu.ui.withCost)
@@ -5947,6 +5948,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'word.removeFail': '単語帳から外せませんでした',
     'word.prev': '前へひろげる',
     'word.next': '後ろへひろげる',
+    'word.reset': 'もとに戻す',
     // 設定(§9-6。画面いっぱいに出す)。トップは、行き先の一覧(まだ無い行き先は、右に「準備中」)
     'set.title': '設定',
     'set.back': '設定にもどる',
@@ -6381,6 +6383,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.word .grow button { min-height: ' + TAP + 'px; border-radius: ' + PILL + '; background: ' + v('well') + '; color: ' + v('panelInk') + '; ' + t(CAP, 700, TIGHT) + ' display: flex; align-items: center; gap: 4px; white-space: nowrap; }',
       '.word .grow .prev { padding: 0 16px 0 8px; }',
       '.word .grow .next { padding: 0 8px 0 16px; }',
+      '.word .grow .reset { padding: 0 16px 0 12px; }',
       '.word .sent { margin-top: 12px; background: ' + v('well') + '; border-radius: 16px; padding: 12px 4px 12px 16px; display: flex; align-items: flex-start; gap: 4px; }',
       '.word .sent .txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }',
       '.word .sent .e { font-family: ' + FE + '; ' + t(BODY, 400, BASE) + ' }',
@@ -6577,6 +6580,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.round[data-act="menu"] { box-shadow: inset 0 0 0 1px ' + v('ring') + '; }',
       // たたんだ形(ロゴと、今の割合)。ひらくと、つまみと「原文」(今の割合のボタンは、消える)
       '.dock[data-fold] { align-self: flex-end; }',
+      // サイトが右下に固定している大きなもの(広告)に重なるときは、左へよける(ui/root.js の lift。出ている間だけ)
+      '.bay[data-side="left"] .entry, .bay[data-side="left"] .dock[data-fold] { align-self: flex-start; }',
       '.dock[data-fold] .ratio, .dock[data-fold] .pill[data-act="orig"], .dock:not([data-fold]) .pct { display: none; }',
       '.pct { padding: 0 16px; gap: 8px; }',
       '.pct .mini { position: relative; width: 24px; height: 4px; border-radius: 2px; background: ' + v('grad') + '; }',
@@ -6592,7 +6597,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         + ' font-family: ' + FE + '; ' + t(CAP, 800, TIGHT) + ' display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transition: opacity ' + ms(MO.tip) + ' ease-out; }',
       '.ratio[data-live] .tip { opacity: 1; }',
       // 進み具合
-      '.prog { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }',
+      '.dock[data-dock="progress"] { height: auto; min-height: 64px; padding: 8px; }',
+      '.prog { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }',
+      '.prog .stay { ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; }',
       '.prog .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }',
       '.prog .label { margin: 0; color: ' + v('panelInk') + '; ' + t(CAP, 700, TIGHT) + ' white-space: nowrap; }',
       '.prog .count { font-family: ' + FE + '; ' + t(CAP, 700, TIGHT) + ' color: ' + v('panelMuted') + '; white-space: nowrap; }',
@@ -6717,33 +6724,65 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (!v) backAt = Date.now();                         // 出てきた時刻(fresh が使う)
     if (v) bay.setAttribute('data-away', ''); else bay.removeAttribute('data-away');
   }
-  // サイトが、画面の下に固定しているもの(なろうの、ついてくる広告 など)があれば、その上へ、置き場を上げる(広告と、その「×」を隠さない。工程5b-2)
-  //   画面の下のふちのすぐ上(左・まん中・右)に、いちばん手前で当たるものを見て、固定(fixed・sticky)された親をさがす。画面の下半分にあって、下のふちに付いているものだけ
-  let lifted = 0;
-  function liftNow(){
-    const L = cfg.ui.lift;
-    if (!L || !L.on || typeof doc.elementsFromPoint !== 'function' || !win.getComputedStyle) return 0;
-    const W = win.innerWidth || 0, H = win.innerHeight || 0;
-    let best = 0;
-    [0.25, 0.5, 0.75].forEach(k => {
-      const top = (doc.elementsFromPoint(W * k, H - 4) || []).find(e => e !== host);
-      for (let n = top; n && n !== doc.body && n !== doc.documentElement; n = n.parentElement){
-        const pos = win.getComputedStyle(n).position;
-        if (pos !== 'fixed' && pos !== 'sticky') continue;
-        const r = n.getBoundingClientRect();
-        if (r.bottom >= H - 2 && r.top >= H / 2 && r.height > 0) best = Math.max(best, H - r.top);
-        break;
-      }
+  // サイトが、画面に固定しているもの(なろうの、ついてくる広告 など)を、よける(広告と、その「×」を隠さない。工程5b-2)
+  //   ①画面の下のふちに付いた、低い帯(高さ ui.lift.max まで): その上へ、置き場を上げる(--lift)
+  //   ②もっと大きいもの(右下の四角い広告): 上げずに、左へよける(data-side="left"。重なりが、右に置くときの sideGain 倍より小さくなるときだけ)
+  //   見るのは、画面の中の点に、いちばん手前で当たるもの(こちらの入れ物は除く)から、親へたどって見つかる、固定(fixed・sticky)されたもの
+  let lifted = 0, side = '';
+  function fixedAt(x, y, into){
+    const top = (doc.elementsFromPoint(x, y) || []).find(e => e !== host);
+    for (let n = top; n && n !== doc.body && n !== doc.documentElement; n = n.parentElement){
+      const pos = win.getComputedStyle(n).position;
+      if (pos !== 'fixed' && pos !== 'sticky') continue;
+      if (into.indexOf(n) < 0) into.push(n);
+      return;
+    }
+  }
+  function overlap(box, els){
+    let sum = 0;
+    els.forEach(n => {
+      const r = n.getBoundingClientRect();
+      const w = Math.min(box.right, r.right) - Math.max(box.left, r.left), h = Math.min(box.bottom, r.bottom) - Math.max(box.top, r.top);
+      if (w > 0 && h > 0) sum += w * h;
     });
-    return Math.min(L.max, Math.ceil(best / cfg.ui.grid) * cfg.ui.grid);
+    return sum;
+  }
+  function placeNow(){
+    const L = cfg.ui.lift, out = { lift: 0, side: '' };
+    if (!L || !L.on || typeof doc.elementsFromPoint !== 'function' || !win.getComputedStyle) return out;
+    const W = win.innerWidth || 0, H = win.innerHeight || 0;
+    // ① 下のふちの帯
+    const low = [];
+    [0.25, 0.5, 0.75].forEach(k => fixedAt(W * k, H - 4, low));
+    low.forEach(n => {
+      const r = n.getBoundingClientRect(), up = H - r.top;
+      if (r.bottom >= H - 2 && r.height > 0 && up <= L.max) out.lift = Math.max(out.lift, Math.ceil(up / cfg.ui.grid) * cfg.ui.grid);
+    });
+    // ② 台の置き場所(右下)に、固定されたものが重なるか。重なるなら、左下と比べる
+    const dock = Array.prototype.find.call(slots.main ? slots.main.children : [], e => !e.hidden);
+    const dw = dock ? dock.getBoundingClientRect().width : 0;
+    if (!(dw > 0) || dw > W * 0.7 || W >= cfg.ui.wideMin) return out;      // 横いっぱいの形(ひらいたつまみ・進み具合)と、広い画面では、よけない
+    const bottom = H - cfg.ui.bottom - out.lift, top = bottom - 64;
+    const boxAt = left => ({ left, right: left + dw, top, bottom });
+    const right = boxAt(W - 16 - dw), left = boxAt(16);
+    const seen = [];
+    [right, left].forEach(b => [b.left + 4, (b.left + b.right) / 2, b.right - 4].forEach(x => [b.top + 4, (b.top + b.bottom) / 2, b.bottom - 4].forEach(y => fixedAt(x, y, seen))));
+    const or = overlap(right, seen), ol = overlap(left, seen);
+    if (or > 0 && ol < or * L.sideGain) out.side = 'left';
+    return out;
   }
   function lift(){
     if (!bay || sheetNow) return;                          // 板が出ている間は、板(こちらの物)が下のふちを覆っている
-    let v = 0;
-    try { v = liftNow(); } catch (e){ v = lifted; }
-    if (v === lifted) return;
-    lifted = v;
-    if (v) bay.style.setProperty('--lift', v + 'px'); else bay.style.removeProperty('--lift');
+    let p;
+    try { p = placeNow(); } catch (e){ p = { lift: lifted, side }; }
+    if (p.lift !== lifted){
+      lifted = p.lift;
+      if (lifted) bay.style.setProperty('--lift', lifted + 'px'); else bay.style.removeProperty('--lift');
+    }
+    if (p.side !== side){
+      side = p.side;
+      if (side) bay.setAttribute('data-side', side); else bay.removeAttribute('data-side');
+    }
   }
   function onScroll(){
     const y = scrollTop(), dy = y - lastY;
@@ -6965,7 +7004,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     el, icon, mark,
     hold, quiet, draw, run,
     away: () => away,
-    lift, lifted: () => lifted,
+    lift, lifted: () => lifted, side: () => side,
     fresh: () => Date.now() - backAt < cfg.ui.guardMs,   // 隠れていた置き場が、出てきたすぐあとか(回数を使うボタンが、押しまちがいを受けないために聞く)
     status: () => cur,
     mounted: () => !!host,
@@ -7142,7 +7181,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       logoBtn(),
       ui.el('div', { class: 'prog' }, [
         ui.el('div', { class: 'row' }, [ui.el('span', { class: 'label', text: ui.t('dock.progress') }), countEl]),
-        ui.el('div', { class: 'bar' }, [fill])
+        ui.el('div', { class: 'bar' }, [fill]),
+        // 訳している間に、ほかのアプリへ行くと、iPhone は、すぐ通信を止める(工程5b-2 利用者の実測)。回数をむだにしないように、先に知らせる
+        ui.el('div', { class: 'stay', text: ui.t('dock.stay') })
       ]),
       ui.el('button', { class: 'round', 'data-act': 'cancel', 'aria-label': ui.t('dock.cancel'), onclick: () => ui.run(() => Y.page.cancel()) }, [ui.icon('close', 20, 2)])
     ]);
@@ -7866,6 +7907,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       ui.el('div', { class: 'pair' }, [ui.el('span', { class: 'en', lang: 'en', text: a.head }), ui.el('span', { class: 'm', text: Y.dict.format(a.mean).lines[0] || '' })])
     ]));
   }
+  // ひろげたのを、もとの語(はじめに押した所)に戻す(工程5b-2 利用者: ひろげる一方で、戻せなかった)
+  function reset(){
+    cur.from = cur.from0; cur.to = cur.to0;
+    cur.all = false;
+    paint();
+  }
   function grow(to){
     if (to < 0) return;
     if (to < cur.from) cur.from = to; else cur.to = to;
@@ -7911,7 +7958,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     ].concat(alsoParts(p), [
       ui.el('div', { class: 'grow' }, [
         ui.el('button', { class: 'prev', 'data-act': 'prev', disabled: prev < 0, onclick: () => grow(prev) }, [ui.icon('chevL', 18, 2), ui.t('word.prev')]),
-        ui.el('button', { class: 'next', 'data-act': 'next', disabled: next < 0, onclick: () => grow(next) }, [ui.t('word.next'), ui.icon('chevR', 18, 2)])
+        ui.el('button', { class: 'next', 'data-act': 'next', disabled: next < 0, onclick: () => grow(next) }, [ui.t('word.next'), ui.icon('chevR', 18, 2)]),
+        cur.from !== cur.from0 || cur.to !== cur.to0 ? ui.el('button', { class: 'reset', 'data-act': 'reset', onclick: reset }, [ui.icon('refresh', 18, 2), ui.t('word.reset')]) : null
       ]),
       sentPart(),
       actsPart(p)
@@ -7941,7 +7989,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (!d) return;
       const lay = layout(d.en, d.words, h.ti);
       if (!lay) return;
-      const mine = cur = Object.assign(d, { tokens: lay.tokens, spans: lay.spans, from: lay.from, to: lay.to, all: false, counted: null, r: null, saying: null });
+      const mine = cur = Object.assign(d, { tokens: lay.tokens, spans: lay.spans, from: lay.from, to: lay.to, from0: lay.from, to0: lay.to, all: false, counted: null, r: null, saying: null });
       body = ui.el('div', { class: 'word' });
       act(lay.idiom ? 'idiom' : 'tap', d.sid);
       paint();
