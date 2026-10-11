@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.12
+// @version      0.1.13
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.12 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.13 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.12',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.13',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -6195,6 +6195,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'setup.go': '読みはじめる',
     // まだ無い機能の入口(設計メモ 2-5)
     'set.saveFail': '保存できませんでした',
+    'set.saved': '保存しました',
     'set.voiceAuto': '端末に合わせる',
     'mod.lead': '訳すのに使う AI と、今日つかった回数です。',
     'mod.loading': '読んでいます…',
@@ -6232,8 +6233,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'mod.listing': '取っています…',
     'mod.listed': '{n} 個の AI が見つかりました',
     'mod.listNoKey': 'API キーがまだ入っていません。「AI につなぐ」で入れてください',
-    'mod.reset': 'はじめの値に戻す({model}・{think})',
-    'mod.resetDone': 'はじめの値に戻しました',
+    'mod.reset': 'はじめの設定に戻す({model}・{think})',
+    'mod.resetDone': 'はじめの設定に戻しました',
+    'mod.firstSub': 'はじめの設定・{sub}',
+    'mod.fetched': '一覧から取ってきた AI',
+    'mod.pick': 'これにする',
+    'mod.set': '「{level}」の訳す AI を、{model}・{think}にしました',
+    'mod.onLimit.lead': '訳す AI が、その日の上限に達して、訳せなかったときの動きです。',
+    'mod.onLimit.set': '上限に達したときは「{name}」にしました',
     'runs.lead': '翻訳と熟語さがしの通信を、新しい順に並べています({days} 日分)。',
     'runs.rate': '翻訳で使えた文',
     'runs.today': '今日',
@@ -6596,6 +6603,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.full .lead { margin: 8px 0 0; ' + t(BODY, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
       '.full .hint { margin: 8px 0 0; ' + t(CAP, 400, LOOSE) + ' color: ' + v('panelMuted') + '; }',
       '.full .label { margin: 20px 0 8px; }',
+      '.full .opts + .label.sub { margin-top: 16px; }',
       '.full .rows { margin-top: 0; }',
       '.full .lead + .rows { margin-top: 16px; }',
       // 押せない行(今は選べるものが1つだけの「つなぎ方」)。行の形は .rowbtn と同じ
@@ -8399,7 +8407,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   // ---- 目標(キャンバス3ページ目の「設定 › 目標」)----
   const GRADES = levels.ids.filter(id => id !== levels.initial);       // 英検の級(a1〜b2)。通常(std)= 目標は決めない
   const goalName = id => (id === levels.initial || !levels.has(id) ? ui.t('set.goalNone') : levels.name(id));
-  const short = m => { const x = String(m || ''); return /flash-lite/i.test(x) ? 'Flash-Lite' : /flash/i.test(x) ? 'Flash' : /pro/i.test(x) ? 'Pro' : x; };   // モデルの呼び名(ui/notice.js と同じ)
+  // モデルの呼び名(設定の中では、版の数字を先に添える=「3.5 Flash-Lite」。Google の呼び名と同じ並び。知らせの行 ui/notice.js は、短い名前のまま)
+  const short = m => {
+    const x = String(m || '');
+    const k = /flash-lite/i.test(x) ? 'Flash-Lite' : /flash/i.test(x) ? 'Flash' : /pro/i.test(x) ? 'Pro' : '';
+    if (!k) return x;
+    const v = /(?:^|-)(\d+(?:\.\d+)?)-/.exec(x);
+    return v ? v[1] + ' ' + k : k;
+  };
   // 選ぶ札(丸い印つき。選んだ印は、色のほかに、チェックでも)。o = { id, title, sub, soon(まだ選べない) }
   function opt(o, onPick){
     const b = ui.el('button', { class: 'opt', 'data-opt': o.id, 'aria-pressed': o.soon ? null : 'false', 'data-soon': o.soon ? '' : null, onclick: () => (o.soon ? soon() : onPick(o.id)) }, [
@@ -8563,6 +8578,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 // ui/settings_more.js — 設定の画面の続き(部品の約束 §9-6。工程4c-2a): 翻訳の設定・訳す AI(目標ごと)・通信の記録・音声
 //   画面の型と部品は ui/settings.js のもの(Yomu.uiSettings)を使う。ここは、画面を足すだけ(add)。
 //   翻訳の設定: 今日つかった回数(AI ごと。1日の目安は、利用者が直す数=達しても止めない)・訳す AI と考える深さ(目標ごと)・上限に達したとき。
+//     訳す AI・考える深さ・上限に達したとき、は、選んで「これにする」(回数と訳に効くので、押して決める。工程5b-2c)。声・速さは、選ぶと、すぐ保存して、短い知らせ「保存しました」
 //     出す前に、つなぎ方に聞く(Yomu.plan.shows('quota'|'modelChoice'|'model'|'runs')。自分の API キーで使うときだけ見せる=設計メモ 2-2)
 //   「AI の一覧を取る」は、回数に数えない通信(Yomu.llm.models)。結果は、ボタンのすぐ下
 //   通信の記録: 新しい順。数字をそのまま出すだけで、評価の言葉は付けない。AI辞書の通信は、もともと残っていない(§8-6)
@@ -8584,6 +8600,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return { box: ui.el('div', { class: 'opts' }, btns), set: id => S.press(btns, id) };
   }
   const save = patch => Y.settings.set(patch).then(() => true, () => { ui.toast(ui.t('set.saveFail')); return false; });
+  const saved = ok => { if (ok) ui.toast(ui.t('set.saved')); return ok; };   // 選ぶと、すぐ保存する所: 保存できたら、短い知らせ
 
   // ---- 翻訳の設定 ----
   function models(){
@@ -8636,34 +8653,55 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         })),
         ui.el('p', { class: 'hint', text: ui.t('mod.perLevelNote') }),
         ui.el('div', { class: 'label', text: ui.t('mod.onLimit') }),
-        choice([{ id: 'ask', title: ui.t('mod.onLimit.ask'), sub: ui.t('mod.onLimit.askSub') }, { id: 'lite', title: ui.t('mod.onLimit.lite'), sub: ui.t('mod.onLimit.liteSub') }],
-          st.onLimit, id => { save({ onLimit: id }); }).box);
+        ui.el('div', { class: 'rows', 'data-box': 'onlimit' }, [S.row('onlimit', ui.t('mod.onLimit.' + st.onLimit), () => S.go('onlimit')).b]));
     }
     return S.shell({ name: 'models', title: ui.t('set.models'), back: 'top', body });
   }
 
-  // ---- 訳す AI(目標ごと)----
-  let fetched = null;              // 取ってきた AI の一覧(開いている間だけ持つ。保存しない)
+  // ---- 1日の上限に達したとき(選んで「これにする」。回数に効くので、押して決める=§9-6)----
+  function onLimit(){
+    const alive = S.alive();
+    let pick = Y.settings.get().onLimit;
+    const c = choice([{ id: 'ask', title: ui.t('mod.onLimit.ask'), sub: ui.t('mod.onLimit.askSub') }, { id: 'lite', title: ui.t('mod.onLimit.lite'), sub: ui.t('mod.onLimit.liteSub') }], pick, id => { pick = id; });
+    const apply = ui.el('button', { class: 'primary', 'data-act': 'apply', onclick: () => {
+      apply.disabled = true;
+      save({ onLimit: pick }).then(ok => {
+        if (!alive()) return;
+        apply.disabled = false;
+        if (ok){ ui.toast(ui.t('mod.onLimit.set', { name: ui.t('mod.onLimit.' + pick) })); S.go('models'); }
+      });
+    } }, [ui.el('span', { text: ui.t('mod.pick') })]);
+    return S.shell({ name: 'onlimit', title: ui.t('mod.onLimit'), back: 'models', body: [ui.el('p', { class: 'lead', text: ui.t('mod.onLimit.lead') }), c.box], foot: [apply] });
+  }
+
+  // ---- 訳す AI(目標ごと)。選んで「これにする」(押すまで、変えない。「目標」と同じ決め方=§9-6)----
   function model(level){
     if (!levels.has(level)) level = levels.initial;
     const alive = S.alive();
-    const st = Y.settings.get(), cur = Y.settings.modelFor(level);
-    const known = () => {
-      const ids = [];
-      const add = m => { if (m && ids.indexOf(m) < 0) ids.push(m); };
-      add(cur.m);
-      levels.ids.forEach(id => add(Y.settings.modelFor(id).m));
-      Object.keys(st.aux || {}).forEach(k => add(st.aux[k]));
-      Object.keys(st.limits || {}).forEach(add);
-      (fetched || []).forEach(x => add(x.id));
-      return ids;
-    };
-    const nameOf = m => { const f = (fetched || []).find(x => x.id === m); return f && f.name && f.name !== m ? f.name : S.short(m); };
+    const st = Y.settings.get(), cur = Y.settings.modelFor(level), def = levels.defaults.models[level];
+    let fetched = null;            // 取ってきた AI の一覧(この画面が出ている間だけ持つ。保存しない。開き直したら、たたまれる)
+    let pickM = cur.m, pickT = cur.think;
+    // いつも並べる AI: はじめの設定・今つかっているもの(ほかの目標・熟語さがし など)
+    const base = [];
+    const add = m => { if (m && base.indexOf(m) < 0) base.push(m); };
+    add(def.m); add(cur.m);
+    levels.ids.forEach(id => add(Y.settings.modelFor(id).m));
+    Object.keys(st.aux || {}).forEach(k => add(st.aux[k]));
+    Object.keys(st.limits || {}).forEach(add);
+    const first = (isDef, sub) => (isDef ? ui.t('mod.firstSub', { sub }) : sub);
     const aiBox = ui.el('div', { 'data-box': 'ai' });
-    function drawAi(now){
-      S.fill(aiBox, [choice(known().map(m => ({ id: m, title: nameOf(m), sub: m })), now, m => { save({ models: { [level]: { m } } }); }).box]);
+    let aiBtns = [];
+    function drawAi(){
+      const mk = (m, title) => S.opt({ id: m, title, sub: first(m === def.m, m) }, id => { pickM = id; S.press(aiBtns, id); });
+      const top = base.map(m => mk(m, S.short(m)));
+      const more = (fetched || []).filter(x => base.indexOf(x.id) < 0).map(x => mk(x.id, x.name && x.name !== x.id ? String(x.name).replace(/^Gemini\s+/i, '') : S.short(x.id)));   // Google の呼び名から、頭の「Gemini」を外す(上の札の「3.5 Flash」と、そろえる)
+      aiBtns = top.concat(more);
+      S.press(aiBtns, pickM);
+      S.fill(aiBox, [ui.el('div', { class: 'opts' }, top),
+        more.length ? ui.el('div', { class: 'label sub', text: ui.t('mod.fetched') }) : null,
+        more.length ? ui.el('div', { class: 'opts', 'data-box': 'fetched' }, more) : null]);
     }
-    drawAi(cur.m);
+    drawAi();
     const result = ui.el('div', { class: 'result', hidden: true });
     const listBtn = ui.el('button', { class: 'side wide', 'data-act': 'list', onclick: () => {
       listBtn.disabled = true;
@@ -8671,7 +8709,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       Y.llm.models({ provider: st.provider }).then(list => {
         if (!alive()) return;
         fetched = (Array.isArray(list) ? list : []).filter(x => x && x.id && x.canGenerate !== false && /^gemini/i.test(x.id));
-        drawAi(Y.settings.modelFor(level).m);
+        drawAi();
         const text = ui.t('mod.listed', { n: fetched.length });
         S.fill(result, [okLine(text)]); ui.announce(text);
       }, e => {
@@ -8680,17 +8718,25 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         S.fill(result, [alertBox(text)]); ui.announce(text, true);
       }).then(() => { if (alive()) listBtn.disabled = false; });
     } }, [ui.el('span', { class: 'two' }, [ui.el('span', { text: ui.t('mod.list') }), ui.el('span', { class: 'cost', text: ui.t('mod.listFree') })])]);
-    const think = choice(levels.thinkModes.map(k => ({ id: k, title: thinkName(k), sub: ui.t('mod.thinkSub.' + k) })), cur.think, k => { save({ models: { [level]: { think: k } } }); });
-    const def = levels.defaults.models[level];
+    const think = choice(levels.thinkModes.map(k => ({ id: k, title: thinkName(k), sub: first(k === def.think, ui.t('mod.thinkSub.' + k)) })), pickT, k => { pickT = k; });
+    // はじめの設定に戻す: 押したら、すぐ保存する(押して決めるボタン。選ぶ札とは違う)
     const reset = ui.el('button', { class: 'textbtn', 'data-act': 'reset', onclick: () => {
-      save({ models: { [level]: { m: def.m, think: def.think } } }).then(ok => { if (ok && alive()){ drawAi(def.m); think.set(def.think); ui.toast(ui.t('mod.resetDone')); } });
+      save({ models: { [level]: { m: def.m, think: def.think } } }).then(ok => { if (ok && alive()){ pickM = def.m; pickT = def.think; S.press(aiBtns, pickM); think.set(pickT); ui.toast(ui.t('mod.resetDone')); } });
     } }, [ui.t('mod.reset', { model: S.short(def.m), think: thinkName(def.think) })]);
+    const apply = ui.el('button', { class: 'primary', 'data-act': 'apply', onclick: () => {
+      apply.disabled = true;
+      save({ models: { [level]: { m: pickM, think: pickT } } }).then(ok => {
+        if (!alive()) return;
+        apply.disabled = false;
+        if (ok){ ui.toast(ui.t('mod.set', { level: levelName(level), model: S.short(pickM), think: thinkName(pickT) })); S.go('models'); }
+      });
+    } }, [ui.el('span', { text: ui.t('mod.pick') })]);
     return S.shell({ name: 'model', title: ui.t('mod.title'), back: 'models', body: [
       ui.el('h1', { class: 'h1', text: levelName(level) }),
       ui.el('div', { class: 'label', text: ui.t('mod.ai') }), aiBox, listBtn, result,
       ui.el('div', { class: 'label', text: ui.t('mod.think') }), think.box,
       reset
-    ] });
+    ], foot: [apply] });
   }
 
   // ---- 通信の記録 ----
@@ -8779,7 +8825,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       const rest = en.filter(v => first.indexOf(v) < 0);
       const list = [{ id: '', title: ui.t('voice.auto'), sub: ui.t(dev === 'ios' ? 'voice.autoSub.ios' : 'voice.autoSub') }]
         .concat((wide ? first.concat(rest) : first).map(v => ({ id: v.name, title: v.name, sub: ui.t(Y.msg.has('voice.lang.' + v.lang) ? 'voice.lang.' + v.lang : 'voice.lang.other', { lang: v.lang }) })));
-      const kids = [choice(list, st.name || '', name => { sp.stop(); save({ voice: { name } }).then(() => { st = Y.settings.get().voice; }); }).box];
+      const kids = [choice(list, st.name || '', name => { sp.stop(); save({ voice: { name } }).then(ok => { st = Y.settings.get().voice; saved(ok); }); }).box];
       if (!wide && rest.length) kids.push(ui.el('button', { class: 'textbtn', 'data-act': 'wide', onclick: () => { wide = true; draw(); } }, [ui.t('voice.wide', { n: rest.length })]));
       S.fill(box, kids);
     }
@@ -8791,7 +8837,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     try { if (syn && syn.addEventListener) syn.addEventListener('voiceschanged', onVoices); } catch (e){}
     S.onLeave(() => { sp.stop(); try { if (syn && syn.removeEventListener) syn.removeEventListener('voiceschanged', onVoices); } catch (e){} });
     const near = RATES.reduce((a, r) => (Math.abs(r[1] - st.rate) < Math.abs(a[1] - st.rate) ? r : a), RATES[1]);
-    const rateBtns = RATES.map(r => ui.el('button', { 'data-opt': r[0], 'aria-pressed': 'false', onclick: () => { S.press(rateBtns, r[0]); sp.stop(); save({ voice: { rate: r[1] } }); } }, [ui.icon('check', 14, 2.6), ui.el('span', { text: ui.t('voice.rate.' + r[0]) })]));
+    const rateBtns = RATES.map(r => ui.el('button', { 'data-opt': r[0], 'aria-pressed': 'false', onclick: () => { S.press(rateBtns, r[0]); sp.stop(); save({ voice: { rate: r[1] } }).then(saved); } }, [ui.icon('check', 14, 2.6), ui.el('span', { text: ui.t('voice.rate.' + r[0]) })]));
     S.press(rateBtns, near[0]);
     const tip = [1, 2, 3, 4].filter(i => Y.msg.has('voice.tip.' + dev + '.' + i)).map(i => ui.t('voice.tip.' + dev + '.' + i));
     const tipNote = Y.msg.has('voice.tipNote.' + dev) ? ui.t('voice.tipNote.' + dev) : '';
@@ -8810,6 +8856,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
   S.add('models', models);
   S.add('model', model);
+  S.add('onlimit', onLimit);
   S.add('runs', runs);
   S.add('voice', voice);
 })();
@@ -8888,8 +8935,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const fail = (box, text) => show(box, [alertBox(text)], text, true);
 
     // ---- 記録 ----
-    const log = onOff('log', ui.t('data.log'), !(st.log && st.log.on === false), ui.t('data.log.on'), ui.t('data.log.off'), on => save({ log: { on } }));
-    const restore = onOff('restore', ui.t('data.restore'), st.restore !== false, ui.t('data.restore.on'), ui.t('data.restore.off'), on => save({ restore: on }));
+    const saved = ok => { if (ok) ui.toast(ui.t('set.saved')); return ok; };
+    const log = onOff('log', ui.t('data.log'), !(st.log && st.log.on === false), ui.t('data.log.on'), ui.t('data.log.off'), on => save({ log: { on } }).then(saved));
+    const restore = onOff('restore', ui.t('data.restore'), st.restore !== false, ui.t('data.restore.on'), ui.t('data.restore.off'), on => save({ restore: on }).then(saved));
 
     // ---- 書き出す ----
     const outResult = ui.el('div', { class: 'result', 'data-result': 'out', hidden: true });
