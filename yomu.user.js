@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.3
+// @version      0.1.4
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.3 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.4 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.3',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.4',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -7299,7 +7299,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     moreLabel.textContent = ui.t('menu.more', { n: s.n.missing });
     idiomsBtn.hidden = !(has && (s.idioms === 'failed' || s.idioms === 'partial'));   // 熟語さがしが失敗・途中のときだけ(§9-3)
     idiomsBtn.disabled = s.busy;
-    lookVal.textContent = !Y.config.ui.themePick || s.theme === Y.theme.AUTO || !Y.theme.has(s.theme) ? ui.t('look.autoShort') : ui.t('theme.' + s.theme);   // 行の右に、今のテーマ(キャンバス3ページ目)
+    lookVal.hidden = !Y.config.ui.themePick;                  // テーマを手で選ぶ所を出さない間は、行の右に何も書かない(選べないものを、選んだ値のように見せない)
+    lookVal.textContent = lookVal.hidden ? '' : s.theme === Y.theme.AUTO || !Y.theme.has(s.theme) ? ui.t('look.autoShort') : ui.t('theme.' + s.theme);   // 行の右に、今のテーマ(キャンバス3ページ目)
   }
 
   ui.part(NAME, {
