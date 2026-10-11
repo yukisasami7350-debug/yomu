@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.8
+// @version      0.1.9
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.8 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.9 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.8',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.9',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -158,7 +158,14 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     page: {                        // ページへの当てはめ(§3)
       waitMs: 5000,                // 本文の入れ物がまだ無いとき、待って探し直す時間
       pollMs: 250,                 // 探し直す間隔
-      watchMs: 1000                // URL が変わったかを見る間隔
+      watchMs: 1000,               // URL が変わったかを見る間隔
+      stuckMs: 6000                // 本文ページなのに、起動(保存を読む)がこれだけ終わらなければ、知らせる(store.openMs より長く。§9-8)
+    },
+    diag: {                        // 調べるための記録(§9-8)
+      leave: true,                 // ページを離れたときの様子を、全サイト共通の保存に1つ控えるか
+      leaveKey: 'diag/leave',      // その置き場所
+      leaveMax: 30,                // 離れたあと、控えを書き直す回数の上限
+      readMs: 500                  // 控えを読むのを待つ時間(保存が止まっていても、記録は出せるように)
     },
     wire: {
       K: 6,                        // 目印の長さ(文字)。0 = 目印なし、-1 = 全文の復唱(§6-2)
@@ -319,6 +326,45 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
   util.safeKey = k => k !== '__proto__' && k !== 'constructor' && k !== 'prototype';
 
   Yomu.util = util;
+})();
+
+/* ---- core/diag.js ---- */
+// core/diag.js — 調べるための記録(部品の約束 §9-8。工程5b-2b)。動きは変えない
+//   起動がどこまで進んだか(段階の名前と、起動からの ms)と、返事を待っている保存の読み書きを、このページのメモリの中に控える。
+//   入れるのは、短い名前と数字だけ(ページの文章・題名・作品の番号・API キーは入れない。保存の鍵は、頭の区切りまで)。
+//   見せるのは、設定の「この版」と、知らせ stuck の「直し方」の「記録を写す」(ui/settings_diag.js)
+(function(){
+  'use strict';
+  const Y = Yomu;
+  const MAX = 60;                 // 控える段階の数(あふれた分は、数だけ数える)
+  const clock = () => Date.now();
+  const cut = (s, n) => String(s == null ? '' : s).slice(0, n);
+  let t0 = clock(), marks = [], more = 0, stageNow = '', seq = 0;
+  const wait = new Map();         // 番号 → [名前, 始めた時刻](返事を待っている読み書き)
+  const subs = new Set();
+  const changed = () => subs.forEach(fn => { try { fn(); } catch (e){} });
+
+  Y.diag = {
+    // 起動し直すとき(URL が変わった)に、時計と段階を初めに戻す。待っている読み書きは、そのまま(まだ待っているものは、待っている)
+    restart(){ t0 = clock(); marks = []; more = 0; stageNow = ''; },
+    // 段階を1つ控える。x は、数字か短い字(省ける)
+    mark(name, x){
+      stageNow = cut(name, 24);
+      if (marks.length >= MAX){ more++; return; }
+      const m = [stageNow, clock() - t0];
+      if (x !== undefined && x !== null) m.push(typeof x === 'number' ? x : cut(x, 40));
+      marks.push(m);
+    },
+    stage: () => stageNow,
+    // 返事を待つ読み書きの、始まりと終わり(保存の部品が呼ぶ)。begin → 番号。end(番号)
+    begin(name){ const id = ++seq; wait.set(id, [cut(name, 48), clock()]); changed(); return id; },
+    end(id){ if (wait.delete(id)) changed(); },
+    // 今、返事を待っているもの → [[名前, 待っている ms]…](始めた順)
+    waiting(){ const now = clock(); return Array.from(wait.values()).map(w => [w[0], now - w[1]]); },
+    // 待っているものが、増えた・減ったときに呼ぶ(離れたときの控えを書き直すため)→ やめる関数
+    onWait(fn){ subs.add(fn); return () => subs.delete(fn); },
+    snapshot(){ return { ms: clock() - t0, stage: stageNow, marks: marks.map(m => m.slice()), more, wait: Y.diag.waiting() }; }
+  };
 })();
 
 /* ---- core/levels.js ---- */
@@ -1354,6 +1400,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
   const Y = Yomu;   // 先頭で受けておく(関数の中から Yomu を読まない。検査で2つの端末を同時に動かしても混ざらないように)
   const util = Y.util, config = Y.config, schema = Y.schema;
   const isPlain = util.isPlain;
+  const diag = Y.diag || { mark(){}, begin(){ return 0; }, end(){} };   // 調べるための記録(控えるだけ。動きは変えない。部品だけを読み込む検査では、無い)
+  const head = k => String(k == null ? '' : k).split('/')[0];             // 記録に出す鍵は、頭の区切りまで(作品の番号を入れない)
   const FORMAT = 'yomu-export';
 
   const store = { pid: 'me', deviceId: null };
@@ -1379,33 +1427,40 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     return new Promise((res, rej) => {
       if (!idb) return rej(new Error('no indexedDB'));
       let req, settled = false;
+      const w = diag.begin('idb open ' + name);
       const timer = setTimeout(() => fail(new Error('indexedDB open timeout')), config.store.openMs);
-      const fail = e => { if (!settled){ settled = true; clearTimeout(timer); rej(e); } };
+      const fail = e => { if (!settled){ settled = true; clearTimeout(timer); diag.end(w); diag.mark('idb.fail', e && e.message); rej(e); } };
       try { req = idb.open(name, 1); } catch (e){ return fail(e); }
       req.onupgradeneeded = () => { const db = req.result; if (!db.objectStoreNames.contains(OS)) db.createObjectStore(OS); };
       req.onsuccess = () => {
         if (settled){ try { req.result.close(); } catch (e){} return; }   // 待ちきれずに次の保存先へ進んだあと
-        settled = true; clearTimeout(timer); res(req.result);
+        settled = true; clearTimeout(timer); diag.end(w); diag.mark('idb.open');
+        // つながりが切れた・ほかのタブが形を変えようとしている、を控える(控えるだけ)
+        try { req.result.onclose = () => diag.mark('idb.closed'); req.result.onversionchange = () => diag.mark('idb.verchange'); } catch (e){}
+        res(req.result);
       };
       req.onerror = () => fail(req.error || new Error('indexedDB open failed'));
       req.onblocked = () => fail(new Error('indexedDB blocked'));
     }).then(db => {
-      const tx = (mode, fn) => new Promise((res, rej) => {
+      const tx = (mode, fn, op, key) => new Promise((res, rej) => {
         let t, out;
-        try { t = db.transaction(OS, mode); } catch (e){ return rej(e); }
-        const req = fn(t.objectStore(OS));
+        try { t = db.transaction(OS, mode); } catch (e){ diag.mark('idb.txfail', e && e.message); return rej(e); }
+        const w = diag.begin('idb ' + op + ' ' + head(key));     // 返事を待っている読み書き(終わらないものが、記録に残る)
+        const no = e => { diag.end(w); rej(e); };
+        let req;
+        try { req = fn(t.objectStore(OS)); } catch (e){ return no(e); }
         req.onsuccess = () => { out = req.result; };
-        req.onerror = () => rej(req.error || new Error('idb request failed'));
-        t.oncomplete = () => res(out);
-        t.onerror = () => rej(t.error || new Error('idb tx failed'));
-        t.onabort = () => rej(t.error || new Error('idb tx aborted'));
+        req.onerror = () => no(req.error || new Error('idb request failed'));
+        t.oncomplete = () => { diag.end(w); res(out); };
+        t.onerror = () => no(t.error || new Error('idb tx failed'));
+        t.onabort = () => no(t.error || new Error('idb tx aborted'));
       });
       const kv = {
         backend: 'idb',
-        get: k => tx('readonly', st => st.get(k)),
-        set: (k, v) => tx('readwrite', st => st.put(v, k)).then(() => undefined),
-        del: k => tx('readwrite', st => st.delete(k)).then(() => undefined),
-        keys: prefix => tx('readonly', st => st.getAllKeys()).then(ks => (ks || []).map(String).filter(k => !prefix || k.startsWith(prefix)).sort())
+        get: k => tx('readonly', st => st.get(k), 'get', k),
+        set: (k, v) => tx('readwrite', st => st.put(v, k), 'set', k).then(() => undefined),
+        del: k => tx('readwrite', st => st.delete(k), 'del', k).then(() => undefined),
+        keys: prefix => tx('readonly', st => st.getAllKeys(), 'keys', prefix).then(ks => (ks || []).map(String).filter(k => !prefix || k.startsWith(prefix)).sort())
       };
       // 書いて・消せるかを確かめる(開けても書けない場合がある)
       return kv.set(PROBE, 1).then(() => kv.del(PROBE)).then(() => kv);
@@ -1449,7 +1504,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       opt = opt || {};
       const name = opt.name || 'yomu-site';
       const tries = [() => idbKV(opt.indexedDB, name), () => lsKV(opt.localStorage, name), () => Promise.resolve(memKV())];
-      return tries.reduce((p, t) => p.then(kv => kv || t().catch(() => null)), Promise.resolve(null));
+      return tries.reduce((p, t) => p.then(kv => kv || t().catch(() => null)), Promise.resolve(null))
+        .then(kv => { diag.mark('kv', name + '=' + (kv && kv.backend)); return kv; });
     }
   };
 
@@ -1601,6 +1657,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     const metas = [];
     for (const [area] of areas){
       let m;
+      diag.mark('meta.' + area);
       try { m = await Y.env[area].get('meta'); } catch (e){ throw wrap(e); }
       if (isPlain(m) && typeof m.schema === 'number' && m.schema > cur){
         throw util.error('newer', '新しい版のエンジンが作ったデータなので、書き換えない(' + area + ' の版 ' + m.schema + ' > ' + cur + ')', { area, found: m.schema, current: cur });
@@ -1632,6 +1689,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
         store.deviceId = meta.deviceId;
       }
     }
+    diag.mark('meta.ok');
   }
   store.meta = () => store.init().then(() => Y.env.shared.get('meta'));
 
@@ -5124,6 +5182,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const util = Y.util, config = Y.config, levels = Y.levels, order = Y.order, store = Y.store, settings = Y.settings, quota = Y.quota;
   const prompts = Y.prompts, wire = Y.wire, translate = Y.translate, sites = Y.sites, extract = Y.extract, render = Y.render, text = Y.text, theme = Y.theme;
   const isPlain = util.isPlain;
+  const diag = Y.diag || { mark(){}, stage: () => '' };   // 調べるための記録(控えるだけ。§9-8)
   const STYLES = ['marker', 'quiet'];
   const EVENTS = ['state', 'progress', 'sentence', 'notice', 'log'];
 
@@ -5293,17 +5352,34 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     doc = o.doc || (typeof document !== 'undefined' ? document : null);
     win = doc ? doc.defaultView : null;     // 先に受けておく(jsdom では、document の欄を読むたびに、ページ全体を数え直すため)
     loc = o.loc || (win ? win.location : null);
+    diag.mark('wait');
     const found = doc && loc ? await sites.wait(loc, doc) : null;
-    if (my !== epoch || !found) return status();
+    if (my !== epoch || !found){ diag.mark(found ? 'left' : 'nopage'); return status(); }
+    diag.mark('found', found.site);
+    // 本文ページなのに、ここから先(保存を読む)が、いつまでも返ってこないことがある(工程5b-2b: iPhone のなろうで、「次へ」のあと、台が出ない)。
+    //   何も出ないままにしない: page.stuckMs たっても終わらなければ、知らせる(stuck。直し方を示す)。「ブレンド」は出さない(訳してあるページを、訳していないと見せて、回数を使わせない)。
+    //   読むのは、止めない・やり直さない。あとから返ってきたら、知らせを消して、いつもどおりに出す
+    const wd = setTimeout(() => {
+      if (my !== epoch || state !== 'none' || notice) return;
+      diag.mark('stuck');
+      tell('stuck', { ios: !!(Y.env && Y.env.info && Y.env.info.ios) });
+    }, config.page.stuckMs);
+    try { return await bootPage(found, my); }
+    finally { clearTimeout(wd); if (my === epoch) clearNotice(['stuck']); }
+  }
+  async function bootPage(found, my){
+    diag.mark('init');
     try { await store.init(); }
     catch (e){
       if (my === epoch) halt(e && e.kind === 'newer' ? 'newer' : 'error', e && e.kind === 'newer' ? { found: e.found, current: e.current } : { cause: (e && e.kind) || 'store', message: String((e && e.message) || e) });
       return status();
     }
+    diag.mark('settings');
     await quiet(settings.load());
     if (my !== epoch) return status();
     const s = settings.get();
     const m = extract.page(found);
+    diag.mark('extract', m.targets.length);
     if (!m.targets.length) return status();  // 対象の文が無い: 操作部を出さない
     info = found; model = m;
     level = s.level; ratio = s.ratio; style = s.style; orig = false;
@@ -5312,7 +5388,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     ranks = order.rank(model, { shortFirst: levels.shortFirst(level) });
     vertical = sites.vertical(info, doc);
     hook();
+    diag.mark('load');
     if (!(await load(level, my))) return status();
+    diag.mark('ready', have.size);
     // 開き直したら、自動で前と同じ表示に戻す(設計メモ 2-1。通信なし)
     if (have.size && s.restore && rec.on !== false){
       view = true;
@@ -5329,7 +5407,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   async function load(lv, my){
     const page = info.pageKey;
     let r, sv;
-    try { r = await store.pages.get(page, lv); } catch (e){ r = undefined; }   // 新しい版の保存は使わない(書き換えもしない)
+    try { r = await store.pages.get(page, lv); } catch (e){ r = undefined; diag.mark('load.nopage', e && e.kind); }   // 新しい版の保存は使わない(書き換えもしない)
     try { sv = await store.pages.saved(page); } catch (e){ sv = {}; }
     if (my !== epoch) return false;
     rec = isPlain(r) ? r : null;
@@ -5851,6 +5929,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'note.evicted': '保存がいっぱいなので、古い訳を {n} ページ消しました',
     'note.newer': '新しい版で保存したデータがあります。{app} を新しくしてください',
     'note.conflict': '今の版(小説まぜりんご)と同時には動かせません。どちらかを止めてください',
+    'note.stuckIos': 'アプリの準備が止まっています。Safari をいったん閉じて、開き直すと直ります',
+    'note.stuck': 'アプリの準備が止まっています。ブラウザをいったん閉じて、開き直すと直ります',
+    'act.fix': '直し方を見る',
     'act.settings': '設定をひらく',
     'act.more': '続きを訳す',
     'act.translate': '訳す',
@@ -6219,6 +6300,25 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'data.store.ls': 'この端末の中(localStorage。入る量は少なめ)',
     'data.store.mem': '保存できていません(このページを閉じると消えます)',
     'data.memWarn': 'この端末では、保存ができていません。訳したページや記録は、このページを閉じると消えます。',
+    // うまく動かないときの画面(ui/settings_diag.js)
+    'fix.title': '直し方',
+    'fix.head': 'アプリの準備が止まっています',
+    'fix.lead': 'この端末の保存を読むのを、待ったままになっています。訳したページや単語帳は、消えていません。',
+    'fix.ios1': '画面の下のふちから、上へゆっくりなぞって、途中で指を止めます',
+    'fix.ios1d': 'ホームボタンのある iPhone は、ホームボタンを2回押します。',
+    'fix.ios2': 'Safari の画面を、上へ払って閉じます',
+    'fix.ios2d': 'ホーム画面に戻るだけでは、直りません。',
+    'fix.ios3': 'Safari を開き直します',
+    'fix.ios3d': '開いていたページは、そのまま残っています。',
+    'fix.pc1': 'ブラウザの窓を、全部閉じます',
+    'fix.pc1d': 'このページを読み込み直すだけでは、直らないことがあります。',
+    'fix.pc2': 'ブラウザを開き直して、このページを開きます',
+    'fix.pc2d': '訳したページは、そのまま出ます。',
+    'diag.label': '調べるための記録',
+    'diag.note': 'うまく動かないわけを調べるための記録です。入っているのは、数字と、段階の名前だけです。小説の文と API キーは、入りません。',
+    'diag.copy': '記録を写す',
+    'diag.copied': '写しました。メッセージに貼り付けて、送ってください',
+    'diag.copyFail': '自動では写せませんでした。下の字を長押しして、全部を選んで写してください',
     'soon': '準備中です'
   };
 
@@ -6511,6 +6611,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.full [data-box="picked"] { margin-top: 12px; display: flex; flex-direction: column; }',
       '.full .result .link { margin-top: 4px; }',
       '.full .result .hint { margin: 4px 0 0; }',
+      // 調べるための記録を、自動で写せなかったとき: 字をそのまま出す(長押しして、選べる。ui/settings_diag.js)
+      '.full .dump { margin-top: 8px; border-radius: 16px; background: ' + v('well') + '; padding: 12px 16px; max-height: 160px; overflow: auto; overflow-wrap: anywhere; -webkit-user-select: all; user-select: all; ' + t(CAP, 400, BASE) + ' }',
       '.full .steps.flat { border-top: 0; padding-bottom: 12px; }',
       '.full .hint.plain { ' + t(BODY, 400, BASE) + ' }',
       '.full .info { padding: 12px 16px; display: flex; flex-direction: column; gap: 4px; }',
@@ -6541,6 +6643,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.full .how .ttl { ' + t(BODY, 700, TIGHT) + ' }',
       '.full .how .sub { ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
       '.full .how .name { ' + t(CAP, 700, TIGHT) + ' white-space: nowrap; }',
+      '.full .how .num { ' + t(TITLE, 700, TIGHT) + ' }',                      // 「直し方」の手順の番号(ui/settings_diag.js)
       '.full .how .logo { width: 40px; height: 40px; border-radius: 50%; background: ' + v('well') + '; display: flex; align-items: center; justify-content: center; }',
       '.full .how .track { position: relative; width: 40px; height: 8px; border-radius: 4px; background: ' + v('grad') + '; }',
       '.full .how .dot { position: absolute; left: 12px; top: -4px; width: 16px; height: 16px; border-radius: 50%; background: ' + v('knob') + '; box-shadow: ' + v('knobShadow') + '; }',
@@ -6758,10 +6861,17 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     });
     return sum;
   }
-  function placeNow(){
+  // 調べるための記録に出す、固定されたものの名前と場所(タグ・id・クラスの頭と、左・上・幅・高さ。中の文字は入れない)
+  const tagOf = n => String(n.tagName || '').toLowerCase() + (n.id ? '#' + String(n.id).slice(0, 24) : '')
+    + (typeof n.className === 'string' && n.className.trim() ? '.' + n.className.trim().split(/\s+/).slice(0, 2).join('.').slice(0, 40) : '');
+  const rectOf = r => [r.left, r.top, r.width, r.height].map(Math.round);
+  const noteOf = n => [tagOf(n), rectOf(n.getBoundingClientRect()), win.getComputedStyle(n).position];
+  // detail = true なら、決めた理由の数字も返す(out.info。「記録を写す」に出る)
+  function placeNow(detail){
     const L = cfg.ui.lift, out = { lift: 0, side: '' };
-    if (!L || !L.on || typeof doc.elementsFromPoint !== 'function' || !win.getComputedStyle) return out;
     const W = win.innerWidth || 0, H = win.innerHeight || 0;
+    const info = detail ? (out.info = { W, H }) : null;
+    if (!L || !L.on || typeof doc.elementsFromPoint !== 'function' || !win.getComputedStyle) return out;
     // ① 下のふちの帯
     const low = [];
     [0.25, 0.5, 0.75].forEach(k => fixedAt(W * k, H - 4, low));
@@ -6772,6 +6882,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // ② 台の置き場所(右下)に、固定されたものが重なるか。重なるなら、左下と比べる
     const dock = Array.prototype.find.call(slots.main ? slots.main.children : [], e => !e.hidden);
     const dw = dock ? dock.getBoundingClientRect().width : 0;
+    if (info) Object.assign(info, { low: low.slice(0, 4).map(noteOf), lift: out.lift, dock: dock ? dock.getAttribute('data-dock') : null, dw: Math.round(dw) });
     if (!(dw > 0) || dw > W * 0.7 || W >= cfg.ui.wideMin) return out;      // 横いっぱいの形(ひらいたつまみ・進み具合)と、広い画面では、よけない
     const bottom = H - cfg.ui.bottom - out.lift, top = bottom - 64;
     const boxAt = left => ({ left, right: left + dw, top, bottom });
@@ -6780,6 +6891,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     [right, left].forEach(b => [b.left + 4, (b.left + b.right) / 2, b.right - 4].forEach(x => [b.top + 4, (b.top + b.bottom) / 2, b.bottom - 4].forEach(y => fixedAt(x, y, seen))));
     const or = overlap(right, seen), ol = overlap(left, seen);
     if (or > 0 && ol < or * L.sideGain) out.side = 'left';
+    if (info) Object.assign(info, { right: [right.left, right.top].map(Math.round), left: [left.left, left.top].map(Math.round), seen: seen.slice(0, 6).map(noteOf), or: Math.round(or), ol: Math.round(ol), gain: L.sideGain, side: out.side });
     return out;
   }
   function lift(){
@@ -7016,6 +7128,13 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     hold, quiet, draw, run,
     away: () => away,
     lift, lifted: () => lifted, side: () => side,
+    // 置き場のよけ方を、今の画面で計算し直した数字(調べるための記録。置き場は動かさない)。now = 今、実際に使っている値
+    placeInfo(){
+      let p = null;
+      try { p = placeNow(true).info || null; } catch (e){ p = { err: String((e && e.message) || e).slice(0, 80) }; }
+      const vv = win && win.visualViewport;
+      return Object.assign(p || {}, { now: { lift: lifted, side }, away, dpr: (win && win.devicePixelRatio) || 1, vv: vv ? [vv.width, vv.height, vv.scale].map(n => Math.round(n * 100) / 100) : null });
+    },
     fresh: () => Date.now() - backAt < cfg.ui.guardMs,   // 隠れていた置き場が、出てきたすぐあとか(回数を使うボタンが、押しまちがいを受けないために聞く)
     status: () => cur,
     mounted: () => !!host,
@@ -7286,6 +7405,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       case 'evicted': return { text: ui.t('note.evicted', { n: n.pages }), acts: [] };
       case 'newer': return { text: ui.t('note.newer'), acts: [] };
       case 'conflict': return { text: ui.t('note.conflict'), acts: [] };
+      // 起動の途中で、保存を読むのが終わらない: 直し方を、すぐ示す(行き止まりにしない=2026-10-11 利用者)
+      case 'stuck': return { text: ui.t(n.ios ? 'note.stuckIos' : 'note.stuck'), acts: [{ label: ui.t('act.fix'), fn: () => { ui.show('fix'); } }] };
       case 'error': return { text: errorText(n), acts: [] };
       default: return { text: ui.t('err.other'), acts: [] };
     }
@@ -8871,11 +8992,84 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         line(ui.t('data.env'), named('data.env.', info && info.handler), 'env'),
         line(ui.t('data.storeShared'), named('data.store.', Y.store.shared.backend), 'shared'),
         line(ui.t('data.storeSite'), named('data.store.', Y.store.site.backend), 'site')
-      ])
-    ] });
+      ]),
+      // 調べるための記録(うまく動かないときに、写して送ってもらう。ui/settings_diag.js)
+      ui.el('p', { class: 'hint', text: ui.t('diag.note') })
+    ].concat(Y.uiDiag ? Y.uiDiag.copyBox() : []) });
   }
 
   S.add('data', data);
+})();
+
+/* ---- ui/settings_diag.js ---- */
+// ui/settings_diag.js — うまく動かないときの画面(部品の約束 §9-6・§9-8。工程5b-2b)
+//   「直し方」(部品の名前は fix): 知らせ stuck(起動の途中で、保存を読むのが終わらない)の「直し方を見る」から出す、画面いっぱいの1枚。
+//     ブラウザを閉じて開き直す手順と、「記録を写す」。本文ページの状態が none のままでも出せる(設定のトップへは、行かない)。
+//   「記録を写す」: 設定の「この版」にも置く(Yomu.uiDiag.copyBox)。写すのは、調べるための記録(core/diag.js)・置き場のよけ方の数字(Yomu.ui.placeInfo)・
+//     前のページを離れたときの控え(shell/boot.js が書く)。ページの文章・題名・作品の番号・API キーは入れない。
+//   写すのは、押したその場で(待たずに)行う: 待ってから写すと、iPhone の Safari が、写しの置き場への書き込みを受けない。だから、控えは、画面を作るときに読んでおく
+(function(){
+  'use strict';
+  const Y = Yomu;
+  const ui = Yomu.ui, cfg = Yomu.config, S = Yomu.uiSettings;
+  const HEAD = 'yomu-diag ';        // 貼ってもらった字の、頭の目印
+  const win = () => ui.root().ownerDocument.defaultView;
+  const within = (p, ms) => Promise.race([Promise.resolve(p).catch(() => undefined), new Promise(r => setTimeout(() => r(undefined), ms))]);
+  const backend = area => { try { return Y.store[area].backend; } catch (e){ return null; } };
+
+  // 記録(その場で作る)。leave = 前のページを離れたときの控え(読めていなければ null)
+  function report(leave){
+    const info = (Y.env && Y.env.info) || {}, s = Y.page.status(), w = win();
+    return {
+      v: cfg.version, env: info.handler || null, ios: !!info.ios, host: String(w.location.hostname), now: Date.now(),
+      state: s.state, notice: s.notice ? s.notice.kind : null, busy: !!s.busy, n: s.n, saved: Object.keys(s.saved || {}).length,
+      store: { shared: backend('shared'), site: backend('site') },
+      boot: Y.diag.snapshot(),
+      leave: leave || null,
+      place: ui.placeInfo()
+    };
+  }
+  const text = leave => HEAD + JSON.stringify(report(leave));
+
+  // 「記録を写す」のボタンと、その結果 → [ボタン, 結果の置き場]
+  function copyBox(){
+    let leave = null;
+    const D = cfg.diag;
+    if (D && D.leave) within(Promise.resolve().then(() => Y.env.shared.get(D.leaveKey)), D.readMs).then(v => { if (v && typeof v === 'object') leave = v; });
+    const result = ui.el('div', { class: 'result', 'data-result': 'diag', hidden: true });
+    const show = (kids, say, fail) => { S.fill(result, kids); result.hidden = false; ui.announce(say, !!fail); };
+    const dump = t => show([ui.el('p', { class: 'hint first', text: ui.t('diag.copyFail') }), ui.el('div', { class: 'dump', 'data-dump': '', text: t })], ui.t('diag.copyFail'), true);
+    const btn = ui.el('button', { class: 'textbtn gap', 'data-act': 'diag-copy', onclick: () => {
+      let t = '';
+      try { t = text(leave); } catch (e){ t = HEAD + JSON.stringify({ v: cfg.version, err: String((e && e.message) || e).slice(0, 120) }); }
+      let p = null;
+      try { const c = win().navigator.clipboard; p = c && c.writeText ? c.writeText(t) : null; } catch (e){ p = null; }
+      if (!p){ dump(t); return; }
+      Promise.resolve(p).then(() => show([ui.el('div', { class: 'okline' }, [ui.icon('check', 18, 2.6), ui.el('span', { text: ui.t('diag.copied') })])], ui.t('diag.copied')), () => dump(t));
+    } }, [ui.el('span', { text: ui.t('diag.copy') })]);
+    return [btn, result];
+  }
+
+  // 「直し方」の1枚。手順は、絵の代わりに番号(最初の設定の「使い方」と同じ並べ方)
+  function fix(){
+    const ios = !!(Y.env && Y.env.info && Y.env.info.ios);
+    const steps = ios ? ['ios1', 'ios2', 'ios3'] : ['pc1', 'pc2'];
+    return S.shell({ name: 'fix', title: ui.t('fix.title'), body: [
+      ui.el('h1', { class: 'h1', text: ui.t('fix.head') }),
+      ui.el('p', { class: 'lead', text: ui.t('fix.lead') }),
+      ui.el('div', { class: 'hows', role: 'list', 'data-box': 'steps' }, steps.map((k, i) => ui.el('div', { class: 'how', role: 'listitem' }, [
+        ui.el('div', { class: 'pic', 'aria-hidden': 'true' }, [ui.el('span', { class: 'num', text: String(i + 1) })]),
+        ui.el('div', { class: 'txt' }, [ui.el('div', { class: 'ttl', text: ui.t('fix.' + k) }), ui.el('div', { class: 'sub', text: ui.t('fix.' + k + 'd') })])
+      ]))),
+      ui.el('div', { class: 'label', text: ui.t('diag.label') }),
+      ui.el('p', { class: 'hint first', text: ui.t('diag.note') })
+    ].concat(copyBox()) });
+  }
+
+  S.add('fix', fix);
+  Yomu.uiDiag = { copyBox, report, HEAD };
+  // 知らせ stuck の「直し方を見る」から(Yomu.ui.show('fix'))。状態が none でも出す
+  ui.part('fix', { open(){ S.go('fix'); }, close: () => ui.unsheet('settings') });
 })();
 
 /* ---- shell/boot.js ---- */
@@ -8897,10 +9091,32 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       return;
     }
     html.setAttribute(MARK, Y.config.version);
+    const diag = Y.diag, win = doc.defaultView;
+    diag.mark('boot', Y.config.version);
     // 2. 操作部の土台(ui)。見本ページ用の束だけ、試すための帯(にせのキー など)も出す
     if (Y.ui && typeof Y.ui.mount === 'function') Y.ui.mount({ doc });
     if (Y.devPanel) Y.devPanel.mount();
     if (Y.watch) Y.watch.start({ doc });     // 読んだ時間の見張り(英語まじりで出ている間だけ動く。§8-8)
+    diag.mark('ui');
+    // 調べるための控え(§9-8。工程5b-2b): ページを離れたときの様子を、全サイト共通の保存に1つ置く(次のページの「記録を写す」に出る)。動きは変えない。
+    //   persisted = ブラウザが、このページを「戻る」用に凍らせて取っておいた / wait = そのとき、返事を待っていた保存の読み書き(離れたあとに始まった・終わった分も、書き直す)。
+    //   進行役や見張りより先に付ける(それらが、離れるときに始めた書き込みも、入るように)
+    const L = Y.config.diag;
+    if (win && L && L.leave){
+      let leaving = null;
+      const write = () => {
+        if (!leaving || leaving.n >= L.leaveMax) return;
+        leaving.n++;
+        leaving.wait = diag.waiting().slice(0, 8).map(w => w[0]);
+        try { Promise.resolve(Y.env.shared.set(L.leaveKey, leaving)).catch(() => {}); } catch (e){}
+      };
+      win.addEventListener('pagehide', e => {
+        leaving = { at: Date.now(), host: String(location.hostname), state: Y.page.state, persisted: !!(e && e.persisted), wait: [], n: 0 };
+        write();
+      });
+      win.addEventListener('pageshow', e => { if (e && e.persisted){ leaving = null; diag.mark('pageshow', 'persisted'); } });
+      diag.onWait(write);
+    }
     // 3. 今の版と同時に動かさない(今の版のボタンがあれば、動かずに知らせる)。今の版が、あとから動くこともあるので、少し待ってもう一度見る
     const legacy = () => !!doc.getElementById(LEGACY);
     const conflict = () => Y.page.halt('conflict', { with: 'legacy' });
@@ -8913,7 +9129,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (st === 'on' || st === 'busy') Y.page.off(); else Y.page.blend();
     });
     // 5. URL が変わったら(ページを読み込み直さずに移るサイト)、片づけて、もう一度。ページの中の印(#…)だけの変化は数えない
-    Y.sites.watch(() => { Y.page.leave().then(go); }, { get: () => String(location.href).split('#')[0] });   // go が、今の版のボタンを見て知らせる
+    Y.sites.watch(() => { Y.page.leave().then(() => { diag.restart(); diag.mark('url'); go(); }); }, { get: () => String(location.href).split('#')[0] });   // go が、今の版のボタンを見て知らせる
   };
 })();
 
