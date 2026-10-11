@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.9
+// @version      0.1.10
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.9 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.10 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.9',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.10',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -199,6 +199,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     },
     store: {
       openMs: 4000,                // IndexedDB が開くのを待つ時間。過ぎたら、次の保存先にする(§8-1)
+      holdOnHide: true,            // ページを離れるとき(凍らせて取っておかれるとき・iPhone と iPad)は、IndexedDB の取引を新しく始めない・つながりを閉じる(§8-1。工程5b-2b)
+      holdCheckMs: 1000,           // 離れた合図のあとも、ページが生きていて見えていたら、取っておいた読み書きを始める(見に行く間隔)
       evictFactor: 2               // 保存がいっぱいのとき、書こうとしているものの大きさの何倍ぶんまで捨てるか(§8-1)
     },
     pages: {
@@ -363,6 +365,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     waiting(){ const now = clock(); return Array.from(wait.values()).map(w => [w[0], now - w[1]]); },
     // 待っているものが、増えた・減ったときに呼ぶ(離れたときの控えを書き直すため)→ やめる関数
     onWait(fn){ subs.add(fn); return () => subs.delete(fn); },
+    poke: changed,               // 待っているもののほかに、控えを書き直したいとき(離れている間に、読み書きを取っておいた)
     snapshot(){ return { ms: clock() - t0, stage: stageNow, marks: marks.map(m => m.slice()), more, wait: Y.diag.waiting() }; }
   };
 })();
@@ -1423,7 +1426,32 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 
   // ---- ページの保存の KV(入れ物が使う。§2-2)。indexedDB・localStorage は、入れ物が渡す ----
   const OS = 'kv', PROBE = '__probe';
-  function idbKV(idb, name){
+  // 離れている間(§8-1。工程5b-2b): IndexedDB の取引を新しく始めない・つながりを閉じておく。
+  //   iPhone の Safari は、前のページを「戻る」用に凍らせて取っておくことがある。離れるときに始めた取引は、凍ったページの中で終わらないまま残り、
+  //   同じ保存を使う次のページの読み書きが、その後ろで、いつまでも待たされる(なろうで「次へ」のあと、アプリの準備が止まる=利用者の iPhone で起きた)。
+  //   hold() から release() までに頼まれた読み書きは、始めずに取っておき、release() のあと、頼まれた順に始める(ページが戻ってこなければ、そのまま消える)。
+  //   呼ぶのは、起動の部品(shell/boot.js。pagehide・pageshow)
+  let gate = null, heldN = 0;
+  const shuts = new Set();        // 開いているつながりを閉じる関数(IndexedDB の KV ごと)
+  function hold(){
+    if (!gate){
+      let open;
+      const p = new Promise(r => { open = r; });
+      gate = { p, open };
+      heldN = 0;
+      diag.mark('idb.hold');
+    }
+    shuts.forEach(fn => { try { fn(); } catch (e){} });
+  }
+  function release(){
+    if (!gate) return;
+    const g = gate;
+    gate = null;
+    diag.mark('idb.release', heldN);
+    g.open();
+  }
+  // 開く → IDBDatabase。待つのは store.openMs まで
+  function idbOpen(idb, name){
     return new Promise((res, rej) => {
       if (!idb) return rej(new Error('no indexedDB'));
       let req, settled = false;
@@ -1435,16 +1463,35 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       req.onsuccess = () => {
         if (settled){ try { req.result.close(); } catch (e){} return; }   // 待ちきれずに次の保存先へ進んだあと
         settled = true; clearTimeout(timer); diag.end(w); diag.mark('idb.open');
-        // つながりが切れた・ほかのタブが形を変えようとしている、を控える(控えるだけ)
-        try { req.result.onclose = () => diag.mark('idb.closed'); req.result.onversionchange = () => diag.mark('idb.verchange'); } catch (e){}
         res(req.result);
       };
       req.onerror = () => fail(req.error || new Error('indexedDB open failed'));
       req.onblocked = () => fail(new Error('indexedDB blocked'));
-    }).then(db => {
-      const tx = (mode, fn, op, key) => new Promise((res, rej) => {
+    });
+  }
+  function idbKV(idb, name){
+    return idbOpen(idb, name).then(first => {
+      let db = null, opening = null;
+      // つながりを持つ。切れた(ブラウザが切った)ら、次に使うときに開き直す。ほかのタブが形を変えようとしている、は控えるだけ
+      const keep = d => {
+        db = d;
+        try { d.onclose = () => { diag.mark('idb.closed'); if (db === d) db = null; }; d.onversionchange = () => diag.mark('idb.verchange'); } catch (e){}
+        return d;
+      };
+      const shut = () => { const d = db; db = null; if (d){ diag.mark('idb.shut'); try { d.close(); } catch (e){} } };
+      keep(first);
+      shuts.add(shut);
+      // 閉じてあれば、開き直す。開き直している間に離れたら(hold)、閉じ直す
+      const conn = () => (db ? Promise.resolve(db) : opening || (opening = idbOpen(idb, name).then(d => { opening = null; keep(d); if (gate) shut(); return d; }, e => { opening = null; throw e; })));
+      const start = (d, mode, fn, op, key, again) => new Promise((res, rej) => {
         let t, out;
-        try { t = db.transaction(OS, mode); } catch (e){ diag.mark('idb.txfail', e && e.message); return rej(e); }
+        try { t = d.transaction(OS, mode); }
+        catch (e){
+          diag.mark('idb.txfail', e && e.message);
+          // つながりが、知らない間に切れていた・開き直している間に閉じた: 1回だけ、開き直してやり直す
+          if (!again){ if (db === d) db = null; return res(tx(mode, fn, op, key, true)); }
+          return rej(e);
+        }
         const w = diag.begin('idb ' + op + ' ' + head(key));     // 返事を待っている読み書き(終わらないものが、記録に残る)
         const no = e => { diag.end(w); rej(e); };
         let req;
@@ -1455,6 +1502,14 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
         t.onerror = () => no(t.error || new Error('idb tx failed'));
         t.onabort = () => no(t.error || new Error('idb tx aborted'));
       });
+      function tx(mode, fn, op, key, again){
+        if (gate){                                               // 離れている間: 始めずに、取っておく(戻ったあとで、もう一度ここから)
+          heldN++;
+          if (diag.poke) diag.poke();
+          return gate.p.then(() => tx(mode, fn, op, key, again));
+        }
+        return db ? start(db, mode, fn, op, key, again) : conn().then(() => tx(mode, fn, op, key, again));
+      }
       const kv = {
         backend: 'idb',
         get: k => tx('readonly', st => st.get(k), 'get', k),
@@ -1499,6 +1554,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
   }
   store.kv = {
     idb: idbKV, ls: lsKV, mem: memKV,
+    hold, release,
+    state: () => ({ held: !!gate, n: heldN }),   // 離れている間か・その間に取っておいた読み書きの数(調べるための記録)
     // IndexedDB → localStorage → メモリの順に、使えた最初のもの
     pick(opt){
       opt = opt || {};
@@ -6843,6 +6900,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   //   ②もっと大きいもの(右下の四角い広告): 上げずに、左へよける(data-side="left"。重なりが、右に置くときの sideGain 倍より小さくなるときだけ)
   //   見るのは、画面の中の点に、いちばん手前で当たるもの(こちらの入れ物は除く)から、親へたどって見つかる、固定(fixed・sticky)されたもの
   let lifted = 0, side = '';
+  const t0 = Date.now(), placeHist = [];
+  let tickAt = 0, tickInfo = null;
   function fixedAt(x, y, into){
     const top = (doc.elementsFromPoint(x, y) || []).find(e => e !== host);
     for (let n = top; n && n !== doc.body && n !== doc.documentElement; n = n.parentElement){
@@ -6897,7 +6956,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   function lift(){
     if (!bay || sheetNow) return;                          // 板が出ている間は、板(こちらの物)が下のふちを覆っている
     let p;
-    try { p = placeNow(); } catch (e){ p = { lift: lifted, side }; }
+    try { p = placeNow(true); } catch (e){ p = { lift: lifted, side, info: { err: String((e && e.message) || e).slice(0, 80) } }; }
+    // 調べるための控え(§9-8): いちばん新しい見回りの数字と、置き場が変わった時刻(起動からの ms。新しい6つ)
+    tickAt = Date.now(); tickInfo = p.info || null;
+    if (p.lift !== lifted || p.side !== side){ placeHist.push([tickAt - t0, p.lift, p.side]); if (placeHist.length > 6) placeHist.shift(); }
     if (p.lift !== lifted){
       lifted = p.lift;
       if (lifted) bay.style.setProperty('--lift', lifted + 'px'); else bay.style.removeProperty('--lift');
@@ -7133,7 +7195,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       let p = null;
       try { p = placeNow(true).info || null; } catch (e){ p = { err: String((e && e.message) || e).slice(0, 80) }; }
       const vv = win && win.visualViewport;
-      return Object.assign(p || {}, { now: { lift: lifted, side }, away, dpr: (win && win.devicePixelRatio) || 1, vv: vv ? [vv.width, vv.height, vv.scale].map(n => Math.round(n * 100) / 100) : null });
+      // tick = 板が出ていないときの、いちばん新しい見回り(ago = 何 ms 前か)。hist = 置き場が変わった時刻と、そのときの上げ幅・よけた側
+      return Object.assign(p || {}, { now: { lift: lifted, side }, tick: tickInfo ? Object.assign({ ago: Date.now() - tickAt }, tickInfo) : null, hist: placeHist.slice(), ms: Date.now() - t0, away, dpr: (win && win.devicePixelRatio) || 1, vv: vv ? [vv.width, vv.height, vv.scale].map(n => Math.round(n * 100) / 100) : null });
     },
     fresh: () => Date.now() - backAt < cfg.ui.guardMs,   // 隠れていた置き場が、出てきたすぐあとか(回数を使うボタンが、押しまちがいを受けないために聞く)
     status: () => cur,
@@ -9023,7 +9086,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return {
       v: cfg.version, env: info.handler || null, ios: !!info.ios, host: String(w.location.hostname), now: Date.now(),
       state: s.state, notice: s.notice ? s.notice.kind : null, busy: !!s.busy, n: s.n, saved: Object.keys(s.saved || {}).length,
-      store: { shared: backend('shared'), site: backend('site') },
+      store: { shared: backend('shared'), site: backend('site'), hold: Y.store.kv.state() },
       boot: Y.diag.snapshot(),
       leave: leave || null,
       place: ui.placeInfo()
@@ -9101,20 +9164,40 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // 調べるための控え(§9-8。工程5b-2b): ページを離れたときの様子を、全サイト共通の保存に1つ置く(次のページの「記録を写す」に出る)。動きは変えない。
     //   persisted = ブラウザが、このページを「戻る」用に凍らせて取っておいた / wait = そのとき、返事を待っていた保存の読み書き(離れたあとに始まった・終わった分も、書き直す)。
     //   進行役や見張りより先に付ける(それらが、離れるときに始めた書き込みも、入るように)
-    const L = Y.config.diag;
-    if (win && L && L.leave){
-      let leaving = null;
+    // 離れるとき(§8-1。工程5b-2b): 凍らせて取っておかれるとき(persisted)と、iPhone・iPad では、ここから先、IndexedDB の取引を新しく始めない・つながりを閉じる(Yomu.store.kv.hold)。
+    //   離れるときに始めた取引が、凍ったページの中で終わらないまま残り、次のページの読み書きを、いつまでも待たせるため(なろうで「次へ」のあと、アプリの準備が止まる)。
+    //   iPhone では、離れるときに始めた IndexedDB への書き込みは、もともと残らない(工程P)=失うものは無い。PC で、凍らせないときは、今までどおり書く。
+    //   戻ってきたら(pageshow・表に出た)、取っておいた分を始める。離れた合図のあとも、ページが生きていて見えていたら(合図の順が、思ったとおりでない端末への備え)、同じく始める
+    const L = Y.config.diag || {}, C = Y.config.store;
+    if (win){
+      const ios = !!(Y.env.info && Y.env.info.ios);
+      let leaving = null, holdT = null;
+      const free = () => {
+        if (holdT){ clearInterval(holdT); holdT = null; }
+        Y.store.kv.release();
+      };
       const write = () => {
-        if (!leaving || leaving.n >= L.leaveMax) return;
+        if (!L.leave || !leaving || leaving.n >= L.leaveMax) return;
+        if (leaving.n && Y.store.shared.backend === 'idb') return;   // 控えの置き場も IndexedDB の入れ物(見本ページ など): 控えを書くこと自体が「取っておいた読み書き」になるので、書き直さない
         leaving.n++;
         leaving.wait = diag.waiting().slice(0, 8).map(w => w[0]);
+        leaving.held = Y.store.kv.state().n;
         try { Promise.resolve(Y.env.shared.set(L.leaveKey, leaving)).catch(() => {}); } catch (e){}
       };
       win.addEventListener('pagehide', e => {
-        leaving = { at: Date.now(), host: String(location.hostname), state: Y.page.state, persisted: !!(e && e.persisted), wait: [], n: 0 };
+        const persisted = !!(e && e.persisted), held = !!C.holdOnHide && (persisted || ios);
+        if (held){
+          Y.store.kv.hold();
+          if (!holdT) holdT = setInterval(() => { if (doc.visibilityState === 'visible') free(); }, C.holdCheckMs);
+        }
+        leaving = { at: Date.now(), host: String(location.hostname), state: Y.page.state, persisted, hold: held, held: 0, wait: [], n: 0 };
         write();
       });
-      win.addEventListener('pageshow', e => { if (e && e.persisted){ leaving = null; diag.mark('pageshow', 'persisted'); } });
+      win.addEventListener('pageshow', e => {
+        free();
+        if (e && e.persisted){ leaving = null; diag.mark('pageshow', 'persisted'); }
+      });
+      doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible') free(); });
       diag.onWait(write);
     }
     // 3. 今の版と同時に動かさない(今の版のボタンがあれば、動かずに知らせる)。今の版が、あとから動くこともあるので、少し待ってもう一度見る
