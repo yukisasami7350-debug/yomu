@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.10
+// @version      0.1.11
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.10 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.11 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.10',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.11',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -6903,7 +6903,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const t0 = Date.now(), placeHist = [];
   let tickAt = 0, tickInfo = null;
   function fixedAt(x, y, into){
-    const top = (doc.elementsFromPoint(x, y) || []).find(e => e !== host);
+    // こちらの物は、数えない: 入れ物(host)と、その中(Shadow DOM)の部品。iPhone の Safari は、中の部品を、そのまま返すことがある
+    //   (工程5b-2b 利用者の iPhone の記録: 置き場 .bay が「固定されたもの」に数えられて、右も左も同じだけ重なる、と出ていた=入口の台が、左へよけなかった)
+    const top = (doc.elementsFromPoint(x, y) || []).find(e => e !== host && !(e.getRootNode && e.getRootNode() === shadow));
     for (let n = top; n && n !== doc.body && n !== doc.documentElement; n = n.parentElement){
       const pos = win.getComputedStyle(n).position;
       if (pos !== 'fixed' && pos !== 'sticky') continue;
