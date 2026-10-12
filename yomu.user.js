@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.13
+// @version      0.1.14
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.13 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.14 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.13',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.14',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -252,6 +252,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       toastMs: 2400,               // 短い知らせを出しておく時間
       twoTapMs: 4000,              // 2回タップで確かめる操作の、2回目を待つ時間
       twoTapMinMs: 350,            // 1回目から、これより早い2回目は数えない(指が弾んだ二度押し)
+      modelHide: 'image|tts|audio|live|embed|robotics|computer-use',   // 「一覧から取ってくる」で、並べない AI(名前に、この字が入るもの=絵・音声・読み上げ・埋め込み など、文を訳す用でないもの。設定の画面だけの決まり)
       guardMs: 300,                // 入口の台が出てきたすぐあと(隠れていたのが出た・中止で戻った)は、この間「ブレンド」を受けつけない(押しまちがいで回数を使わない。§9-3)
       foldMs: 4000,                // 操作部: ひらいたつまみを、さわらずにこれだけたったら、たたむ(ロゴと「60%」だけの形に。設計メモ 2-5)
       lift: { on: true, max: 120, everyMs: 2000, sideGain: 0.5 },   // サイトが画面の下に固定しているもの(広告など)をよける: 低い帯(高さ max まで)は、その上へ上げる/もっと大きいものは、左へよける(重なりが、右に置くときの sideGain 倍より小さくなるときだけ)。everyMs = 見に行く間隔
@@ -6235,7 +6236,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'mod.listNoKey': 'API キーがまだ入っていません。「AI につなぐ」で入れてください',
     'mod.reset': 'はじめの設定に戻す({model}・{think})',
     'mod.resetDone': 'はじめの設定に戻しました',
-    'mod.firstSub': 'はじめの設定・{sub}',
+    'mod.first': 'はじめの設定',
+    'mod.now': '今の設定',
     'mod.fetched': '一覧から取ってきた AI',
     'mod.pick': 'これにする',
     'mod.set': '「{level}」の訳す AI を、{model}・{think}にしました',
@@ -6281,10 +6283,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'voice.cannot': 'この端末では、読み上げが使えません',
     'voice.good': 'enhanced|premium|natural|拡張|プレミアム',
     'voice.tip': 'より自然な声にするには',
-    'voice.tip.ios.1': 'iPhone の「設定」→「アクセシビリティ」→「読み上げコンテンツ」→「声」→「英語」をひらく(見つからなければ、設定の検索で「声」)',
+    'voice.tip.ios.1': 'iPhone の「設定」→「アクセシビリティ」→「リーダーと読み上げ」→「声」→「英語」をひらく(見つからなければ、設定の検索で「声」)',
     'voice.tip.ios.2': '名前に「拡張」か「プレミアム」と付いた声を選んで、ダウンロードする(1つ 100〜300MB ほど。Wi-Fi で)',
     'voice.tip.ios.3': 'この画面をひらき直して、上の「声」から、入れた声を選ぶ',
-    'voice.tipNote.ios': 'Apple の側の画面なので、名前や場所は、iOS の版で変わることがあります。',
+    'voice.tipNote.ios': '上の道順は、iOS 26 のものです。Apple の側の画面なので、名前や場所は、iOS の版で変わることがあります。',
     'voice.tip.android.1': '端末の「設定」→「ユーザー補助」→「テキスト読み上げの設定」をひらく',
     'voice.tip.android.2': '優先するエンジンを Google のものにして、歯車の印 →「音声データをインストール」→ 英語を選ぶ',
     'voice.tip.android.3': 'この画面をひらき直して、上の「声」を選ぶ',
@@ -6627,8 +6629,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       // 主なボタン(色の面。1つの画面に1つ)と、その下の小さいボタン
       '.full .primary { width: 100%; min-height: ' + BIG + 'px; border-radius: 28px; background: ' + v('key') + '; color: ' + v('keyInk') + '; ' + t(BODY, 700, TIGHT) + ' display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 20px; }',
       '.full .main .primary { margin-top: 16px; }',
-      '.full .textbtn { align-self: center; min-height: ' + TAP + 'px; border-radius: ' + PILL + '; padding: 0 16px; ' + t(CAP, 700, TIGHT) + ' color: ' + v('panelMuted') + '; }',
-      '.full .textbtn[data-armed] { background: ' + v('key') + '; color: ' + v('keyInk') + '; }',
+      '.full .textbtn { align-self: center; min-height: ' + TAP + 'px; border-radius: ' + PILL + '; padding: 0 16px; ' + t(CAP, 700, TIGHT) + ' color: ' + v('panelMuted') + '; border: 1px solid ' + v('panelMuted') + '; }',
+      '.full .bar .textbtn { border: 0; }',
+      '.full .hint + .textbtn { margin-top: 12px; }',
+      '.full .foot .side.wide { margin-top: 0; }',
+      '.full .textbtn[data-armed] { background: ' + v('key') + '; color: ' + v('keyInk') + '; border-color: ' + v('key') + '; }',
       // 押した結果は、ボタンのすぐ下に(§9-9)。うまくいった=印と字・確かめている=字だけ・うまくいかなかった=色と印を変えた枠(単語の板の .alert と同じ色)
       '.full .result { margin-top: 12px; display: flex; flex-direction: column; }',
       '.full .okline { display: flex; align-items: flex-start; gap: 8px; ' + t(BODY, 700, BASE) + ' color: ' + v('accent') + '; }',
@@ -6644,6 +6649,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.full .opt[aria-pressed="true"] { background: ' + v('panel') + '; box-shadow: 0 0 0 2px ' + v('key') + '; }',
       '.full .opt .two { display: flex; flex-direction: column; gap: 4px; }',
       '.full .opt .ttl { ' + t(BODY, 700, TIGHT) + ' }',
+      '.full .opt .head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }',
+      '.full .opt .tag { ' + t(CAP, 700, TIGHT) + ' padding: 2px 8px; border-radius: ' + PILL + '; border: 1px solid ' + v('panelMuted') + '; color: ' + v('panelMuted') + '; white-space: nowrap; }',
+      '.full .opt .tag.now { border-color: ' + v('accent') + '; color: ' + v('accent') + '; }',
       '.full .opt .sub { ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
       '.full .opt .radio { width: 24px; height: 24px; flex: none; border-radius: 50%; border: 2px solid ' + v('panelMuted') + '; display: flex; align-items: center; justify-content: center; color: transparent; }',
       '.full .opt[aria-pressed="true"] .radio { border-color: ' + v('key') + '; background: ' + v('key') + '; color: ' + v('keyInk') + '; }',
@@ -8278,10 +8286,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const goalRow = row('goal', ui.t('set.goal'), () => go('goal'));
     goalRow.val.textContent = goalName(ui.status().level);
     const more = [];
-    if (Y.plan.shows('runs')) more.push(row('runs', ui.t('set.runs'), to('runs')).b);
     const voiceRow = row('voice', ui.t('set.voice'), to('voice'));
     if (has('voice')) voiceRow.val.textContent = Y.settings.get().voice.name || ui.t('set.voiceAuto');
     more.push(voiceRow.b, row('data', ui.t('set.data'), to('data')).b);
+    if (Y.plan.shows('runs')) more.push(row('runs', ui.t('set.runs'), to('runs')).b);   // 通信の記録は、いちばん下(ふだんは見ない。調べるときのもの=工程5b-2c)
     const modelsRow = row('models', ui.t('set.models'), to('models'));
     if (has('models') && Y.plan.shows('model')) modelsRow.val.textContent = short(Y.settings.modelFor(ui.status().level).m);
     return shell({ name: 'top', title: ui.t('set.title'), body: [].concat(
@@ -8415,10 +8423,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const v = /(?:^|-)(\d+(?:\.\d+)?)-/.exec(x);
     return v ? v[1] + ' ' + k : k;
   };
-  // 選ぶ札(丸い印つき。選んだ印は、色のほかに、チェックでも)。o = { id, title, sub, soon(まだ選べない) }
+  // 選ぶ札(丸い印つき。選んだ印は、色のほかに、チェックでも)。o = { id, title, sub, soon(まだ選べない), tags([{ text, now }]。名前の横の小さな札=「はじめの設定」「今の設定」) }
   function opt(o, onPick){
+    const ttl = ui.el('span', { class: 'ttl', text: o.title }), tags = (o.tags || []).filter(Boolean);
     const b = ui.el('button', { class: 'opt', 'data-opt': o.id, 'aria-pressed': o.soon ? null : 'false', 'data-soon': o.soon ? '' : null, onclick: () => (o.soon ? soon() : onPick(o.id)) }, [
-      ui.el('span', { class: 'two' }, [ui.el('span', { class: 'ttl', text: o.title }), o.sub ? ui.el('span', { class: 'sub', text: o.sub }) : null]),
+      ui.el('span', { class: 'two' }, [tags.length ? ui.el('span', { class: 'head' }, [ttl].concat(tags.map(g => ui.el('span', { class: 'tag' + (g.now ? ' now' : ''), text: g.text })))) : ttl, o.sub ? ui.el('span', { class: 'sub', text: o.sub }) : null]),
       o.soon ? ui.el('span', { class: 'soon', text: ui.t('set.soon') }) : ui.el('span', { class: 'radio', 'aria-hidden': 'true' }, [ui.icon('check', 14, 2.6)])
     ]);
     return b;
@@ -8680,7 +8689,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const alive = S.alive();
     const st = Y.settings.get(), cur = Y.settings.modelFor(level), def = levels.defaults.models[level];
     let fetched = null;            // 取ってきた AI の一覧(この画面が出ている間だけ持つ。保存しない。開き直したら、たたまれる)
-    let pickM = cur.m, pickT = cur.think;
+    let pickM = cur.m, pickT = cur.think, savedM = cur.m, savedT = cur.think;
+    // 名前の横の小さな札: はじめの設定・今の設定(保存してあるもの。選んだ印=これから決めるもの、とは別)
+    const tagsOf = (isDef, isNow) => [isDef ? { text: ui.t('mod.first') } : null, isNow ? { text: ui.t('mod.now'), now: true } : null];
+    const hide = new RegExp(cfg.ui.modelHide, 'i');
     // いつも並べる AI: はじめの設定・今つかっているもの(ほかの目標・熟語さがし など)
     const base = [];
     const add = m => { if (m && base.indexOf(m) < 0) base.push(m); };
@@ -8688,11 +8700,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     levels.ids.forEach(id => add(Y.settings.modelFor(id).m));
     Object.keys(st.aux || {}).forEach(k => add(st.aux[k]));
     Object.keys(st.limits || {}).forEach(add);
-    const first = (isDef, sub) => (isDef ? ui.t('mod.firstSub', { sub }) : sub);
     const aiBox = ui.el('div', { 'data-box': 'ai' });
     let aiBtns = [];
     function drawAi(){
-      const mk = (m, title) => S.opt({ id: m, title, sub: first(m === def.m, m) }, id => { pickM = id; S.press(aiBtns, id); });
+      const mk = (m, title) => S.opt({ id: m, title, sub: m, tags: tagsOf(m === def.m, m === savedM) }, id => { pickM = id; S.press(aiBtns, id); });
       const top = base.map(m => mk(m, S.short(m)));
       const more = (fetched || []).filter(x => base.indexOf(x.id) < 0).map(x => mk(x.id, x.name && x.name !== x.id ? String(x.name).replace(/^Gemini\s+/i, '') : S.short(x.id)));   // Google の呼び名から、頭の「Gemini」を外す(上の札の「3.5 Flash」と、そろえる)
       aiBtns = top.concat(more);
@@ -8708,7 +8719,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       S.fill(result, [ui.el('div', { class: 'state', text: ui.t('mod.listing') })]); result.hidden = false;
       Y.llm.models({ provider: st.provider }).then(list => {
         if (!alive()) return;
-        fetched = (Array.isArray(list) ? list : []).filter(x => x && x.id && x.canGenerate !== false && /^gemini/i.test(x.id));
+        fetched = (Array.isArray(list) ? list : []).filter(x => x && x.id && x.canGenerate !== false && /^gemini/i.test(x.id) && !hide.test(x.id));
         drawAi();
         const text = ui.t('mod.listed', { n: fetched.length });
         S.fill(result, [okLine(text)]); ui.announce(text);
@@ -8718,10 +8729,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         S.fill(result, [alertBox(text)]); ui.announce(text, true);
       }).then(() => { if (alive()) listBtn.disabled = false; });
     } }, [ui.el('span', { class: 'two' }, [ui.el('span', { text: ui.t('mod.list') }), ui.el('span', { class: 'cost', text: ui.t('mod.listFree') })])]);
-    const think = choice(levels.thinkModes.map(k => ({ id: k, title: thinkName(k), sub: first(k === def.think, ui.t('mod.thinkSub.' + k)) })), pickT, k => { pickT = k; });
+    const thinkBox = ui.el('div', { 'data-box': 'think' });
+    const drawThink = () => S.fill(thinkBox, [choice(levels.thinkModes.map(k => ({ id: k, title: thinkName(k), sub: ui.t('mod.thinkSub.' + k), tags: tagsOf(k === def.think, k === savedT) })), pickT, k => { pickT = k; }).box]);
+    drawThink();
     // はじめの設定に戻す: 押したら、すぐ保存する(押して決めるボタン。選ぶ札とは違う)
     const reset = ui.el('button', { class: 'textbtn', 'data-act': 'reset', onclick: () => {
-      save({ models: { [level]: { m: def.m, think: def.think } } }).then(ok => { if (ok && alive()){ pickM = def.m; pickT = def.think; S.press(aiBtns, pickM); think.set(pickT); ui.toast(ui.t('mod.resetDone')); } });
+      save({ models: { [level]: { m: def.m, think: def.think } } }).then(ok => { if (ok && alive()){ pickM = savedM = def.m; pickT = savedT = def.think; drawAi(); drawThink(); ui.toast(ui.t('mod.resetDone')); } });
     } }, [ui.t('mod.reset', { model: S.short(def.m), think: thinkName(def.think) })]);
     const apply = ui.el('button', { class: 'primary', 'data-act': 'apply', onclick: () => {
       apply.disabled = true;
@@ -8734,7 +8747,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return S.shell({ name: 'model', title: ui.t('mod.title'), back: 'models', body: [
       ui.el('h1', { class: 'h1', text: levelName(level) }),
       ui.el('div', { class: 'label', text: ui.t('mod.ai') }), aiBox, listBtn, result,
-      ui.el('div', { class: 'label', text: ui.t('mod.think') }), think.box,
+      ui.el('div', { class: 'label', text: ui.t('mod.think') }), thinkBox,
       reset
     ], foot: [apply] });
   }
@@ -8846,12 +8859,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       sp.can() ? null : alertBox(ui.t('voice.cannot')),
       ui.el('div', { class: 'label', text: ui.t('voice.voice') }), box,
       ui.el('div', { class: 'label', text: ui.t('voice.rate') }), ui.el('div', { class: 'trio' }, rateBtns),
-      tryBtn,
       tip.length || tipNote ? ui.el('div', { class: 'label', 'data-tip': dev, text: ui.t('voice.tip') }) : null,
       tip.length ? ui.el('div', { class: 'rows', 'data-box': 'tip', 'data-dev': dev }, [ui.el('div', { class: 'steps flat' },
         tip.map((text, i) => ui.el('div', { class: 'step' }, [ui.el('span', { class: 'num', 'aria-hidden': 'true', text: String(i + 1) }), ui.el('span', { text })])))]) : null,
       tipNote ? ui.el('p', { class: 'hint' + (tip.length ? '' : ' plain'), text: tipNote }) : null
-    ] });
+    ], foot: [tryBtn] });   // 「試しに聞く」は、下の行(声の一覧が長くても、いつも見える)
   }
 
   S.add('models', models);
