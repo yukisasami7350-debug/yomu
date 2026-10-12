@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.16
+// @version      0.1.17
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.16 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.17 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.16',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.17',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -5121,6 +5121,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   let els = [];             // [[段落の番号, 要素]…](文のある段落)
   let lastAct = 0;          // 最後の操作の時刻
   let timer = null, unhook = [];
+  let cover = false;        // 画面いっぱいの板(設定)が、本文を隠している(その間は、読んだ時間に数えない=2026-10-12 利用者と決めた)
   let pending = false;      // 合図 close を受けた直後(同じ流れの中で open が続いたら=出し直し、閉じずに続ける)
 
   const hidden = () => !!doc && doc.visibilityState === 'hidden';
@@ -5141,7 +5142,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
   // 1回見る: 画面が見えていれば、その分を記録に渡す。操作が idleSec より長く途切れていれば、段落には配らない
   function tick(){
-    if (!h || pending || hidden()) return;
+    if (!h || pending || hidden() || cover) return;
     const now = nowMs();
     if (now < lastAct) lastAct = now;                        // 端末の時計が戻された
     h.dwell(visible(), { sec: config.log.tickMs / 1000, act: now - lastAct <= config.log.idleSec * 1000 });
@@ -5226,6 +5227,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     },
     // 操作(単語のタップ・辞書 など。§8-8 の Stretch.n の名前)。画面の部品(ui)が呼ぶ。記録していなければ false
     act(kind, sid, extra){ return h && !pending ? h.act(kind, sid, extra) : false; },
+    // 画面いっぱいの板が出た・消えた(ui/root.js の sheet・unsheet が呼ぶ)。消えたのは、操作のうち
+    cover(on){ cover = !!on; if (!cover) touch(); },
     tick,
     get on(){ return !!h && !pending; }
   };
@@ -6320,6 +6323,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'data.in': '読み込む',
     'data.inNote': 'このアプリで書き出したファイルを選びます。選んだだけでは、まだ何も変わりません。',
     'data.inPick': 'ファイルを選ぶ',
+    'data.inTip': 'iPhone で、ファイルが見つからないとき',
+    'data.inTip.ios.1': '選ぶ画面の下の「最近使った項目」を見る(書き出したすぐあとは、ここに出ます)',
+    'data.inTip.ios.2': '無ければ、下の「ブラウズ」を、場所の一覧が出るまで押して、「ダウンロード」をひらく',
+    'data.inTip.ios.3': '上の検索の欄に「{name}」と入れて、「{name}-all-日付.json」を選ぶ(このアプリのファイルのほかは、うすい色で、選べません)',
     'data.inFile': '選んだファイル',
     'data.inAt': '書き出した日時',
     'data.inAtNone': '分かりません',
@@ -6504,6 +6511,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.rows { margin-top: 16px; border: 1px solid ' + v('grip') + '; border-radius: 20px; display: flex; flex-direction: column; overflow: hidden; }',
       '.rowbtn { min-height: ' + BIG + 'px; padding: 4px 12px 4px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; ' + t(BODY, 700, TIGHT) + ' }',
       '.rowbtn + .rowbtn { border-top: 1px solid ' + v('grip') + '; }',
+      // 行の名前(左)は、縮めない=右の値が長くても、名前が1字ずつ縦に折れない(工程5b-3: PC の Edge の声の名前)。長い値は、右の側で折り返す
+      '.rowbtn > span:first-child { flex: none; max-width: calc(100% - 34px); }',
       '.rowbtn .val { display: flex; align-items: center; gap: 4px; ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; }',
       // 見た目(英文の見せ方の札。キャンバス2ページ目のメニューの形)
       '.pick { min-height: 96px; border-radius: 16px; background: ' + v('well') + '; color: ' + v('panelInk') + '; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; gap: 4px; text-align: left; }',
@@ -7071,6 +7080,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     layer.hidden = false;
     bay.setAttribute('inert', '');               // 板が出ている間は、うしろの操作部に、キーボードでも入れない
     hold('sheet', true);
+    if (Yomu.watch && Yomu.watch.cover) Yomu.watch.cover(sheetNow.full);   // 画面いっぱいの板(設定)が出ている間は、読んだ時間に数えない(§8-8)
     const first = content.querySelector('[data-focus]') || content.querySelector('button') || sheetEl;   // 押せる所が無い板は、板そのものへ
     if (first && first.focus){ try { first.focus({ preventScroll: true }); } catch (e){} }
     return true;
@@ -7103,6 +7113,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     bay.removeAttribute('inert');
     while (sheetBody.firstChild) sheetBody.removeChild(sheetBody.firstChild);
     hold('sheet', false);
+    if (Yomu.watch && Yomu.watch.cover) Yomu.watch.cover(false);
     if (was.back && was.back.focus && was.back.isConnected){ try { was.back.focus({ preventScroll: true }); } catch (e){} }
     if (was.onClose){ try { was.onClose(); } catch (e){ warn(e); } }
   }
@@ -8948,6 +8959,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   let working = false;             // 読み込み・消す操作の途中(画面を出て戻っても、終わるまで、もう1つ始めない)
   function data(){
     const alive = S.alive();
+    const info0 = Y.env && Y.env.info;
     const st = Y.settings.get();
     const stops = [], urls = [];
     const save = patch => Y.settings.set(patch).then(() => true, () => { ui.toast(ui.t('set.saveFail')); return false; });
@@ -8995,7 +9007,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // ---- 読み込む ----
     const inResult = ui.el('div', { class: 'result', 'data-result': 'in', hidden: true });
     const picked = ui.el('div', { 'data-box': 'picked', hidden: true });
-    const input = ui.el('input', { class: 'sr', id: 'y-file', type: 'file', accept: '.json,application/json,text/plain', 'data-act': 'file' });
+    const input = ui.el('input', { class: 'sr', id: 'y-file', type: 'file', accept: '.json,application/json', 'data-act': 'file' });
     const pick = ui.el('label', { class: 'side wide pickfile', for: 'y-file', 'data-act': 'pick' }, [ui.el('span', { text: ui.t('data.inPick') }), input]);
     let seq = 0, inBusy = false, disarm = null;
     const unpick = () => { if (disarm){ disarm(); disarm = null; } picked.hidden = true; S.fill(picked, []); };
@@ -9102,6 +9114,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       urls.forEach(u => { try { U.revokeObjectURL(u); } catch (e){} });
     });
 
+    // iPhone の、ファイルを選ぶ画面は、前に開いた場所から始まり、書き出したファイルが見当たらないことがある(工程5b-3 利用者の iPhone)。探し方を、3つの手順で
+    const inTip = info0 && info0.ios ? [1, 2, 3].map(i => ui.t('data.inTip.ios.' + i, { name: cfg.ui.fileName })) : [];
     const c2 = ui.cost(2);
     const info = Y.env && Y.env.info;
     return S.shell({ name: 'data', title: ui.t('set.data'), back: 'top', body: [
@@ -9115,6 +9129,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       ui.el('div', { class: 'label', text: ui.t('data.in') }),
       ui.el('p', { class: 'hint first', text: ui.t('data.inNote') }),
       pick, picked, inResult,
+      inTip.length ? ui.el('div', { class: 'label', 'data-tip': 'in', text: ui.t('data.inTip') }) : null,
+      inTip.length ? ui.el('div', { class: 'rows', 'data-box': 'intip' }, [ui.el('div', { class: 'steps flat' },
+        inTip.map((text, i) => ui.el('div', { class: 'step' }, [ui.el('span', { class: 'num', 'aria-hidden': 'true', text: String(i + 1) }), ui.el('span', { text })])))]) : null,
       ui.el('div', { class: 'label', text: ui.t('data.site') }),
       ui.el('div', { class: 'rows' }, [ui.el('div', { class: 'rowstat' }, [ui.el('span', { text: ui.t('data.pages') }), pagesVal])]),
       ui.el('p', { class: 'hint', text: ui.t('data.clearNote', { cost: c2 ? ui.t('data.clearCost', { cost: c2 }) : '' }) }),
