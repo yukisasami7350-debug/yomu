@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.17
+// @version      0.1.18
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.17 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.18 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.17',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.18',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -207,7 +207,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       keep: { idb: 300, ls: 40 },  // 訳したページを何件まで残すか(§8-4)
       evictShare: 0.1, evictMin: 3,   // 保存がいっぱいのとき、1回に捨てる割合と、最少の件数(§8-1)
       drawLateMs: 250,             // 届いた文を描くのを、画面の1コマの合図が来なくても、これだけ待ったら描く(ms。裏に回っている間は、合図が来ない)
-      saveEveryMs: 3000
+      saveEveryMs: 3000,
+      quietMiss: { rate: 0.05, min: 3 }   // 未訳が少ないとき(対象の文の rate 以下、または min 文以下)は、「残り ○ 文は未訳です」の知らせを出さない(設計メモ 2-5。操作部のつまみの下の小さな字と、メニューには出す)
     },
     voice: { rate: 0.95, delayMs: 15 },   // 読み上げの速さの初期値(§8-3)・iPhone 以外で、鳴らし始めを遅らせる時間(止める処理とぶつからないように。§9-7)
     dict: {                        // 内蔵辞書(§7-3)
@@ -3598,27 +3599,36 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
   // ---- 読み込み ----
   function use(t, n, where, saved){ text = t; count = n; from = where; kept = saved; }
+  // かかった時間の控え(調べるための記録に出す。§9-8。工程5c-1: 本物の辞書を、iPhone で取る時間・読む時間・引く時間を測るため。動きは変えない)
+  const tick = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+  const since = a => Math.round((tick() - a) * 10) / 10;
+  let stat = null;                 // { from, n, readMs, netMs?, saveMs?, saved, looks, lookMs }
   async function doLoad(opt){
     // 1. サイトの保存に写しがあれば、それを使う
     let rec;
+    const t0 = tick();
     try { rec = await store.site.get(C.key); } catch (e){ rec = undefined; }
+    const readMs = since(t0);
     if (util.isPlain(rec) && rec.ver === C.ver && typeof rec.text === 'string'){
       const n = inspect(rec.text);
-      if (n){ use(rec.text, n, 'site', true); return { n, from: 'site', saved: true }; }
+      if (n){ use(rec.text, n, 'site', true); stat = { from: 'site', n, readMs: since(t0), saved: true, looks: 0, lookMs: null }; return { n, from: 'site', saved: true }; }
     }
     // 2. 入れ物から取ってくる(配る場所から。§2-2)
     const env = Y.env && Y.env.dict;
     if (!env || typeof env.load !== 'function') throw util.error('bad', '内蔵辞書を取ってくる口が無い');
     let got;
+    const t1 = tick();
     try { got = await env.load({ signal: opt.signal, onProgress: typeof opt.onProgress === 'function' ? opt.onProgress : undefined }); }
     catch (e){
       if (e && e.kind) throw e;
       const stop = (opt.signal && opt.signal.aborted) || (e && e.name === 'AbortError');
       throw util.error(stop ? 'abort' : 'network', stop ? '中止した' : '内蔵辞書を取ってこられなかった: ' + String((e && e.message) || e));
     }
+    const netMs = since(t1);
     const n = inspect(got);
     if (!n) throw util.error('parse', '取ってきたものが、辞書の形でない');
     use(got, n, 'net', false);
+    const t2 = tick();
     // 3. 保存に置く(訳したページを巻き添えで捨てない。置けなくても、このページの間は引ける)
     let saved = true;
     if (env.cache === false) saved = false;
@@ -3627,6 +3637,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       catch (e){ saved = false; }
     }
     kept = saved;
+    stat = { from: 'net', n, readMs, netMs, saveMs: since(t2), saved, looks: 0, lookMs: null };
     return { n, from: 'net', saved };
   }
 
@@ -3638,7 +3649,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       return loading;
     },
     ready: () => text !== null,
-    lookup,
+    lookup(query, opt){
+      const a = tick(), r = lookup(query, opt);
+      if (stat){ stat.looks++; stat.lookMs = since(a); }   // いちばん新しい1回の、引く時間
+      return r;
+    },
+    timing: () => (stat ? Object.assign({}, stat) : null),
     format,
     // 保存に置いた写しを消す(メモリの分も)。次に引くとき、取り直す
     async clear(){ text = null; count = 0; from = null; kept = false; await store.site.del(C.key); }
@@ -5361,9 +5377,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     unwrap(!vertical);
     paint();
   }
+  // 未訳が少ない(知らせを出すほどでない)か。少ないときは、操作部のつまみの下の小さな字と、メニューの「続きを訳す」だけ(設計メモ 2-5。工程5c-1)
+  function fewMissing(n){
+    const q = config.pages.quietMiss;
+    return n <= Math.max(q.min, Math.floor((model ? model.targets.length : 0) * q.rate));
+  }
   function partialNotice(r){
     const n = missingOf().length;
-    if (n && have.size) tell('partial', { missing: n, why: whyOf(null, r && r.rep) });
+    if (n && have.size && !fewMissing(n)) tell('partial', { missing: n, why: whyOf(null, r && r.rep) });
   }
   // 未訳が残った理由
   function whyOf(err, rep){
@@ -5625,7 +5646,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     else if (err && err.kind !== 'abort' && !gotNow) await errorNotice(err, ai, lite, kind, my);
     else if (rep && rep.finish === 'blocked') tell('blocked', { got: gotNow });
     else if (!err && !gotNow) tell('error', { cause: 'empty', message: '' });   // 通信はしたが、使える訳が1つも返ってこなかった(どれも確かめを通らなかった など)
-    else if (missing && have.size && view && (gotNow || err)) tell('partial', { missing, why: whyOf(err, rep) });
+    else if (missing && have.size && view && (err || (gotNow && !fewMissing(missing)))) tell('partial', { missing, why: whyOf(err, rep), cause: err ? err.kind : null });   // 途中で切れたときは、少なくても知らせる(熟語さがしも、まだ)
     if (my !== epoch) return status();
     if (vertical && view && (!notice || notice.kind === 'partial')) tell('vertical');   // 縦組みの間は、縦組みの知らせ(残りの知らせは、横組みに戻ったときに出す)
     if (gotNow) logHook('change', { tr: work.tr });
@@ -5975,6 +5996,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'dock.fold': '英語の割合 {v}%',
     'dock.progress': '英訳しています',
     'dock.stay': 'この画面のままで、お待ちください',
+    'dock.missing': '未訳 {n} / {all} 文',   // all = 対象の文の数(分母があると、だいたい訳せている、と分かる=工程5c-1 利用者)
     'dock.count': '{got} / {total} 文',
     'dock.cancel': '中止する',
     // 知らせの行(§9-5)。押せる所のうち、回数を使うものには、部品が通信の数を足す(Yomu.ui.withCost)
@@ -5984,6 +6006,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'note.limitMinSoon': '混み合っています。少し待ってから、もう一度押してください',
     'note.switched': '{from} が今日の上限のため、{to} で訳しました',
     'note.partial': '残り {n} 文は未訳です',
+    // 途中で切れたときは、わけと、どうすればよいかを添える(設計メモ 2-5。工程5c-1)
+    'note.cutBusy': 'Google の側が混んでいて、途中で止まりました。残り {n} 文は、少し待ってから訳してください',
+    'note.cutNet': '通信がとぎれて、途中で止まりました。残り {n} 文は未訳です',
     'note.needTranslate': 'この目標では、まだ訳していません',
     'note.blocked': 'この話は、AI が内容を理由に訳せませんでした(届いた分は出ています)',
     'note.idioms': '熟語さがしができませんでした(英文は読めます)',
@@ -6800,6 +6825,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.ratio .tip { position: absolute; top: -36px; width: 56px; height: 28px; transform: translateX(-50%); border-radius: ' + PILL + '; background: ' + v('tip') + '; color: ' + v('tipInk') + ';'
         + ' font-family: ' + FE + '; ' + t(CAP, 800, TIGHT) + ' display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transition: opacity ' + ms(MO.tip) + ' ease-out; }',
       '.ratio[data-live] .tip { opacity: 1; }',
+      // 未訳の数(つまみの下の小さな字。押せない)。出ている間は、線と丸を 6px 上げて、字と重ならないようにする(丸 4〜32px・字 32〜50px。台の高さは変えない)
+      '.ratio .miss { position: absolute; left: 0; bottom: -2px; ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }',
+      '.ratio[data-miss] .track { top: ' + ((BTN - 8) / 2 - 6) + 'px; }',
+      '.ratio[data-miss] .knob { top: ' + ((BTN - KNOB) / 2 - 6) + 'px; }',
       // 進み具合
       '.dock[data-dock="progress"] { height: auto; min-height: 64px; padding: 8px; }',
       '.prog { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }',
@@ -7259,7 +7288,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   let entry = null, launch = null, cost = null, main = null, prog = null;
   let ratioBox = null, input = null, knob = null, tip = null, origBtn = null, origOff = null, origOn = null;
   let fill = null, countEl = null;
-  let pctBtn = null, pctTxt = null;
+  let pctBtn = null, pctTxt = null, miss = null;
   let value = 0, dragging = false, tipT = null, entryAt = 0, was = '';
   let open = false, openAt = 0, foldT = null;
 
@@ -7395,7 +7424,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     pctBtn = ui.el('button', { class: 'pill pct', 'data-act': 'unfold', 'aria-expanded': 'false', onclick: e => setOpen(true, e && e.detail === 0) },
       [ui.el('span', { class: 'mini', 'aria-hidden': 'true' }, [ui.el('i')]), pctTxt]);
     ratioBox = ui.el('div', { class: 'ratio', onpointerdown: onDown, onpointermove: onMove, onpointerup: onUp, onpointercancel: onCancel, onlostpointercapture: onCancel },
-      [ui.el('span', { class: 'track' }), input, knob, tip]);
+      [ui.el('span', { class: 'track' }), input, knob, tip, miss = ui.el('span', { class: 'miss', hidden: true })]);   // miss = つまみの下の小さな字(未訳の数。押せない)
     place(cfg.ratio.initial);
     origBtn = ui.el('button', { class: 'pill', 'data-act': 'orig', 'aria-pressed': 'false',
       onclick: () => { touch(); ui.quiet(); Y.page.setOrig(!(ui.status() && ui.status().orig)); } }, [origOff = ui.icon('swap', 18, 2), origOn = ui.icon('check', 18, 2.6), ui.el('span', { text: ui.t('dock.orig') })]);
@@ -7447,6 +7476,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     }
     if (s.state !== 'busy') setProgress(null);
     if (!dragging) place(s.ratio);
+    // 未訳が残っていれば、つまみの下に、小さく数を出す(少ない未訳は、知らせを出さない=設計メモ 2-5。訳すのは、メニューの「続きを訳す」)
+    const left = (s.state === 'on' && s.n && s.n.missing) || 0;
+    miss.hidden = !left;
+    miss.textContent = left ? ui.t('dock.missing', { n: left, all: s.n.targets }) : '';
+    if (left) ratioBox.setAttribute('data-miss', ''); else ratioBox.removeAttribute('data-miss');
     origBtn.setAttribute('aria-pressed', s.orig ? 'true' : 'false');
     // 押している印は、色のほかに、絵でも出す(入れかえの絵 → チェック。§9-9)
     [[origOff, !!s.orig], [origOn, !s.orig]].forEach(([e, hide]) => { if (hide) e.setAttribute('hidden', ''); else e.removeAttribute('hidden'); });
@@ -7485,14 +7519,16 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
   // うまくいかなかったことの知らせ(失敗)。案内(残りは未訳・縦組み・キーがまだ など)と、見て区別がつく形にする(色と印。設計メモ 2-5)
   const INFO = ['no-key', 'switched-lite', 'partial', 'need-translate', 'vertical', 'evicted'];   // 案内(失敗ではないもの)。ここに無い知らせは、失敗として出す
-  const toneOf = n => (INFO.indexOf(n.kind) >= 0 ? '' : 'warn');
+  // 途中で切れた(混雑・通信がとぎれた)ために残った未訳は、失敗の形で出して、わけを添える(工程5c-1)
+  const cutOf = n => (n.kind !== 'partial' ? '' : n.cause === 'overload' || n.cause === 'server' ? 'note.cutBusy' : n.cause === 'network' ? 'note.cutNet' : '');
+  const toneOf = n => (INFO.indexOf(n.kind) >= 0 && !cutOf(n) ? '' : 'warn');
   // 知らせ → { text, acts:[{ label, fn, busyOff }] }。busyOff = 使用中は押せない(進行役も受けない)
   function view(n){
     switch (n.kind){
       case 'no-key': return { text: ui.t('note.noKey'), acts: [{ label: ui.t('act.settings'), fn: openSettings }] };
       case 'limit-min': return { text: n.retrySec != null ? ui.t('note.limitMin', { sec: n.retrySec }) : ui.t('note.limitMinSoon'), acts: [] };
       case 'switched-lite': return { text: ui.t('note.switched', { from: short(n.from), to: short(n.to) }), acts: [] };
-      case 'partial': return { text: ui.t('note.partial', { n: n.missing }), acts: [{ label: ui.withCost(ui.t('act.more'), 2), fn: () => Y.page.more(), busyOff: true }] };
+      case 'partial': return { text: ui.t(cutOf(n) || 'note.partial', { n: n.missing }), acts: [{ label: ui.withCost(ui.t('act.more'), 2), fn: () => Y.page.more(), busyOff: true }] };
       case 'need-translate': return { text: ui.t('note.needTranslate'), acts: [{ label: ui.withCost(ui.t('act.translate'), 2), fn: () => Y.page.blend(), busyOff: true },
         { label: ui.t('act.goal'), fn: () => { ui.show('settings', { page: 'goal' }); } }] };   // 日本語のままの画面には、メニューが無い。訳さずに、目標を戻せるように
       case 'blocked': return { text: ui.t('note.blocked'), acts: [] };
@@ -9177,7 +9213,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       store: { shared: backend('shared'), site: backend('site'), hold: Y.store.kv.state() },
       boot: Y.diag.snapshot(),
       leave: leave || null,
-      place: ui.placeInfo()
+      place: ui.placeInfo(),
+      dict: Y.dict && Y.dict.timing ? Y.dict.timing() : null   // 内蔵辞書を、取る・読む・引くのに、かかった時間(まだ引いていなければ null)
     };
   }
   const text = leave => HEAD + JSON.stringify(report(leave));
