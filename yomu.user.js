@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.14
+// @version      0.1.15
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.14 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.15 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.14',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.15',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -240,6 +240,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     plan: { kind: 'own' },         // つなぎ方(core/plan.js)。own = 各自が、自分の API キーで使う(通信の数・モデルの名前を見せる)
     ui: {                          // 操作部(§9-2・§9-3)
       bottom: 12,                  // 操作部の、画面の下のふちからの高さ(px。Safari の帯と安全な余白の上)
+      modelMinVer: 3,              // 「一覧から取ってくる」で、版の数字が、これより小さい AI は、並べない(古い世代。数字の無い名前は、見ない)
+      shortMax: 480,               // 画面の高さがこれ以下(iPhone の横向き)なら、下から出る板は、画面いっぱいまで・単語の板の下の行を固定しない(px)
       wideMin: 560, wideWidth: 358,   // 画面の幅がこれ以上なら、操作部を右下に寄せて、この幅にする(px)
       themePick: false,            // テーマを手で選ぶ所を出すか(false = いつもサイトの色に合わせる。手で選ぶと、サイトの色と合わずに浮く=設計メモ 2-5。機能は残す: サイトを足すときに確かめ直す)
       hideOnScroll: true,          // 下へ読み進めている間は、操作部を隠す(設計メモ 2-5)
@@ -252,7 +254,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       toastMs: 2400,               // 短い知らせを出しておく時間
       twoTapMs: 4000,              // 2回タップで確かめる操作の、2回目を待つ時間
       twoTapMinMs: 350,            // 1回目から、これより早い2回目は数えない(指が弾んだ二度押し)
-      modelHide: 'image|tts|audio|live|embed|robotics|computer-use',   // 「一覧から取ってくる」で、並べない AI(名前に、この字が入るもの=絵・音声・読み上げ・埋め込み など、文を訳す用でないもの。設定の画面だけの決まり)
+      modelHide: 'image|tts|audio|live|embed|robotics|computer-use|banana|omni|latest',   // 「一覧から取ってくる」で、並べない AI(名前に、この字が入るもの=絵・音声・読み上げ・埋め込み など、文を訳す用でないもの。設定の画面だけの決まり)
       guardMs: 300,                // 入口の台が出てきたすぐあと(隠れていたのが出た・中止で戻った)は、この間「ブレンド」を受けつけない(押しまちがいで回数を使わない。§9-3)
       foldMs: 4000,                // 操作部: ひらいたつまみを、さわらずにこれだけたったら、たたむ(ロゴと「60%」だけの形に。設計メモ 2-5)
       lift: { on: true, max: 120, everyMs: 2000, sideGain: 0.5 },   // サイトが画面の下に固定しているもの(広告など)をよける: 低い帯(高さ max まで)は、その上へ上げる/もっと大きいものは、左へよける(重なりが、右に置くときの sideGain 倍より小さくなるときだけ)。everyMs = 見に行く間隔
@@ -6526,7 +6528,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.sw .nm { ' + t(CAP, 700, BASE) + ' white-space: nowrap; }',
       '.seg { display: flex; gap: ' + GAP + 'px; }',
       // 横に3つ並ぶので、16px では幅 320 に収まらない(「サイトと同じ」)。14px にする
-      '.seg button { flex: 1 1 0; min-height: ' + BTN + 'px; border-radius: ' + PILL + '; background: ' + v('well') + '; color: ' + v('panelInk') + '; ' + t(CAP, 700, TIGHT) + ' white-space: nowrap; }',
+      '.seg button { flex: 1 1 0; min-height: ' + BTN + 'px; border-radius: ' + PILL + '; background: ' + v('well') + '; color: ' + v('panelInk') + '; ' + t(CAP, 700, TIGHT) + ' padding: 4px 8px; white-space: normal; overflow-wrap: anywhere; }',
       '.seg button[aria-pressed="true"] { background: ' + v('key') + '; color: ' + v('keyInk') + '; }',
       '.seg .f-sans { font-family: ' + FE + '; }',
       '.seg .f-serif { font-family: ' + FS + '; font-size: ' + BODY + 'px; }',
@@ -6584,6 +6586,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       //   キーボードで回るとき、下の行のうしろに隠れないように、送る位置に余白を取る
       '.sheet[data-sheet="word"] { padding-bottom: 0; scroll-padding-bottom: 96px; }',
       '.word .acts { display: flex; align-items: stretch; gap: ' + GAP + 'px; position: sticky; bottom: 0; margin: 4px -20px 0; padding: 12px 20px calc(20px + env(safe-area-inset-bottom, 0px)); background: ' + v('panel') + '; }',
+      '@media (max-height: ' + u.shortMax + 'px) { .sheet { max-height: 100%; } .word .acts { position: static; } }',
       '.word .acts button { flex: 1 1 0; min-height: ' + BIG + 'px; border-radius: 28px; font-weight: 700; line-height: ' + TIGHT + '; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 16px; text-align: left; }',
       '.word .acts .star { background: ' + v('go') + '; color: ' + v('goInk') + '; font-size: ' + BODY + 'px; }',
       '.word .acts .star.in { background: ' + v('well') + '; color: ' + v('accent') + '; }',
@@ -6673,7 +6676,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.full .opts + .textbtn { margin-top: 8px; }',
       '.full [data-box="voices"] { display: flex; flex-direction: column; }',
       '.full .trio { display: flex; gap: ' + GAP + 'px; }',
-      '.full .trio button { flex: 1 1 0; min-height: ' + BTN + 'px; border-radius: ' + PILL + '; background: ' + v('well') + '; color: ' + v('panelInk') + '; ' + t(CAP, 700, TIGHT) + ' display: flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }',
+      '.full .trio button { flex: 1 1 0; min-height: ' + BTN + 'px; border-radius: ' + PILL + '; background: ' + v('well') + '; color: ' + v('panelInk') + '; ' + t(CAP, 700, TIGHT) + ' display: flex; align-items: center; justify-content: center; gap: 4px; padding: 4px 8px; white-space: normal; overflow-wrap: anywhere; }',
       '.full .trio button[aria-pressed="true"] { background: ' + v('key') + '; color: ' + v('keyInk') + '; }',
       '.full .trio button[aria-pressed="false"] svg { display: none; }',
       '.full .run .n { ' + t(BODY, 400, BASE) + ' }',
@@ -8693,6 +8696,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // 名前の横の小さな札: はじめの設定・今の設定(保存してあるもの。選んだ印=これから決めるもの、とは別)
     const tagsOf = (isDef, isNow) => [isDef ? { text: ui.t('mod.first') } : null, isNow ? { text: ui.t('mod.now'), now: true } : null];
     const hide = new RegExp(cfg.ui.modelHide, 'i');
+    const old = id => { const v = /(?:^|-)(\d+(?:\.\d+)?)-/.exec(id); return !!v && Number(v[1]) < cfg.ui.modelMinVer; };   // 古い世代(版の数字が小さいもの)
     // いつも並べる AI: はじめの設定・今つかっているもの(ほかの目標・熟語さがし など)
     const base = [];
     const add = m => { if (m && base.indexOf(m) < 0) base.push(m); };
@@ -8719,7 +8723,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       S.fill(result, [ui.el('div', { class: 'state', text: ui.t('mod.listing') })]); result.hidden = false;
       Y.llm.models({ provider: st.provider }).then(list => {
         if (!alive()) return;
-        fetched = (Array.isArray(list) ? list : []).filter(x => x && x.id && x.canGenerate !== false && /^gemini/i.test(x.id) && !hide.test(x.id));
+        fetched = (Array.isArray(list) ? list : []).filter(x => x && x.id && x.canGenerate !== false && /^gemini/i.test(x.id) && !hide.test(x.id) && !old(x.id));
         drawAi();
         const text = ui.t('mod.listed', { n: fetched.length });
         S.fill(result, [okLine(text)]); ui.announce(text);
