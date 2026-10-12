@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.15
+// @version      0.1.16
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.15 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.16 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.15',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.16',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -243,6 +243,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       modelMinVer: 3,              // 「一覧から取ってくる」で、版の数字が、これより小さい AI は、並べない(古い世代。数字の無い名前は、見ない)
       shortMax: 480,               // 画面の高さがこれ以下(iPhone の横向き)なら、下から出る板は、画面いっぱいまで・単語の板の下の行を固定しない(px)
       wideMin: 560, wideWidth: 358,   // 画面の幅がこれ以上なら、操作部を右下に寄せて、この幅にする(px)
+      wideSheet: 440,              // 広い画面での、板(単語の板・メニュー・設定)の幅(px。中の1行が、英字で 50 字ほど=読みやすい1行の長さ 45〜75 字の中。§9-9)
       themePick: false,            // テーマを手で選ぶ所を出すか(false = いつもサイトの色に合わせる。手で選ぶと、サイトの色と合わずに浮く=設計メモ 2-5。機能は残す: サイトを足すときに確かめ直す)
       hideOnScroll: true,          // 下へ読み進めている間は、操作部を隠す(設計メモ 2-5)
       hideDy: 40, showDy: 12,      // 下へこれだけ送ったら隠す・上へこれだけ戻したら出す(px)
@@ -254,7 +255,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       toastMs: 2400,               // 短い知らせを出しておく時間
       twoTapMs: 4000,              // 2回タップで確かめる操作の、2回目を待つ時間
       twoTapMinMs: 350,            // 1回目から、これより早い2回目は数えない(指が弾んだ二度押し)
-      modelHide: 'image|tts|audio|live|embed|robotics|computer-use|banana|omni|latest',   // 「一覧から取ってくる」で、並べない AI(名前に、この字が入るもの=絵・音声・読み上げ・埋め込み など、文を訳す用でないもの。設定の画面だけの決まり)
+      modelHide: 'image|tts|audio|live|embed|robotics|computer-use|banana|omni|latest|transcribe|customtools',   // 「一覧から取ってくる」で、並べない AI(名前に、この字が入るもの=絵・音声・読み上げ・埋め込み など、文を訳す用でないもの。設定の画面だけの決まり)
       guardMs: 300,                // 入口の台が出てきたすぐあと(隠れていたのが出た・中止で戻った)は、この間「ブレンド」を受けつけない(押しまちがいで回数を使わない。§9-3)
       foldMs: 4000,                // 操作部: ひらいたつまみを、さわらずにこれだけたったら、たたむ(ロゴと「60%」だけの形に。設計メモ 2-5)
       lift: { on: true, max: 120, everyMs: 2000, sideGain: 0.5 },   // サイトが画面の下に固定しているもの(広告など)をよける: 低い帯(高さ max まで)は、その上へ上げる/もっと大きいものは、左へよける(重なりが、右に置くときの sideGain 倍より小さくなるときだけ)。everyMs = 見に行く間隔
@@ -6200,6 +6201,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'set.saveFail': '保存できませんでした',
     'set.saved': '保存しました',
     'set.voiceAuto': '端末に合わせる',
+    'set.voiceAuto.pick': '自動で選ぶ',
     'mod.lead': '訳すのに使う AI と、今日つかった回数です。',
     'mod.loading': '読んでいます…',
     'mod.today': '今日つかった回数',
@@ -6265,6 +6267,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'voice.lead': '単語と文を読み上げる声です。',
     'voice.voice': '声',
     'voice.auto': '端末の設定に合わせる',
+    'voice.auto.pick': '自動で選ぶ',
     'voice.autoSub.ios': 'iPhone の設定で選ばれている声で読みます',
     'voice.autoSub': 'この端末で、いちばん自然な声を自動で選びます',
     'voice.lang.en-US': 'アメリカの英語',
@@ -6293,7 +6296,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'voice.tip.android.2': '優先するエンジンを Google のものにして、歯車の印 →「音声データをインストール」→ 英語を選ぶ',
     'voice.tip.android.3': 'この画面をひらき直して、上の「声」を選ぶ',
     'voice.tipNote.android': '機種によって、名前や場所が違います。',
-    'voice.tipNote.edge': 'Edge には、自然な声(名前に Natural と付く声)が、はじめから入っています。「端末の設定に合わせる」のままで、その声を自動で選びます。入れるものは、ありません。',
+    'voice.tipNote.edge': 'Edge には、自然な声(名前に Natural と付く声)が、はじめから入っています。「自動で選ぶ」のままで、その声を選びます。入れるものは、ありません。',
     // 設定 › 記録・書き出しと読み込み(§9-6。工程4c-2b)
     'data.log': '読んだ記録を残す',
     'data.log.on': '残す',
@@ -6477,7 +6480,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.sheet .grip { flex: none; align-self: center; width: 40px; height: 4px; border-radius: 2px; background: ' + v('grip') + '; margin-bottom: 12px; }',
       '.sheet .body { display: flex; flex-direction: column; }',
       '@keyframes y-up { from { transform: translateY(100%); } to { transform: none; } }',
-      '@media (min-width: ' + u.wideMin + 'px) { .sheet { left: auto; right: 16px; bottom: 16px; width: ' + u.wideWidth + 'px; border-radius: 28px; padding-bottom: 20px; } }',
+      '@media (min-width: ' + u.wideMin + 'px) { .sheet { left: auto; right: 16px; bottom: 16px; width: ' + u.wideSheet + 'px; max-width: calc(100% - 32px); border-radius: 28px; padding-bottom: 20px; } }',
+      '@media (min-width: ' + u.wideMin + 'px) { .toast { left: auto; right: ' + (16 + u.wideSheet / 2) + 'px; transform: translateX(50%); max-width: ' + u.wideSheet + 'px; } }',
       // 板の中の、よく使う形
       '.top { display: flex; align-items: center; justify-content: space-between; gap: 4px; }',
       '.brand { display: flex; align-items: center; gap: 8px; font-family: ' + FS + '; ' + t(TITLE, 500, TIGHT) + ' }',
@@ -8290,7 +8294,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     goalRow.val.textContent = goalName(ui.status().level);
     const more = [];
     const voiceRow = row('voice', ui.t('set.voice'), to('voice'));
-    if (has('voice')) voiceRow.val.textContent = Y.settings.get().voice.name || ui.t('set.voiceAuto');
+    if (has('voice')) voiceRow.val.textContent = Y.settings.get().voice.name || ui.t(Y.env && Y.env.info && Y.env.info.ios ? 'set.voiceAuto' : 'set.voiceAuto.pick');   // iPhone は、端末の設定の声。ほかは、こちらが選ぶ(端末に、決める所が無い)
     more.push(voiceRow.b, row('data', ui.t('set.data'), to('data')).b);
     if (Y.plan.shows('runs')) more.push(row('runs', ui.t('set.runs'), to('runs')).b);   // 通信の記録は、いちばん下(ふだんは見ない。調べるときのもの=工程5b-2c)
     const modelsRow = row('models', ui.t('set.models'), to('models'));
@@ -8840,7 +8844,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       const top = en.filter(v => rank(v) < 2).sort((a, b) => rank(a) - rank(b) || us(b) - us(a)).slice(0, cfg.ui.voiceFirst || 6);
       const first = top.concat(en.filter(v => v.name === st.name && top.indexOf(v) < 0));
       const rest = en.filter(v => first.indexOf(v) < 0);
-      const list = [{ id: '', title: ui.t('voice.auto'), sub: ui.t(dev === 'ios' ? 'voice.autoSub.ios' : 'voice.autoSub') }]
+      const list = [{ id: '', title: ui.t(dev === 'ios' ? 'voice.auto' : 'voice.auto.pick'), sub: ui.t(dev === 'ios' ? 'voice.autoSub.ios' : 'voice.autoSub') }]
         .concat((wide ? first.concat(rest) : first).map(v => ({ id: v.name, title: v.name, sub: ui.t(Y.msg.has('voice.lang.' + v.lang) ? 'voice.lang.' + v.lang : 'voice.lang.other', { lang: v.lang }) })));
       const kids = [choice(list, st.name || '', name => { sp.stop(); save({ voice: { name } }).then(ok => { st = Y.settings.get().voice; saved(ok); }); }).box];
       if (!wide && rest.length) kids.push(ui.el('button', { class: 'textbtn', 'data-act': 'wide', onclick: () => { wide = true; draw(); } }, [ui.t('voice.wide', { n: rest.length })]));
