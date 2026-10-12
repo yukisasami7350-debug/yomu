@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.18
+// @version      0.1.19
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.18 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.19 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.18',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.19',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -157,6 +157,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     ratio: { step: 5, initial: 40 },
     page: {                        // ページへの当てはめ(§3)
       waitMs: 5000,                // 本文の入れ物がまだ無いとき、待って探し直す時間
+      sweepLegacy: true,           // 今の版(小説まぜりんご)が動いていなければ、それがサイトの保存に残したもの(API キーの控え など)を消す(§9-8)
       pollMs: 250,                 // 探し直す間隔
       watchMs: 1000,               // URL が変わったかを見る間隔
       stuckMs: 6000                // 本文ページなのに、起動(保存を読む)がこれだけ終わらなければ、知らせる(store.openMs より長く。§9-8)
@@ -9269,6 +9270,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const Y = Yomu;
   const MARK = 'data-yomu';
   const LEGACY = 'mazelingo-fab';   // 今の版(小説まぜりんご)のボタン
+  const LEGACY_KEYS = 'mazelingo_';   // 今の版が、サイトの保存(localStorage)に残したもの(API キーの控え・訳した話の控え・設定)の、鍵の頭
 
   Yomu.boot = function(){
     if (typeof document === 'undefined' || !document.documentElement) return;
@@ -9329,8 +9331,24 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const legacy = () => !!doc.getElementById(LEGACY);
     const conflict = () => Y.page.halt('conflict', { with: 'legacy' });
     const go = () => (legacy() ? conflict() : Y.page.start());
+    // 今の版が残したものを、片づける(工程5c-2。利用者: 前の版の訳は要らない。安全に消えてくれればよい)。今の版が動いていないと分かってから(少し待ったあと)、
+    //   このサイトの localStorage の、今の版の鍵だけを消す(API キーの控えが、サイトの側から読める所に残るため)。こちらの保存(IndexedDB・Tampermonkey の保存)には、さわらない
+    const sweep = () => {
+      if (!Y.config.page.sweepLegacy) return;
+      try {
+        const ls = win && win.localStorage;
+        if (!ls) return;
+        const keys = [];
+        for (let i = 0; i < ls.length; i++){ const k = ls.key(i); if (k && k.indexOf(LEGACY_KEYS) === 0) keys.push(k); }
+        keys.forEach(k => ls.removeItem(k));
+        if (keys.length) diag.mark('legacy.swept', keys.length);
+      } catch (e){}
+    };
     go();
-    setTimeout(() => { if (legacy() && Y.page.status().notice?.kind !== 'conflict') conflict(); }, Y.config.page.waitMs);
+    setTimeout(() => {
+      if (legacy()){ if (Y.page.status().notice?.kind !== 'conflict') conflict(); return; }
+      sweep();
+    }, Y.config.page.waitMs);
     // 4. 入れ物からの「ブレンド/戻す」の合図(拡張のツールバー。無い入れ物では何もしない)
     Y.env.onToggle(() => {
       const st = Y.page.state;
