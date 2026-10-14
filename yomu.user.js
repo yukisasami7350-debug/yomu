@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.20
+// @version      0.1.21
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.20 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.21 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.20',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.21',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -6074,6 +6074,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'menu.page': 'このページ',
     'menu.offline': 'オフライン保存',
     'menu.redo': '訳し直す',
+    'menu.blend': 'ブレンド(このページを訳す)',
     'menu.redoArmed': 'もう一度押すと、訳し直します',
     'menu.more': '続きを訳す(残り {n} 文)',
     'menu.idioms': '熟語さがしをやり直す',
@@ -7271,6 +7272,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     part(name, def){ const p = find(name); if (p) p.def = def; else parts.push({ name, def }); },
     show(name, params){ const p = find(name); if (p && p.def.open){ p.def.open(params); return true; } return false; },
     hide(name){ const p = find(name); if (p && p.def.close) p.def.close(); },
+    // 「ブレンド」を、入口のボタンと同じ道で押す(初めてなら、最初の設定を出す。工程5c-3: メニューからも訳せるように)
+    blend(){ const p = find('dock'); if (p && p.def.blend){ p.def.blend(); return true; } return false; },
     has: name => !!find(name),
     toast, announce,
     t: msg.t,
@@ -7414,8 +7417,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   // 「ブレンド」: 押したら、進行役が動き出すまで押せなくする(訳す前の確かめの間。終わったら、今の状態で描き直す)
   //   初めて(最初の設定が済んだ印が無く、API キーも無い)なら、訳さずに、最初の設定(3枚。ui/settings.js の setup)を出す。通信しない
   //   入口の台が出てきたすぐあと(隠れていたのが出た・進み具合や操作部から戻った)は、受けつけない: 本文や「中止」をねらった指が当たって、回数を使わないように(§9-3)
-  function onBlend(){
-    if (ui.fresh() || Date.now() - entryAt < cfg.ui.guardMs) return;
+  //   menu = メニューから押した(メニューの側で、出てすぐの押しまちがいを止めている。入口の台の出入りの時刻は、見ない)
+  function onBlend(menu){
+    if (menu !== true && (ui.fresh() || Date.now() - entryAt < cfg.ui.guardMs)) return;
     launch.disabled = true;
     const first = Y.settings.get().profile.setupDone ? Promise.resolve(false) : Y.settings.secrets.has().then(has => !has, () => false);
     first.then(yes => {
@@ -7511,7 +7515,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     [[origOff, !!s.orig], [origOn, !s.orig]].forEach(([e, hide]) => { if (hide) e.setAttribute('hidden', ''); else e.removeAttribute('hidden'); });
   }
 
-  ui.part('dock', { mount, draw, progress: setProgress });
+  ui.part('dock', { mount, draw, progress: setProgress, blend: () => onBlend(true) });
 })();
 
 /* ---- ui/notice.js ---- */
@@ -7640,7 +7644,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
 /* ---- ui/menu.js ---- */
 // ui/menu.js — メニュー(部品の約束 §9-3。キャンバス3ページ目の「メニュー(学習レベルは出さない)」)
-//   ロゴを押すと、下から出る。このページ(オフライン保存=準備中・訳し直す・(残っていれば)続きを訳す・(失敗していれば)熟語さがしをやり直す)/見た目/設定/学ぶ画面をひらく。
+//   ロゴを押すと、下から出る。このページ(オフライン保存=準備中。config.ui.offlineEntry のときだけ・まだ訳していなければ「ブレンド」/訳してあれば「訳し直す」・(残っていれば)続きを訳す・(失敗していれば)熟語さがしをやり直す)/見た目/設定/学ぶ画面をひらく。
 //   学習レベルは出さない(設定の「目標」に寄せる=設計メモ 2-5)。回数を使う所には、通信の数を書く(つなぎ方によっては書かない=Yomu.ui.cost)。
 //   使用中(status().busy)は、回数を使う所を押せなくする
 (function(){
@@ -7649,7 +7653,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const ui = Yomu.ui;
   const NAME = 'menu';
 
-  let redoBtn = null, moreBtn = null, moreLabel = null, idiomsBtn = null, lookVal = null, disarm = null;
+  let redoBtn = null, moreBtn = null, moreLabel = null, idiomsBtn = null, lookVal = null, disarm = null, blendBtn = null, blendCost = null, openAt = 0;
 
   const soon = () => ui.toast(ui.t('soon'));
   const close = () => ui.unsheet(NAME);
@@ -7670,6 +7674,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   function build(){
     const offline = Y.config.ui.offlineEntry;                 // 「オフライン保存」の入口(はじめは出さない。出さないときは、「訳し直す」を横いっぱいに)
     const redo = tile({ item: 'redo', icon: 'refresh', wide: !offline, label: ui.t('menu.redo'), cost: 2 });
+    // まだ訳していないページでは、「訳し直す」の代わりに「ブレンド」(1回押し。右下の「ブレンド」と同じ道=初めてなら、最初の設定。出てすぐ ui.guardMs は受けない)
+    const blend = tile({ item: 'blend', wide: !offline, label: ui.t('menu.blend'), cost: 2, fn: () => {
+      if (Date.now() - openAt < Y.config.ui.guardMs) return;
+      close(); ui.blend();
+    } });
+    blendBtn = blend.b; blendCost = blend.b.querySelector('.cost');
     redoBtn = redo.b;
     disarm = ui.twoTap(redoBtn, { label: redo.label, armed: ui.t('menu.redoArmed'), fn: () => { close(); ui.run(() => Y.page.redo()); } });
     const more = tile({ item: 'more', wide: true, label: '', cost: 2, fn: () => { close(); ui.run(() => Y.page.more()); } });
@@ -7685,7 +7695,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       ui.el('div', { class: 'label', text: ui.t('menu.page') }),
       ui.el('div', { class: 'grid2' }, [
         offline ? tile({ item: 'offline', icon: 'download', label: ui.t('menu.offline'), fn: soon }).b : null,
-        redoBtn, moreBtn, idiomsBtn
+        blendBtn, redoBtn, moreBtn, idiomsBtn
       ]),
       ui.el('div', { class: 'rows' }, [
         look.b,
@@ -7698,7 +7708,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   // 今の状態に合わせる(開いている間に、状態が変わることがある: 熟語さがしが終わった など)
   function sync(s){
     const has = s.n.translated > 0;                              // このレベルの訳が、今ある
-    redoBtn.disabled = s.busy || !has;                           // 訳が無いうちは「ブレンド」から
+    blendBtn.hidden = has || s.busy;                             // 訳が無いうちは、「訳し直す」の代わりに「ブレンド」(訳している最中は、押せない「訳し直す」)
+    redoBtn.hidden = !blendBtn.hidden;
+    redoBtn.disabled = s.busy || !has;
+    if (blendCost) blendCost.hidden = !!(s.saved && s.saved[s.level]);   // 訳して保存してあるページは、保存から出す(通信しない。入口のボタンと同じ)
     moreBtn.hidden = !(has && s.n.missing > 0);                  // 未訳が残っているときだけ(知らせを閉じたあとの入口)
     moreBtn.disabled = s.busy;
     moreLabel.textContent = ui.t('menu.more', { n: s.n.missing });
@@ -7713,6 +7726,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       const s = ui.status();
       if (!s || s.state === 'none') return;
       const body = build();
+      openAt = Date.now();
       sync(s);
       const stop = disarm;                            // この板の「訳し直す」の確かめ(閉じたら、やめる)
       ui.sheet(NAME, body, { label: ui.t('dock.menu'), onClose: stop });
