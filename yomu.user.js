@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.19
+// @version      0.1.20
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.19 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.20 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.19',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.20',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -246,6 +246,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       shortMax: 480,               // 画面の高さがこれ以下(iPhone の横向き)なら、下から出る板は、画面いっぱいまで・単語の板の下の行を固定しない(px)
       wideMin: 560, wideWidth: 358,   // 画面の幅がこれ以上なら、操作部を右下に寄せて、この幅にする(px)
       wideSheet: 440,              // 広い画面での、板(単語の板・メニュー・設定)の幅(px。中の1行が、英字で 50 字ほど=読みやすい1行の長さ 45〜75 字の中。§9-9)
+      offlineEntry: false,         // メニューに「オフライン保存」の入口を出すか(工程5c-3 利用者: 当面、作らない。許されるかは、最後の段階で調べて決める。あとから組み込めるように、入口の場所は残す=true にすると、「準備中」の札が出る)
       themePick: false,            // テーマを手で選ぶ所を出すか(false = いつもサイトの色に合わせる。手で選ぶと、サイトの色と合わずに浮く=設計メモ 2-5。機能は残す: サイトを足すときに確かめ直す)
       hideOnScroll: true,          // 下へ読み進めている間は、操作部を隠す(設計メモ 2-5)
       hideDy: 40, showDy: 12,      // 下へこれだけ送ったら隠す・上へこれだけ戻したら出す(px)
@@ -256,6 +257,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       runsPage: 20,                // 設定の「通信の記録」を、1回に出す件数(「もっと見る」で、この数ずつ)
       toastMs: 2400,               // 短い知らせを出しておく時間
       twoTapMs: 4000,              // 2回タップで確かめる操作の、2回目を待つ時間
+      aiWaitMs: 30000,             // 「AIに聞く」: これだけの間、何も届かなければ、止めて知らせる(工程5c-3: Google の側が混んで、返事が来ないまま「聞いています…」が続いた。数は目分量=ふだんの答えは数秒)
       twoTapMinMs: 350,            // 1回目から、これより早い2回目は数えない(指が弾んだ二度押し)
       modelHide: 'image|tts|audio|live|embed|robotics|computer-use|banana|omni|latest|transcribe|customtools',   // 「一覧から取ってくる」で、並べない AI(名前に、この字が入るもの=絵・音声・読み上げ・埋め込み など、文を訳す用でないもの。設定の画面だけの決まり)
       guardMs: 300,                // 入口の台が出てきたすぐあと(隠れていたのが出た・中止で戻った)は、この間「ブレンド」を受けつけない(押しまちがいで回数を使わない。§9-3)
@@ -393,7 +395,10 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
   LIST.forEach(l => { BY_ID[l.id] = l; });
 
   const LITE = 'gemini-3.5-flash-lite';
-  const FLASH = 'gemini-3.5-flash';
+  const FLASH = 'gemini-3.6-flash';
+  // Google が、ほかの名前へ回している名前(工程5c-3: gemini-3.5-flash への通信は、3.6 Flash として数えられていた=利用者の AI Studio の写真)。
+  //   設定に残っている古い名前は、読むときに、新しい名前に読みかえる(core/settings.js)
+  const MOVED = { 'gemini-3.5-flash': FLASH };
 
   const levels = {
     initial: 'std',
@@ -426,7 +431,9 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     quirks: {
       'gemini-3.8-flash': { noMinimal: true }
     },
-    quirk: model => levels.quirks[model] || {}
+    quirk: model => levels.quirks[model] || {},
+    moved: MOVED,
+    current: model => (Object.prototype.hasOwnProperty.call(MOVED, model) ? MOVED[model] : model)
   };
 
   Yomu.levels = levels;
@@ -2005,7 +2012,23 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     return s;
   }
   // 保存から読んだものを、使える形にする(欠けた欄を足す。おかしい値は、その欄だけ初期値。形の版が新しければ失敗)
-  const open = stored => check(schema.open('settings', stored, schema.make.settings), false);
+  const open = stored => check(schema.open('settings', renamed(stored), schema.make.settings), false);
+  // Google が、ほかの名前へ回している AI の名前を、新しい名前に読みかえる(levels.moved。読むときだけ。次に設定を変えたとき、保存にも入る)。
+  //   1日の目安は、新しい名前の欄が無いときだけ、古い名前の数を移す。欠けた欄を足す(schema.open)より前に、保存の写しの上で行う(初期値の目安が、先に入らないように)
+  function renamed(stored){
+    if (!isPlain(stored)) return stored;
+    const s = util.clone(stored);
+    const fix = (o, k) => { if (isPlain(o) && typeof o[k] === 'string') o[k] = levels.current(o[k]); };
+    if (isPlain(s.models)) Object.keys(s.models).forEach(id => fix(s.models[id], 'm'));
+    if (isPlain(s.aux)) Object.keys(s.aux).forEach(k => fix(s.aux, k));
+    if (isPlain(s.limits)) Object.keys(levels.moved).forEach(old => {
+      if (!Object.prototype.hasOwnProperty.call(s.limits, old)) return;
+      const to = levels.moved[old];
+      if (!Object.prototype.hasOwnProperty.call(s.limits, to)) s.limits[to] = s.limits[old];
+      delete s.limits[old];
+    });
+    return s;
+  }
 
   // 深く重ねる(値が undefined の欄は消す。配列は置きかえる)
   function overlay(dst, patch, top){
@@ -6120,6 +6143,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'word.aiLimit': '今日の上限のため、AIに聞けません',
     'word.aiBlocked': 'AI が、内容を理由に答えませんでした',
     'word.aiEmpty': '答えが返ってきませんでした。もう一度押してください',
+    'word.aiSlow': '{sec} 秒待っても、返事がありませんでした。Google の側が混んでいるのかもしれません。少し待ってから、もう一度押してください',
     'word.add': '単語帳に追加',
     'word.added': '単語帳に入っています',
     'word.addedHint': '外すときは、ここを押す',
@@ -7644,7 +7668,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   function build(){
-    const redo = tile({ item: 'redo', icon: 'refresh', label: ui.t('menu.redo'), cost: 2 });
+    const offline = Y.config.ui.offlineEntry;                 // 「オフライン保存」の入口(はじめは出さない。出さないときは、「訳し直す」を横いっぱいに)
+    const redo = tile({ item: 'redo', icon: 'refresh', wide: !offline, label: ui.t('menu.redo'), cost: 2 });
     redoBtn = redo.b;
     disarm = ui.twoTap(redoBtn, { label: redo.label, armed: ui.t('menu.redoArmed'), fn: () => { close(); ui.run(() => Y.page.redo()); } });
     const more = tile({ item: 'more', wide: true, label: '', cost: 2, fn: () => { close(); ui.run(() => Y.page.more()); } });
@@ -7659,7 +7684,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       ]),
       ui.el('div', { class: 'label', text: ui.t('menu.page') }),
       ui.el('div', { class: 'grid2' }, [
-        tile({ item: 'offline', icon: 'download', label: ui.t('menu.offline'), fn: soon }).b,
+        offline ? tile({ item: 'offline', icon: 'download', label: ui.t('menu.offline'), fn: soon }).b : null,
         redoBtn, moreBtn, idiomsBtn
       ]),
       ui.el('div', { class: 'rows' }, [
@@ -7951,7 +7976,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   // ---- 範囲ごとに持つもの(cur.r): AI の答え・聞いている最中・単語帳に入っているか。範囲が変わったら、作り直す ----
   function stopAsk(c){
     const r = c && c.r;
-    if (r && r.asking){ const a = r.asking; r.asking = null; try { a.ctrl.abort(); } catch (e){} }
+    if (r && r.asking){ const a = r.asking; r.asking = null; clearTimeout(a.timer); try { a.ctrl.abort(); } catch (e){} }
   }
   function setRange(text){
     stopAsk(cur);
@@ -7967,7 +7992,18 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   function ask(){
     const mine = cur, r = cur.r;
     if (r.asking) return;
-    const a = r.asking = { ctrl: new AbortController(), live: '' };
+    const a = r.asking = { ctrl: new AbortController(), live: '', timer: 0 };
+    // 何も届かないまま、待ちつづけない(cfg.ui.aiWaitMs。届くたびに、数え直す)。答えを待たずに、ここで知らせる(保存や通信が、返ってこないままでも、行き止まりにしない)
+    const arm = () => {
+      clearTimeout(a.timer);
+      a.timer = setTimeout(() => {
+        if (r.asking !== a) return;
+        r.asking = null; r.aiErr = 'slow';
+        try { a.ctrl.abort(); } catch (e){}
+        if (cur === mine && mine.r === r && isOpen()){ ui.announce(aiErrText('slow'), true); paint(); }
+      }, cfg.ui.aiWaitMs);
+    };
+    arm();
     r.aiErr = null;
     act('ai', mine.sid);
     ui.announce(ui.t('word.asking'));
@@ -7977,9 +8013,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     Promise.resolve().then(() => Y.aidict.ask({ q: r.text, en: mine.en, jp: mine.jp, signal: a.ctrl.signal, onText(t){
       if (r.asking !== a) return;
       a.live += String(t == null ? '' : t);
+      arm();
       if (liveEl && liveEl.isConnected) liveEl.textContent = a.live;
-    } })).then(out => { if (r.asking === a){ r.asking = null; r.ai = { text: String(out.text), same: true, partial: !!out.partial }; if (cur === mine && isOpen()) ui.announce(r.ai.text); } },   // 途中で切れた答えは、残っていない(聞き直せる)
-      e => { if (r.asking === a){ r.asking = null; if (!e || e.kind !== 'abort'){ r.aiErr = (e && e.kind) || 'error'; if (cur === mine && isOpen()) ui.announce(aiErrText(r.aiErr), true); } } })
+    } })).then(out => { if (r.asking === a){ clearTimeout(a.timer); r.asking = null; r.ai = { text: String(out.text), same: true, partial: !!out.partial }; if (cur === mine && isOpen()) ui.announce(r.ai.text); } },   // 途中で切れた答えは、残っていない(聞き直せる)
+      e => { if (r.asking === a){ clearTimeout(a.timer); r.asking = null; if (!e || e.kind !== 'abort'){ r.aiErr = (e && e.kind) || 'error'; if (cur === mine && isOpen()) ui.announce(aiErrText(r.aiErr), true); } } })
       .then(() => { if (cur === mine && mine.r === r && isOpen()) paint(); });
   }
   function aiErrText(kind){
@@ -7988,6 +8025,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (kind === 'limit-min') return ui.t('note.limitMinSoon');
     if (kind === 'blocked') return ui.t('word.aiBlocked');
     if (kind === 'parse') return ui.t('word.aiEmpty');
+    if (kind === 'slow') return ui.t('word.aiSlow', { sec: Math.round(cfg.ui.aiWaitMs / 1000) });
     if (kind === 'overload' || kind === 'server') return ui.t('err.busy');
     return ui.t(Y.msg.has('err.' + kind) ? 'err.' + kind : 'err.other');
   }
@@ -8775,7 +8813,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       S.fill(result, [ui.el('div', { class: 'state', text: ui.t('mod.listing') })]); result.hidden = false;
       Y.llm.models({ provider: st.provider }).then(list => {
         if (!alive()) return;
-        fetched = (Array.isArray(list) ? list : []).filter(x => x && x.id && x.canGenerate !== false && /^gemini/i.test(x.id) && !hide.test(x.id) && !old(x.id));
+        fetched = (Array.isArray(list) ? list : []).filter(x => x && x.id && x.canGenerate !== false && /^gemini/i.test(x.id) && !hide.test(x.id) && !old(x.id) && levels.current(x.id) === x.id);   // Google が、ほかの名前へ回している AI(levels.moved)は、並べない
         drawAi();
         const text = ui.t('mod.listed', { n: fetched.length });
         S.fill(result, [okLine(text)]); ui.announce(text);
