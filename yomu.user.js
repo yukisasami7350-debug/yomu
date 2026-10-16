@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.22
+// @version      0.1.23
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.22 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.23 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.22',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.23',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -173,7 +173,14 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       kMax: 16,                    // ページのほかの文と目印が同じになるページでは、区別が付くまで、ここまで目印を長くする(K 以下なら、長くしない)
       ruby: 'aozora',              // ルビの渡し方('none' で渡さない)
       keySlack: 1,                 // 1 文字短い目印は、いつも受ける。目印を長くするときは、この分だけ余分に長くする
-      keyShare: 0.66,              // 返ってきた目印が、頼んだ長さの、この割合より短ければ、受けない(6 文字なら 4 文字・13 文字なら 9 文字は要る)
+      keyShare: 0.66,              // 返ってきた目印が、頼んだ長さの、この割合より短ければ、ふつうは受けない(6 文字なら 4 文字・13 文字なら 9 文字は要る)
+      keyMin: 3,                   // それより短くても、ページ全体で1つの文にだけ合い、番号の並びとも合う目印は、この文字数まで受ける(工程T-4。§6-4)
+      E: 6,                        // 終わりの目印の長さ(文字)。AI に、英文のあとに、その英文が訳している文の末尾 E 文字を書かせる。0 = 頼まない(工程T-4。§6-2・§6-4)
+      eMax: 12,                    // 近くの文と終わりの目印が同じになるページでは、区別が付くまで、ここまで長くする(E 以下なら、長くしない)
+      endMin: 3,                   // AI が頼んだ長さより短く書いた終わりの目印の、比べる文字がこれより少なければ(「た。」「す」)、比べずに使う(手がかりにならない。工程T-4 の本物の返事)
+      splitMax: 3,                 // まとめ訳を分けるとき(工程T-4b。§6-4)、範囲に見るのは、同じ段落の、うしろ何文までか
+      splitRatio: 3,               // 分けた英文と日本語の長さの比が、範囲全体の比から、この倍より離れていたら、分けない
+      splitMin: 6,                 // 長さの比を見るのは、日本語がこの長さ以上の文だけ(短い文は、比がゆれる)
       realign: 3,                  // 目印の合う文が2つ以上あるとき、ずれを見込んだ位置の前後いくつまでを、候補にするか
       maxTargets: 0,               // 1回の通信で送る対象の文の上限。0 = 上限なし(まるごと1回)
       fallbackMax: 400000          // 配列の形で読めなかった返事を、終わりに読み直すために取っておく文字数の上限
@@ -192,7 +199,9 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       temp: { translate: null, idiom: null, dict: null },   // null = 指定しない(§5-3)
       maxOut: null,                // null = モデルの上限まで
       keyIn: 'header',             // API キーの送り方。'header' = 見出し / 'query' = 現行と同じ ?key=(自動では切り替えない。§5-3)
-      lightBudget: 1024            // 思考「軽い」の量(gemini-3 系でないモデル。現行と同じ)
+      lightBudget: 1024,           // 思考「軽い」の量(gemini-3 系でないモデル。現行と同じ)
+      midBudget: 8192,             // 思考「中」「高」の量(gemini-3 系でないモデル。工程T-3。目分量=2.5 Flash の上限が 24576)
+      highBudget: 24576
     },
     quota: {
       tz: 'America/Los_Angeles',   // 回数の日の区切り(§8-5)
@@ -249,7 +258,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       offlineEntry: false,         // メニューに「オフライン保存」の入口を出すか(工程5c-3 利用者: 当面、作らない。許されるかは、最後の段階で調べて決める。あとから組み込めるように、入口の場所は残す=true にすると、「準備中」の札が出る)
       themePick: false,            // テーマを手で選ぶ所を出すか(false = いつもサイトの色に合わせる。手で選ぶと、サイトの色と合わずに浮く=設計メモ 2-5。機能は残す: サイトを足すときに確かめ直す)
       thinkPick: false,            // 訳す AI の「考える深さ」を選ぶ所を出すか(false = 出さず、訳はいつも思考なし=settings.modelFor。工程T-2c 利用者: 確かめるまで隠す。
-                                   //   「軽く考える」は、本物の AI に送って結果が残っている 70 回(うち「軽く考える」11 回)のどれも、考えた量が 0 だった。出すときは、効き目を確かめ、名前と添え書きを事実に合わせる=工程T-3)
+                                   //   「軽く考える」は、本物の AI に送って結果が残っている 70 回(うち「軽く考える」11 回)のどれも、考えた量が 0 だった。工程T-3 で試した、Flash-Lite に本当に考えさせる「中」「高」は、3級らしさが変わらず、待ち時間だけ延びた=工程T-3b の終わりに、利用者が、出さないと決めた。
+                                   //   出すなら、効き目を確かめ、名前と添え書きを事実に合わせてから=設計メモ 2-3)
       hideOnScroll: true,          // 下へ読み進めている間は、操作部を隠す(設計メモ 2-5)
       hideDy: 40, showDy: 12,      // 下へこれだけ送ったら隠す・上へこれだけ戻したら出す(px)
       quietMs: 600,                // 操作のすぐあと(表示が変わって、読んでいる場所を合わせ直している間)は、隠す・出すを決めない
@@ -413,7 +423,10 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     shortFirst: id => !!(BY_ID[id] && BY_ID[id].shortFirst),
 
     // 思考の選び方('none' = なし / 'light' = 軽い / 'auto' = おまかせ。現行の 0 / 1024 / -1)
-    thinkModes: ['none', 'light', 'auto'],
+    //   'mid' = 中 / 'high' = 高(工程T-3。比べる台本で、Flash-Lite に本当に考えさせると訳が変わるかを試すため。送れるだけ)
+    thinkModes: ['none', 'light', 'auto', 'mid', 'high'],
+    // 設定の画面に並べる思考(mid・high を並べるかは、工程T-3 の結果を見て、利用者が決める)
+    thinkPicks: ['none', 'light', 'auto'],
 
     // 設定の初期値(§8-3 の Settings と同じ。利用者が設定で変えられる)
     //   3級・準2級も Flash-Lite・思考なし(工程T-2c。2026-10-16 利用者。3.6 Flash は、無料の枠で混雑 503 が続き、終わりまで届かなかった=設計メモ 2-3)
@@ -1048,6 +1061,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
   function thinking(model, think){
     if (think === 'none') return isGemini3(model) ? { thinkingLevel: levels.quirk(model).noMinimal ? 'low' : 'MINIMAL' } : { thinkingBudget: 0 };
     if (think === 'light') return isGemini3(model) ? { thinkingLevel: 'low' } : { thinkingBudget: config.llm.lightBudget };
+    if (think === 'mid') return isGemini3(model) ? { thinkingLevel: 'medium' } : { thinkingBudget: config.llm.midBudget };
+    if (think === 'high') return isGemini3(model) ? { thinkingLevel: 'high' } : { thinkingBudget: config.llm.highBudget };
     return null;
   }
   // キーは、keyIn が 'query' のときだけ URL に入れる。それ以外は見出し(req.url には、もう ? が付いている)
@@ -2681,29 +2696,40 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     '【モードの指示を守る】: 冒頭の【…モード】に書かれた、使う語と文法の決まりを、最初の文から最後の文まで守ってください。'
   ];
 
+  // 終わりの目印の頼み方に添える例の文(17 文字。見本の話に出てこない名前と文。E が 17 以上なら、全文が例になる)
+  const END_EG = 'ケンは駅前の広場まで一気に走った。';
+
   // ---- 翻訳(§6-1) ----
   //   body = 送る本文(wire.build の body)/ M = 翻訳対象の文の数 / K = 目印の長さ(0 = 目印なし、-1 = 全文の復唱)/ ruby = 本文にルビの印があるか
+  //   E = 終わりの目印の長さ(省く・0 = 頼まない=v4 と同じ文面。v5 = 工程T-4: "en" のあとに、その "en" が訳している文の末尾 E 文字を "e" に書かせる)
   //   style = 訳の出し方のルールの並び(省くと STYLE。[] なら入れない)。エンジンは渡さない(比べる台本だけが使う)
   function translate(o){
     o = o || {};
-    const M = o.M, K = o.K;
+    const M = o.M, K = o.K, E = o.E == null ? 0 : o.E;
     if (typeof o.body !== 'string' || !o.body) throw util.error('bad', 'prompts.translate: body が無い');
     if (!Number.isInteger(M) || M < 1) throw util.error('bad', 'prompts.translate: M がおかしい');
     if (!Number.isInteger(K) || K < -1) throw util.error('bad', 'prompts.translate: K がおかしい');
+    if (!Number.isInteger(E) || E < 0) throw util.error('bad', 'prompts.translate: E がおかしい');
     const style = o.style == null ? STYLE : o.style;
     if (!Array.isArray(style) || !style.every(r => typeof r === 'string' && r.trim() && r.indexOf(String.fromCharCode(10)) < 0 && r.indexOf(String.fromCharCode(13)) < 0)) throw util.error('bad', 'prompts.translate: style がおかしい');
 
     const rules = [];
     rules.push('【翻訳対象の厳密な限定】: 翻訳対象は <t> で囲まれた文【そのものだけ】です（囲まれていない部分や前後の文は、語り手の視点や状況の判定用であり、絶対に "en" に混入させないでください）。各 <t> の内容に一対一で対応する英文のみを出力してください。');
-    if (K > 0) rules.push('【目印による整合性保証】: 各要素の "k" に、その文の日本語原文の先頭' + K + '文字をそのまま出力してください（' + K + '文字より短い文は全文）。');
-    else if (K < 0) rules.push('【復唱による整合性保証】: 各要素の出力JSONには、翻訳対象である日本語原文をそのまま "k" フィールドに必ず出力してください。');
+    // 終わりの目印(v5)。"en" を書いたあとに書かせる: AI が英文を1文先の文の訳にしたとき、終わりの目印も、その文のものになる見込み(エンジンが、合わない文を未訳に戻す)
+    //   工程T-4 の本物の返事で、「末尾 E 文字(E 文字より短い文は全文)」と頼むと、1〜2 文字しか書かない回・文をまるごと書く回があったので、
+    //   「最後の E 文字だけ」「文全体は書かない」と書き、例を 1 つ添える(例の文は、見本の話に出てこない文。E 文字ちょうどに切った形を、その場で作る)
+    const ends = E > 0 ? '"en" を書き終えたら、"e" に、その "en" が訳している日本語原文の最後の' + E + '文字だけを、そのまま出力してください（文全体は書きません。' + E + '文字より短い文は全文。例: 「' + END_EG + '」なら "' + Array.from(END_EG).slice(-E).join('') + '"）。' : '';
+    if (K > 0) rules.push('【目印による整合性保証】: 各要素の "k" に、その文の日本語原文の先頭' + K + '文字をそのまま出力してください（' + K + '文字より短い文は全文）。' + ends);
+    else if (K < 0) rules.push('【復唱による整合性保証】: 各要素の出力JSONには、翻訳対象である日本語原文をそのまま "k" フィールドに必ず出力してください。' + ends);
+    else if (ends) rules.push('【目印による整合性保証】: ' + ends);
     rules.push('【原文構造・引用符の整理】: 原文に含まれる話者表記（例: 【リスナー】等）は英訳（例: [Listener] 等）に反映してください。文全体を囲む外側の引用符（" " や \' \'）や日本語のカギ括弧（「」）は出力に含めず、純粋な英文テキストのみを出力してください。');
     rules.push('前後の文脈から語り手・主語を正確に判定してください（一人称なら "I"、三人称なら客観人称）。');
     style.forEach(r => rules.push(r));
     rules.push('【省略の禁止】: すべての <t> について、id の小さい順に、1つも飛ばさず・まとめず・要約せずに出力してください。必ず <t> と同じ個数・同じ id の JSON 配列を返してください。');
     rules.push(['出力形式:', '[', '  {', '    "id": 0,']
       .concat(K > 0 ? ['    "k": "原文の先頭' + K + '文字",'] : K < 0 ? ['    "k": "翻訳対象の日本語文",'] : [])
-      .concat(['    "en": "Translated natural English sentence."', '  }', ']']).join('\n'));
+      .concat(E > 0 ? ['    "en": "Translated natural English sentence.",', '    "e": "原文の最後の' + E + '文字"'] : ['    "en": "Translated natural English sentence."'])
+      .concat(['  }', ']']).join('\n'));
     rules.push('Markdownコードブロックや余計な解説は一切含めず、純粋なJSON配列のみを出力してください。');
     rules.push('各英文（"en"）は必ず文頭を大文字で始め、文末に適切な句読点を配置してください。');
 
@@ -2779,7 +2805,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     ]).join('\n');
   }
 
-  Yomu.prompts = { V: 4, STYLE: STYLE.slice(), SCENES: Object.keys(SCENES), level, translate, vocabLevel, idioms, dict };
+  Yomu.prompts = { V: 5, STYLE: STYLE.slice(), SCENES: Object.keys(SCENES), level, translate, vocabLevel, idioms, dict };
 })();
 
 /* ---- core/wire.js ---- */
@@ -2837,15 +2863,44 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     for (let k = K + 1; k <= max && least > 0; k++){ const c = clash(k); if (c < least){ best = k; least = c; } }
     return best > K ? Math.min(max, best + config.wire.keySlack) : best;
   }
+  // そのページで使う、終わりの目印の長さ(工程T-4)。送る文の終わりの目印(末尾 E 文字)が、近くの送る文(送る順で前後 config.wire.realign 文まで)の
+  //   全文の終わりにもなっている所があれば、そうでなくなるまで長くする(config.wire.eMax まで。長くしたら keySlack の分だけ余分に)。
+  //   終わりの目印は、文を決めるのには使わない(決めるのは頭の目印)。AI が、英文を1文先(や後ろ)の文の訳にしたとき、
+  //   終わりの目印も、その文のものになる見込み=そのずれに気づけるように、となりの文と見分けがつく長さにする。
+  //   日本語の文は「…った。」「…ていた。」で終わるものが多いので、短いと、となりと同じになる。文字がまるごと同じ文どうしは、数えない
+  function pickE(norms, E){
+    const max = config.wire.eMax, R = config.wire.realign;
+    if (!(E > 0) || !(max > E)) return E > 0 ? E : 0;
+    const whole = norms.map(canon);
+    const clash = e => {
+      let count = 0;
+      const tails = norms.map(nm => canon(nm.slice(-e)));
+      norms.forEach((nm, n) => {
+        for (let d = -R; d <= R; d++){
+          const m = n + d;
+          if (!d || m < 0 || m >= norms.length || whole[m] === whole[n]) continue;
+          const L = Math.min(tails[m].length, tails[n].length);
+          if (L > 0 && tails[m].slice(-L) === tails[n].slice(-L)) count++;      // 受け取り(endsAt)と同じ比べ方
+        }
+      });
+      return count;
+    };
+    let best = E, least = clash(E);
+    for (let e = E + 1; e <= max && least > 0; e++){ const c = clash(e); if (c < least){ best = e; least = c; } }
+    return best > E ? Math.min(max, best + config.wire.keySlack) : best;
+  }
 
   // ---- 送る本文(§6-2) ----
   //   sids = 囲む文(省くと、対象の文の全部)。対象でない文と、無い番号は、囲まない
   //   opt.K = 目印の長さ(省くと config.wire.K。ページに、同じ書き出しの文があれば、長くなる=戻りの K)/ opt.ruby = 'aozora' | 'none'(省くと config.wire.ruby)
-  //   → { body, M, map:[sid…], anchors:[目印…], marked:[囲みの中身(ルビの印つき)…] | null, K: 使った目印の長さ, ruby: ルビの印を入れたか, chars: 囲んだ文の文字数 }
+  //   opt.E = 終わりの目印の長さ(省くと config.wire.E。0 = 終わりの目印を頼まない。近くの文と終わりが同じなら、長くなる=戻りの E。工程T-4)
+  //   → { body, M, map:[sid…], anchors:[目印…], ends:[終わりの目印…], marked:[囲みの中身(ルビの印つき)…] | null, K: 使った目印の長さ, E: 使った終わりの目印の長さ, ruby: ルビの印を入れたか, chars: 囲んだ文の文字数 }
   function build(model, sids, opt){
     opt = opt || {};
     checkModel(model);
     const K0 = checkK(opt.K == null ? config.wire.K : opt.K);
+    const E0 = opt.E == null ? config.wire.E : opt.E;
+    if (!Number.isInteger(E0) || E0 < 0) throw bad('終わりの目印の長さがおかしい: ' + E0);
     const rubyMode = opt.ruby == null ? config.wire.ruby : opt.ruby;
     if (sids != null && !Array.isArray(sids)) throw bad('文の番号の並びがおかしい');
     const want = new Set(sids == null ? model.targets : sids.map(Number));
@@ -2862,6 +2917,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     });
     const K = pickK(norms, model.sents.map(normOf).filter(nm => canon(nm) !== ''), K0);
     const anchors = norms.map(nm => cut(nm, K));
+    const E = pickE(norms, E0);
+    const ends = norms.map(nm => (E > 0 ? nm.slice(-E) : ''));
     // ページの文章そのものに 《 》 ｜ があるとき(《スキル名》など)は、ルビの印を付けない(読みと取り違えさせないため)
     const rubyOn = rubyMode === 'aozora' && !model.paras.some(p => MARKS.test(String(p.text)));
     const bySid = sentsBySid(model);
@@ -2904,7 +2961,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (inner.length !== map.length || (body.match(/<\/t>/g) || []).length !== map.length) throw bad('文のデータが食いちがっている(囲めない文がある)');
     // 囲みの中身(ルビの印つき)。AI が、本文からルビの印ごと写して目印にしてきたときに合わせる。ルビを入れなかったページでは null
     const marked = hasRuby ? inner : null;
-    return { body, M: map.length, map, anchors, marked, K, ruby: hasRuby, chars };
+    return { body, M: map.length, map, anchors, ends, marked, K, E, ruby: hasRuby, chars };
   }
 
   // ---- 少しずつ届く JSON の配列(§6-3) ----
@@ -3021,6 +3078,64 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return null;
   }
   const flag = (s, en) => flagFor(T.words(String(en == null ? '' : en).trim()), sizeOf(normOf(s)));
+
+  // ---- まとめ訳を分ける(§6-4 の「まとめ訳を分ける」。工程T-4b)----
+  // 日本語の文の数: 。！？ の並び(と、すぐあとの閉じかっこ)で区切った、字のある切れの数。
+  //   閉じかっこのすぐあとに と・っ が続く所(「本当！？」と聞いた)は、引用の中の終わりなので、区切らない
+  const JP_STOP = /[。！？!?⁉‼]+([」』）)]*)/g;
+  const HAS_WORD = /[\p{L}\p{N}]/u;
+  function jpCount(t){
+    const s = T.norm(neutral(t));
+    let n = 0, at = 0;
+    JP_STOP.lastIndex = 0;
+    for (let m; (m = JP_STOP.exec(s));){
+      if (m[1] && /^[とっ]/.test(s.slice(JP_STOP.lastIndex))) continue;
+      if (HAS_WORD.test(s.slice(at, m.index))) n++;
+      at = JP_STOP.lastIndex;
+    }
+    if (HAS_WORD.test(s.slice(at))) n++;
+    return Math.max(1, n);
+  }
+  // 英文を文に分ける: . ! ? の並び(と、閉じた引用符・かっこ)のあとに、空白と、大文字・数・開いた引用符が続く所で区切る。
+  //   … と ...(点 2 つ以上)では区切らない。Mr. などの略のあとでも区切らない(No. は、返事の「No.」が多いので区切る)。もとの英文の字のまま返す
+  const EN_STOP = /([.!?]+|…)(["”’')\]]*)(\s+)(?=["“‘'(]?[A-Z0-9])/g;
+  const ABBR = /(?:^|[\s"“‘'(])(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|Prof|Mt|vs|etc|Mme|Mlle)\.$/;
+  function enSentences(en){
+    const s = String(en).trim(), out = [];
+    let at = 0;
+    EN_STOP.lastIndex = 0;
+    for (let m; (m = EN_STOP.exec(s));){
+      const p = m[1];
+      if (p === '…' || /^\.{2,}$/.test(p)) continue;
+      if (p === '.' && ABBR.test(s.slice(0, m.index + 1))) continue;
+      const end = m.index + p.length + m[2].length;
+      out.push(s.slice(at, end));
+      at = end + m[3].length;
+    }
+    out.push(s.slice(at));
+    return out.filter(x => x.trim() !== '');
+  }
+  // まとめ訳 en を、日本語の文の並び jps(本文の順)の 1 つずつに分ける → null(分けない)| [英文…]
+  //   英文の文の数が、日本語の文の数の和とちょうど同じときだけ、前から順に、その文の日本語の文の数だけ配る。
+  //   長さの釣り合い: 配った英文の字数 ÷ 日本語の長さが、範囲全体の比から config.wire.splitRatio 倍より離れた文があれば、分けない
+  //   (日本語が config.wire.splitMin より短い文は、見ない)
+  function split(jps, en){
+    if (!Array.isArray(jps) || jps.length < 2 || typeof en !== 'string') return null;
+    const cnt = jps.map(jpCount), parts = enSentences(en);
+    if (parts.length !== cnt.reduce((a, b) => a + b, 0)) return null;
+    let i = 0;
+    const out = cnt.map(c => { const g = parts.slice(i, i + c).join(' '); i += c; return g; });
+    const L = jps.map(t => sizeOf(T.norm(neutral(t)))), Ln = out.map(x => x.length);
+    const sumL = L.reduce((a, b) => a + b, 0), sumE = Ln.reduce((a, b) => a + b, 0);
+    if (!sumL || !sumE) return null;
+    const r = sumE / sumL, Q = config.wire.splitRatio;
+    for (let k = 0; k < jps.length; k++){
+      if (L[k] < config.wire.splitMin) continue;
+      const q = (Ln[k] / L[k]) / r;
+      if (!(q <= Q && q >= 1 / Q)) return null;
+    }
+    return out;
+  }
   // 返ってきた目印 → { c, cl, b, bl }。c = 囲みの印を除いて、比べるための形にしたもの / b = ルビの印(｜・《…》・閉じていない 《…)も除いたもの
   //   cl・bl = それぞれの、記号も数えた長さ。文字でなければ null。比べる文字が残らない(記号だけ・空)なら { sym: true }
   //   とても長い目印は、初めの KEY_MAX 文字だけを見る(文より長い目印は、どのみち合わない。長い記号の並びで、時間がかからないように)
@@ -3045,7 +3160,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return ja / all;
   }
 
-  //   o = { model, map, marked?, K, onItem }(map・marked・K は build の戻り)
+  //   o = { model, map, marked?, K, E?, onItem }(map・marked・K・E は build の戻り。E を省くと 0 = 終わりの目印を見ない)
   //   onItem({ sid, en, f?, nk? }): 確かめを通った文が来る(f = 疑いの印 's' | 'l')。ふつうは届いた順。決めるのを待たせた文は、決まったときに来る
   //   nk = 1: 目印を1つも返してこない返事で、番号だけで決めた文(返事の終わりに、まとめて来る。rep.suspect が付くのは、この文の返事だけ。v1.7)
   //   → { push(text), end(finish) → Report }
@@ -3056,12 +3171,16 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   //   - 2つ以上ある → その場では決めずに待たせ、次の手がかりが来たら、前のずれから次のずれへ順にたどって、
   //     どの筋でも同じ文に行き着く文だけを決める。手がかりの間に、捨てた文が1つでもあれば、待たせた文は、まとめて捨てる
   //   - 目印を返している返事の中の、目印の無い文 → 使わない。目印を1つも返してこない返事 → 終わってから、番号どおりに使う
+  //   - 短い目印(工程T-4): 頼んだ長さの keyShare 倍に足りなくても、書き出しの合う文がページ全体でちょうど1つで、番号の並び(今のずれ)とも合えば、使う
+  //   - 終わりの目印(工程T-4。E > 0 のとき): 文が決まったあとで、"e" が、その文の終わりと合わなければ、使わない(英文が、となりの文の訳になっている疑い)
   function reader(o){
     o = o || {};
     checkModel(o.model);
     if (!Array.isArray(o.map)) throw bad('番号の対応がおかしい');
     if (o.marked != null && (!Array.isArray(o.marked) || o.marked.length !== o.map.length)) throw bad('囲みの中身の数が合わない');
     const K = checkK(o.K);
+    const E = o.E == null ? 0 : o.E;
+    if (!Number.isInteger(E) || E < 0) throw bad('終わりの目印の長さがおかしい: ' + o.E);
     const onItem = typeof o.onItem === 'function' ? o.onItem : null;
     const map = o.map.slice(), M = map.length;
     const bySid = sentsBySid(o.model);
@@ -3122,7 +3241,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     o.model.sents.forEach(s => { if (!inMap.has(s.sid)){ const c = canon(normOf(s)); if (c){ unsent.push(c); if (!whole.has(c)) others.add(c); } } });
 
     const rep = { sent: M, got: 0, missing: [], realigned: 0, mismatch: 0, dup: 0, extra: 0, empty: 0, notEn: 0,
-      tooShort: 0, tooLong: 0, flagShort: 0, flagLong: 0, noKey: 0, suspect: 0, tenths: [], finish: null };
+      tooShort: 0, tooLong: 0, flagShort: 0, flagLong: 0, noKey: 0, suspect: 0, shortKey: 0, endMiss: 0, endNear: 0, noEnd: 0, split: 0, splitCut: 0, tenths: [], finish: null };
     const filled = new Array(M).fill(false);       // その文に、もう訳が付いたか
     let off = 0;                                   // 番号のずれ(「文の番号 − 返ってきた id」。いちばん近くの手がかりから)
     let keyed = false;                             // この返事が、目印を返しているか
@@ -3132,20 +3251,157 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const held = [];                               // 目印の無い文(この返事が目印を返すかどうかが、まだ分からない間)
     const drop = name => { rep[name]++; dirty = true; };
 
+    // ---- 終わりの目印(工程T-4)----
+    //   "e" の終わりが、その文の、頼んだ長さの終わりと同じかで比べる(比べる形は頭の目印と同じ canon。AI が、句点やかっこを落とす・足す・頼んだより長く写す・短く写す、のどれでも合う。
+    //   長く写したときの前の方の写しまちがいは見ない=sameTail)。ルビを送ったページでは、"e" からルビの印を除いた形でも比べる。
+    //   AI が頼んだより短く書き、比べる文字が 2 文字以下の "e"(「た。」)は、手がかりにならないので、比べずに使う(noEnd)。
+    //   合わなければ、その文には使わない(endMiss)。そのうち、近くの送った文(送る順で前後 realign 文まで)の終わりと合うもの = endNear(英文が、となりの文の訳になった見込み)。
+    //   返事の初めの1件で、この返事が "e" を返すかを決める: 返す返事なら、"e" の無い文は使わない(endMiss)。返さない返事(AI が頼みを聞かなかった)なら、
+    //   終わりの目印を見ずに使い、noEnd に数える("e" のある文だけは比べる)。
+    //   "e" はあるが、比べる文字が無い(記号だけ・空。「本当ですか！？！？」に「！？」)ときも、比べずに使う(noEnd。何度訳し直しても使えない文を作らない)。記号だけの文も、比べずに使う
+    let eMode = null;                              // null = まだ分からない / true = "e" を返す返事 / false = 返さない返事(初めの1件で決める。onObject)
+    const endOf = e => {
+      if (typeof e !== 'string') return null;
+      const base = e.slice(-KEY_MAX).replace(/<\/?t\b[^>]*>/g, '');
+      const c = canon(base);
+      if (!c) return null;
+      return { c, b: canon(base.replace(/《[^《》]*》/g, '').replace(/《[^《》]*$/, '').replace(/^[^《》]*》/, '').replace(/｜/g, '')) };
+    };
+    // 比べるのは、頼んだ長さの終わり(tailC)の分だけ: "e" と tailC の、短い方の長さで、終わりどうしが同じか。
+    //   AI が頼んだより長く写したとき、前の方の写しまちがい(「書かれて」→「書されて」・同じ語を 2 回)では捨てない(工程T-4 の本物の返事)。
+    //   ルビを送ったページでは、"e" からルビの印を除いた形(b)でも比べる。頼んだ終わりに、比べる文字が無い文は、比べない(合う)
+    const tailC = norms.map(nm => (E ? canon(nm.slice(-E)) : ''));
+    const sameTail = (s, n) => { const t = tailC[n]; if (!t) return true; const L = Math.min(s.length, t.length); return L > 0 && s.slice(-L) === t.slice(-L); };
+    const endsAt = (n, x) => (plain[n] !== '' && (sameTail(x.c, n) || (mark !== null && x.b !== '' && sameTail(x.b, n))));
+    // → 0(使う)/ 1(合わない)/ 2(合わない。近くの送った文の終わりと合う)。比べずに使うときは、ここで noEnd を数える
+    function endState(n, it){
+      if (!E || plain[n] === '') return 0;
+      const x = endOf(it.e);
+      if (x === null){
+        if (eMode && typeof it.e !== 'string') return 1;   // "e" を返す返事の中の、"e" の無い文
+        rep.noEnd++;
+        return 0;
+      }
+      // AI が、頼んだ長さより短く書いた "e" で、比べる文字が 2 文字(config.wire.endMin − 1)以下のもの(「た。」「す」)は、
+      //   となりの文と見分ける手がかりにならないので、比べずに使う(工程T-4 の本物の返事: Flash-Lite は、長い話で、終わりの目印を 1〜2 文字しか書かず、
+      //   それも前の文の終わりのことが多かった=合っている訳を 25 文捨てた)。頼んだ長さで書いてあれば、記号が多くて比べる文字が少なくても(「すか！？！？」)、比べる
+      const shortRaw = Array.from(String(it.e).replace(/\s/g, '')).length < E - config.wire.keySlack;
+      if (shortRaw && Math.max(x.c.length, x.b.length) < config.wire.endMin){ rep.noEnd++; return 0; }
+      if (endsAt(n, x)) return 0;
+      for (let d = -R; d <= R; d++){
+        const m = n + d;
+        if (d && m >= 0 && m < M && plain[m] !== plain[n] && endsAt(m, x)) return 2;
+      }
+      return 1;
+    }
+
+    // ---- まとめ訳を分ける(§6-4。工程T-4b)----
+    //   "e" が「何かの字 X」+「うしろの文(同じ段落の 1〜splitMax 文。送っていない文もふくむ)の全文」で、X の終わりが、その文の終わりと合う
+    //   = AI が、その文から、うしろの文までを、まとめて 1 つの英文にした。英文を、文の数が合えば分けて配る(split)。
+    //   X が空(うしろの文だけを写した)なら、分けない: 英文が 1 文先の訳にずれたときと、見分けられない
+    const all = o.model.sents, posOf = new Map();
+    all.forEach((s, i) => posOf.set(s.sid, i));
+    const nOf = new Map(map.map((sid, n) => [sid, n]));
+    const spare = new Map();                       // 送った文の番号 → { en: 分けた英文, whole: Set(まとめ訳), nk }(控え。AI が、その文より先へ進んだら使う)
+    const lost = new Map();                        // 送った文の番号 → 終わりの目印が合わずに捨てた英文(同じ英文が、うしろの文にも返ってきたときに分ける)
+    // → null(分けない)| { p: その文の、ページの文の中の位置, parts: [英文…](その文から、範囲の終わりまで)}
+    function spread(n, it){
+      const x = endOf(it.e);
+      if (x === null || typeof it.en !== 'string') return null;
+      const p = posOf.get(map[n]);
+      if (p == null) return null;
+      const forms = [x.c].concat(mark !== null && x.b && x.b !== x.c ? [x.b] : []);
+      const ks = [];
+      let tail = '';
+      for (let k = 1; k <= config.wire.splitMax; k++){
+        const q = all[p + k];
+        if (!q || q.p !== all[p].p) break;
+        tail += canon(normOf(q));
+        if (forms.some(c => c.length > tail.length && c.endsWith(tail) && sameTail(c.slice(0, c.length - tail.length), n))) ks.push(k);
+      }
+      if (ks.length !== 1) return null;            // 範囲が無い・2 とおりに読める
+      const parts = split(all.slice(p, p + ks[0] + 1).map(s => s.text), it.en.trim());
+      return parts ? { p, parts } : null;
+    }
+    // 控えを使う: 送った文の番号が before より前の控えのうち、まだ英文の無い文に(AI が、その文より先へ進んだ・返事が終わった)
+    function flush(before){
+      Array.from(spare.keys()).sort((a, b) => a - b).forEach(m => {
+        if (m >= before) return;
+        const sp = spare.get(m);
+        spare.delete(m);
+        if (!filled[m] && accept(m, sp.en, sp.nk)){ rep.split++; if (sp.nk) rep.noKey++; }
+      });
+    }
+
     // n 番目の文として受け取る(順 2・順 4〜8)
     function place(n, it, moved, nk){
       if (filled[n]){ rep.dup++; return; }         // その文には、もう訳が付いている(先のものを使う)
+      const whole = typeof it.en === 'string' ? it.en.trim() : '';
+      // まとめ訳を分けた範囲の文に、AI が、まとめ訳とまったく同じ英文を返してきた(同じ英文を 2 つの文に付けた形): 控え(分けた英文)を使う
+      const sp = spare.get(n);
+      if (sp && sp.whole.has(whole)) return;
+      const es = endState(n, it);                  // 3 のあと. 終わりの目印が、その文の終わりと合うか(工程T-4)
+      // 前の文(同じ段落の splitMax 文まで)に返して、終わりの目印が合わずに捨てた英文と、まったく同じ英文(同じ英文を 2 つの文に付けた形。
+      //   前の文の終わりの目印には、範囲が写っていなかった): 2 つの文の間を範囲として分ける。分けられなければ、この文にも使わない(2 つとも未訳)
+      if (!es && whole){
+        const at = sameAs(n, whole);
+        if (at){
+          if (!at.parts){ rep.dup++; return; }
+          at.parts.slice(0, -1).forEach((x, i) => {
+            const m = nOf.get(all[at.p + i].sid);
+            if (m == null || filled[m]){ rep.splitCut++; return; }
+            if (accept(m, x, nk)) rep.split++;
+          });
+          if (moved) rep.realigned++;
+          if (accept(n, at.parts[at.parts.length - 1], nk)) rep.split++;
+          return;
+        }
+      }
+      // "e" に、うしろの文までのまとめた範囲が写っていれば、分ける(終わりが、その文の終わりと合っても=同じ文が 2 つ並ぶとき)
+      const sd = E ? spread(n, it) : null;
+      if (es && !sd){
+        rep.endMiss++;
+        if (es === 2) rep.endNear++;
+        if (whole) lost.set(n, whole);
+        return;
+      }
+      let en = it.en;
+      if (sd){
+        en = sd.parts[0];
+        sd.parts.slice(1).forEach((x, i) => {
+          const m = nOf.get(all[sd.p + 1 + i].sid);
+          if (m == null || filled[m]){ rep.splitCut++; return; }   // 送っていない文・もう英文のある文の分は、捨てる
+          if (spare.has(m)){ spare.get(m).whole.add(whole); rep.splitCut++; return; }   // ほかのまとめ訳の控えがある(先のものを使う)
+          spare.set(m, { en: x, whole: new Set([whole]), nk });
+        });
+      }
       if (moved) rep.realigned++;
+      if (accept(n, en, nk) && sd) rep.split++;
+    }
+    // その文より前(同じ段落の、本文の順で splitMax 文まで)の送った文に返して捨てた英文と、同じ英文か → null | { p: 範囲の始まりの位置, parts: [英文…] | null }
+    function sameAs(n, whole){
+      const p = posOf.get(map[n]);
+      if (p == null) return null;
+      for (let k = 1; k <= config.wire.splitMax; k++){
+        const q = all[p - k];
+        if (!q || q.p !== all[p].p) return null;
+        const m = nOf.get(q.sid);
+        if (m != null && lost.get(m) === whole) return { p: p - k, parts: split(all.slice(p - k, p + 1).map(s => s.text), whole) };
+      }
+      return null;
+    }
+    // 順 4〜8 を通して、使う → true(使った)/ false(捨てた。数えた)
+    function accept(n, raw, nk){
       // 4. 空でない文字か(語が1つも無いもの「...」も、空として扱う)
-      const en = typeof it.en === 'string' ? it.en.trim() : '';
+      const en = typeof raw === 'string' ? raw.trim() : '';
       const w = T.words(en);
-      if (!w){ rep.empty++; return; }
+      if (!w){ rep.empty++; return false; }
       // 5. 日本語のままでないか
-      if (jaShare(en) > C.jaMax){ rep.notEn++; return; }
+      if (jaShare(en) > C.jaMax){ rep.notEn++; return false; }
       // 6・7. 短すぎないか・長すぎないか(語数と、日本語の文字数の比。短すぎは、切り捨てた数と比べる。叫び声のような文は、見ない)
       const len = lens[n];
-      if (len >= C.minLen && !scream[n] && w < Math.floor(len * C.shortDrop)){ rep.tooShort++; return; }
-      if (w > len * C.longDrop[0] + C.longDrop[1]){ rep.tooLong++; return; }
+      if (len >= C.minLen && !scream[n] && w < Math.floor(len * C.shortDrop)){ rep.tooShort++; return false; }
+      if (w > len * C.longDrop[0] + C.longDrop[1]){ rep.tooLong++; return false; }
       // 8. 疑いの印(捨てない)
       const item = { sid: map[n], en };
       if (nk) item.nk = 1;
@@ -3155,6 +3411,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       filled[n] = true;
       rep.got++;
       if (onItem) onItem(item);
+      return true;
     }
     // その文の書き出しか: 全文の先頭になっている、または、切れ目で文字の形が変わる所で切った形と同じ
     const own = (n, c) => plain[n].startsWith(c) || odd[n].includes(c);
@@ -3162,12 +3419,19 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // 書き出しが合うか(広い見方): 長さの条件は見ない。ルビの印を除いた形 b で比べるのは、ルビを送ったページだけ。
     //   記号だけの目印は、「目印が記号だけになりうる文」と合う
     const starts = (n, key) => (key.sym ? symOk[n] : own(n, key.c) || (mark !== null && (ownM(n, key.c) || (key.b !== '' && own(n, key.b)))));
-    // 目印が合うか(きびしい見方): 書き出しが合い、要る長さ以上あり、文の終わりを越えていない
+    // 目印が合うか(きびしい見方): 書き出しが合い、要る長さ(lo・ルビの印つきの形は loM)以上あり、文の終わりを越えていない
     //   (全文より長い目印=2つの文をまとめた訳・後ろの文の目印、は合わない)
-    const hit = (n, key) => (key.sym ? symOk[n] :
-      (key.c.length >= need[n] && key.cl <= full[n] && own(n, key.c) && !notMine(n, key.c, key.cl)) ||
-      (mark !== null && key.c.length >= needM[n] && key.cl <= fullM[n] && ownM(n, key.c) && !notMine(n, key.c, key.cl)) ||
-      (mark !== null && key.b !== '' && key.b.length >= need[n] && key.bl <= full[n] && own(n, key.b) && !notMine(n, key.b, key.bl)));
+    const hitAt = (n, key, lo, loM) => (key.sym ? symOk[n] :
+      (key.c.length >= lo && key.cl <= full[n] && own(n, key.c) && !notMine(n, key.c, key.cl)) ||
+      (mark !== null && key.c.length >= loM && key.cl <= fullM[n] && ownM(n, key.c) && !notMine(n, key.c, key.cl)) ||
+      (mark !== null && key.b !== '' && key.b.length >= lo && key.bl <= full[n] && own(n, key.b) && !notMine(n, key.b, key.bl)));
+    const hit = (n, key) => hitAt(n, key, need[n], mark !== null ? needM[n] : 0);
+    // 短い目印(工程T-4): 要る長さを config.wire.keyMin 文字まで下げて見る。文を閉じる記号(。！？ と、1つだけの .)で終わる目印は、受けない
+    //   (1つの文を2つに分けて返してきたときの、前半「そうか。」の目印かもしれない。途中に 。 のある目印「うそつけ。靴ひ」は受ける)。
+    //   終わりのかっこと空白は除いて見る。…… と ... は、文を閉じる記号に数えない。使うのは、書き出しの合う文がページ全体で1つで、番号の並びと合うときだけ(onObject)
+    const KMIN = config.wire.keyMin;
+    const endsStop = raw => { const t = String(raw).replace(/[\s」』）)】\]”’"'》〉]+$/u, ''); return /[。．｡！？!?]$/.test(t) || /(^|[^.])\.$/.test(t); };
+    const hitShort = (n, key, raw) => !key.sym && !endsStop(raw) && hitAt(n, key, Math.min(KMIN, need[n]), mark !== null ? Math.min(KMIN, needM[n]) : 0);
     // 送っていない文の中に、書き出しの合うものがあるか
     const outside = key => key.sym || unsent.some(u => u.startsWith(key.c) || (mark !== null && key.b !== '' && u.startsWith(key.b)));
 
@@ -3245,6 +3509,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     }
 
     function onObject(it){
+      if (it && eMode === null) eMode = typeof it.e === 'string';   // この返事が、終わりの目印を返すか(初めの1件で決める)
       let key = it && K !== 0 ? keyOf(it.k) : null;
       // この返事は、目印を返している(id の読めない1件でも、目印があれば、そう見る)。それまでの、目印の無い文は使わない
       if (key !== null && !key.sym && !keyed){ keyed = true; if (held.length){ rep.mismatch += held.length; held.length = 0; dirty = true; } }
@@ -3263,17 +3528,27 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       }
       // 3. 書き出しの合う文を、ページ全体から探す。S = 送った文のうち、目印がきちんと合うもの / wide = 送った文のうち、書き出しが合うものの数
       const S = [];
-      let wide = 0;
-      for (let n = 0; n < M; n++){ if (starts(n, key)){ wide++; if (hit(n, key)) S.push(n); } }
+      let wide = 0, wideAt = -1;
+      for (let n = 0; n < M; n++){ if (starts(n, key)){ wide++; wideAt = n; if (hit(n, key)) S.push(n); } }
       const out = outside(key);
       // 送っていない文の全文と同じ目印で、合う文が無い(合う文に頼んだ長さより短い): 送っていない文の訳を返してきた
       if (others.has(key.c) && !S.length) return drop('extra');
+      // 短い目印(工程T-4): 書き出しの合う文が、ページ全体でちょうど1つで、それが送った文で、番号の並び(今のずれ)とも合う。
+      //   AI が、頼んだ長さより短く書いてきた(工程T-3 の本物の返事で、277 文のうち 163 文)。手がかりにもする(ずれは変わらない)
+      if (!S.length && wide === 1 && !out && wideAt === id + off && hitShort(wideAt, key, it.k)){
+        rep.shortKey++;
+        settle(off);
+        flush(wideAt);                             // AI が、この文まで進んだ: それより前の控え(まとめ訳を分けた分)を使う
+        place(wideAt, it, wideAt !== id);
+        return;
+      }
       if (!S.length) return drop(id >= M || (out && !wide) ? 'extra' : 'mismatch');
       if (S.length === 1 && wide === 1 && !out){
         // 書き出しの合う文が、ページ全体でちょうど1つ: その文に決まる(どれだけ離れていても)。ずれの手がかりになる。
         const next = S[0] - id;
         settle(next);
         off = next;
+        flush(S[0]);                               // AI が、この文まで進んだ: それより前の控え(まとめ訳を分けた分)を使う
         place(S[0], it, S[0] !== id);
         return;
       }
@@ -3311,6 +3586,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
               if (rep.got > before) rep.noKey++;
             });
           }
+          flush(Infinity);                           // 残った控え(まとめ訳を分けた、うしろの文の分)を使う
           rep.missing = map.filter((sid, n) => !filled[n]);
           // 位置ごと(10等分。文が 10 より少なければ、文の数だけ)の、使えた割合
           const B = Math.min(10, M), tot = new Array(B).fill(0), ok = new Array(B).fill(0);
@@ -3327,7 +3603,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     };
   }
 
-  Yomu.wire = { V: 1, build, array, reader, idOf, canon, flag };
+  Yomu.wire = { V: 2, build, array, reader, idOf, canon, flag, split };   // V 2 = 返事に終わりの目印 "e"(工程T-4)
 })();
 
 /* ---- core/fix.js ---- */
@@ -3339,7 +3615,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 //   ② quote: せりふだけの文(「」が文の外)の英文が、まるごと二重引用符で囲まれていたら、外側の引用符を外す(日本語の側に 『』 などがある文は、触らない)
 //   ③ pair: 同じ段落で、間に字の無いとなりの文どうし(どちらも、この通信で送った文)で、
 //      後ろの英文が、前の英文の後ろにまるごと入っていたら、前の方から切る(文の切れ目で、3 語以上が、そっくり同じとき)。
-//      2 つの英文が同じ(両方の訳が入った形。英文が 2 文以上)なら、2 つとも未訳に戻す(2026-10-16 利用者。「続きを訳す」で拾える)。
+//      2 つの英文が同じ(両方の訳が入った形。英文が 2 文以上)なら、文の数が合えば分ける(wire.split。工程T-4b。2026-10-16 利用者の OK)。
+//      分けられなければ、2 つとも未訳に戻す(2026-10-16 利用者。「続きを訳す」で拾える)。
 //      日本語でも重なっている(せりふのくり返し)ときは、触らない
 //   迷ったら、直さない(正しい英文を壊さない)。直したら、疑いの印 f を、直したあとの英文で付け直す(wire.flag)
 //   stream: 届いた順の訳に、上の 3 つを当てて、呼んだ側へ渡す。③のために、前の文は、となりの文が届くまで渡すのを待つ
@@ -3442,7 +3719,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return out;
   }
   const sentences = en => (String(en).match(/[^.!?…]+[.!?…]+["'”’)]*/g) || []).filter(x => /[\p{L}\p{N}]/u.test(x)).length;
-  // → null(触らない)/ { cut: 前の英文の、切ったあとの形 } / { same: true }(2 つとも未訳に戻す)
+  // → null(触らない)/ { cut: 前の英文の、切ったあとの形 } / { split: [前の英文, 後ろの英文] }(同じ英文を分けた)/ { same: true }(2 つとも未訳に戻す)
   function pair(sa, sb, enA, enB){
     if (!sa || !sb) return null;
     const a = toks(String(enA || '').trim()), b = toks(String(enB || '').trim());
@@ -3454,7 +3731,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const inA = jpShare(sb.text, sa.text) >= ECHO;
     if (k === 0){
       if (inA && jpShare(sa.text, sb.text) >= ECHO) return null;
-      return sentences(enA) >= 2 ? { same: true } : null;   // 同じ英文。1 文だけなら、ちがう日本語に同じ訳(Yes. と Yes.)かもしれないので、触らない
+      if (sentences(enA) < 2) return null;                   // 同じ英文。1 文だけなら、ちがう日本語に同じ訳(Yes. と Yes.)かもしれないので、触らない
+      const parts = wire.split([sa.text, sb.text], String(enA).trim());
+      return parts ? { split: parts } : { same: true };
     }
     if (inA) return null;
     const head = String(enA).trim().slice(0, a[k].at).trimEnd();
@@ -3467,7 +3746,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   //   → { push(item), end(rep) → rep(直した数と、未訳に戻した文を足したもの)}
   function stream(o){
     const model = o.model, S = model.sents, map = Array.isArray(o.sids) ? o.sids.slice() : [], sent = new Set(map), onItem = o.onItem;
-    const n = { title: 0, quote: 0, cut: 0, same: 0 };
+    const n = { title: 0, quote: 0, cut: 0, same: 0, split: 0 };
     const held = new Map(), state = new Map(), out = new Map();   // state: sid → 'out'(渡した)/ 'drop'(未訳に戻した)
     let ended = null;
     const gapOk = (a, b) => { const p = model.paras[a.p]; return !!p && typeof p.text === 'string' && p.text.slice(a.b, b.a).trim() === ''; };
@@ -3480,6 +3759,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       const r = pair(S[a.sid], S[b.sid], a.en, b.en);
       if (r && r.same){ n.same += 2; state.set(a.sid, 'drop'); state.set(b.sid, 'drop'); held.delete(a.sid); held.delete(b.sid); return 'drop'; }
       if (r && r.cut != null){ n.cut++; a.en = r.cut; reflag(a); }
+      if (r && r.split){ n.split += 2; a.en = r.split[0]; b.en = r.split[1]; reflag(a); reflag(b); }
       return 'ok';
     }
     return {
@@ -3504,6 +3784,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         else if (nx >= 0 && state.get(nx) === 'out'){
           const r = pair(s, S[nx], it.en, out.get(nx).en);   // 後ろの文は、もう渡した: 切るだけ(未訳には戻さない)
           if (r && r.cut != null){ n.cut++; it.en = r.cut; reflag(it); }
+          if (r && r.split){ n.split++; it.en = r.split[0]; reflag(it); }   // 後ろの文は、もう渡した: 前の文だけを、分けた 1 つ目に
         }
         emit(it);
       },
@@ -3526,7 +3807,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         const all = Array.from(out.values());
         r.flagShort = all.filter(x => x.f === 's').length;
         r.flagLong = all.filter(x => x.f === 'l').length;
-        r.fixTitle = c.title; r.fixQuote = c.quote; r.fixCut = c.cut; r.fixSame = c.same;   // 直した文の数(§8-6 の通信の記録には、0 でないものだけ残る)
+        r.fixTitle = c.title; r.fixQuote = c.quote; r.fixCut = c.cut; r.fixSame = c.same; r.fixSplit = c.split;   // 直した文の数(§8-6 の通信の記録には、0 でないものだけ残る)
         return r;
       }
     };
@@ -4673,7 +4954,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const on = isPlain(o.on) ? o.on : {};
     await settings.load();                       // 別のタブで変えた設定を取り直す
     const ai = aiFor(o.level, o.use);
-    const opt = { K: config.wire.K, ruby: config.wire.ruby };
+    const opt = { K: config.wire.K, E: config.wire.E, ruby: config.wire.ruby };
     let built = wire.build(o.model, o.sids == null ? (o.rec ? missing(o.model, o.rec) : null) : o.sids, opt);
     const max = config.wire.maxTargets;
     if (max > 0 && built.M > max) built = wire.build(o.model, built.map.slice(0, max), opt);   // 残りは未訳のまま(「続きを訳す」で拾う)
@@ -4686,11 +4967,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     };
     // 確かめ(§6-4)を通った文に、機械の直し(core/fix.js。工程T-2c)を当ててから渡す。o.fix が false なら、直さない(比べる台本が、AI の返事そのものを測るため)
     const fixer = o.fix === false ? null : Y.fix.stream({ model: o.model, sids: built.map, onItem: give });
-    const reader = wire.reader({ model: o.model, map: built.map, marked: built.marked, K: built.K, onItem: fixer ? it => fixer.push(it) : give });
+    const reader = wire.reader({ model: o.model, map: built.map, marked: built.marked, K: built.K, E: built.E, onItem: fixer ? it => fixer.push(it) : give });
     const finish = f => (fixer ? fixer.end(reader.end(f)) : reader.end(f));
     // 送る文が無ければ、通信しない
     if (!built.M) return { rep: finish('stop'), run: null, model: ai.m, think: ai.think, provider: null, promptV: prompts.V, wireV: wire.V };
-    const prompt = prompts.translate({ level: o.level, body: built.body, M: built.M, K: built.K, ruby: built.ruby });
+    const prompt = prompts.translate({ level: o.level, body: built.body, M: built.M, K: built.K, E: built.E, ruby: built.ruby });
     const res = await exchange({ role: 'translate', ai, prompt, signal: o.signal, push: t => reader.push(t), end: finish,
       meta: { page: pageOf(o), level: o.level, tr: o.tr, sent: { targets: built.M, chars: built.chars } } });
     return settle(res, tell);
@@ -9149,7 +9430,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       }).then(() => { if (alive()) listBtn.disabled = false; });
     } }, [ui.el('span', { class: 'two' }, [ui.el('span', { text: ui.t('mod.list') }), ui.el('span', { class: 'cost', text: ui.t('mod.listFree') })])]);
     const thinkBox = ui.el('div', { 'data-box': 'think' });
-    const drawThink = () => thinkPick() && S.fill(thinkBox, [choice(levels.thinkModes.map(k => ({ id: k, title: thinkName(k), sub: ui.t('mod.thinkSub.' + k), tags: tagsOf(k === def.think, k === savedT) })), pickT, k => { pickT = k; }).box]);
+    const drawThink = () => thinkPick() && S.fill(thinkBox, [choice(levels.thinkPicks.map(k => ({ id: k, title: thinkName(k), sub: ui.t('mod.thinkSub.' + k), tags: tagsOf(k === def.think, k === savedT) })), pickT, k => { pickT = k; }).box]);
     drawThink();
     // はじめの設定に戻す: 押したら、すぐ保存する(押して決めるボタン。選ぶ札とは違う)
     const reset = ui.el('button', { class: 'textbtn', 'data-act': 'reset', onclick: () => {
