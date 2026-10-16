@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.21
+// @version      0.1.22
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.21 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.22 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.21',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.22',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -248,6 +248,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       wideSheet: 440,              // 広い画面での、板(単語の板・メニュー・設定)の幅(px。中の1行が、英字で 50 字ほど=読みやすい1行の長さ 45〜75 字の中。§9-9)
       offlineEntry: false,         // メニューに「オフライン保存」の入口を出すか(工程5c-3 利用者: 当面、作らない。許されるかは、最後の段階で調べて決める。あとから組み込めるように、入口の場所は残す=true にすると、「準備中」の札が出る)
       themePick: false,            // テーマを手で選ぶ所を出すか(false = いつもサイトの色に合わせる。手で選ぶと、サイトの色と合わずに浮く=設計メモ 2-5。機能は残す: サイトを足すときに確かめ直す)
+      thinkPick: false,            // 訳す AI の「考える深さ」を選ぶ所を出すか(false = 出さず、訳はいつも思考なし=settings.modelFor。工程T-2c 利用者: 確かめるまで隠す。
+                                   //   「軽く考える」は、本物の AI に送って結果が残っている 70 回(うち「軽く考える」11 回)のどれも、考えた量が 0 だった。出すときは、効き目を確かめ、名前と添え書きを事実に合わせる=工程T-3)
       hideOnScroll: true,          // 下へ読み進めている間は、操作部を隠す(設計メモ 2-5)
       hideDy: 40, showDy: 12,      // 下へこれだけ送ったら隠す・上へこれだけ戻したら出す(px)
       quietMs: 600,                // 操作のすぐあと(表示が変わって、読んでいる場所を合わせ直している間)は、隠す・出すを決めない
@@ -414,17 +416,25 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     thinkModes: ['none', 'light', 'auto'],
 
     // 設定の初期値(§8-3 の Settings と同じ。利用者が設定で変えられる)
+    //   3級・準2級も Flash-Lite・思考なし(工程T-2c。2026-10-16 利用者。3.6 Flash は、無料の枠で混雑 503 が続き、終わりまで届かなかった=設計メモ 2-3)
     defaults: {
       provider: 'gemini',
       models: {
-        std: { m: LITE,  think: 'none' },
-        a1:  { m: FLASH, think: 'light' },
-        a2:  { m: FLASH, think: 'light' },
-        b1:  { m: LITE,  think: 'none' },
-        b2:  { m: LITE,  think: 'none' }
+        std: { m: LITE, think: 'none' },
+        a1:  { m: LITE, think: 'none' },
+        a2:  { m: LITE, think: 'none' },
+        b1:  { m: LITE, think: 'none' },
+        b2:  { m: LITE, think: 'none' }
       },
       aux: { idiom: LITE, dict: LITE, lite: LITE },        // 熟語さがし・AI辞書・「Flash-Lite で訳す」
       limits: { [FLASH]: 20, [LITE]: 500 }                  // 1日の目安(利用者が直す数。設計メモ 2-2)
+    },
+    // 翻訳のモデルの初期値の版(設定の modelsV。§8-3)。初期値を変えたら上げて、前の初期値を prior に残す
+    //   設定には、初期値のままでも、レベルごとのモデルが書き込まれている(最初に読んだとき、初期値を丸ごと書く)。
+    //   だから、初期値を変えても、そのままでは前の初期値が残る。前の初期値のままのレベルだけを、新しい初期値に移す(core/settings.js。1回だけ)
+    modelsV: 2,
+    prior: {
+      1: { a1: { m: FLASH, think: 'light' }, a2: { m: FLASH, think: 'light' } }   // 版 0.1.21 まで(工程T-2c で Flash-Lite・思考なしに。名前の読みかえ moved のあとで比べる)
     },
 
     // モデルごとの例外(§5-3)。noMinimal = 思考「なし」の書き方(MINIMAL)がエラーになるので 'low' にする
@@ -911,6 +921,25 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     return out;
   };
 
+  // 英語にする文(shown)の中の、英文の無い文(未訳)の数だけ、ほかの文で埋める → Set<sid>(shown に、埋めた文を足したもの)
+  //   未訳の文ごとに(本文の順に)、すぐ後ろ(本文の順で次)の、英文があって(ok)、まだ英語にしていない対象の文を選ぶ。後ろに無ければ、すぐ前(工程T-2c 利用者:
+  //   割合 N% を保つ・埋める文は、取り消した文より先の所に。読みながら訳を待つ人の目に入るように)。targets = 対象の文(本文の順)
+  //   埋め方は、文と訳だけで決まる(同じ入力なら同じ結果。開き直しても同じ文が英語になる)
+  order.fill = function(shown, targets, ok){
+    const out = new Set(shown);
+    const lack = targets.filter(sid => shown.has(sid) && !ok(sid));
+    if (!lack.length) return out;
+    const free = targets.filter(sid => !shown.has(sid) && ok(sid));   // 埋めに使える文(本文の順)
+    const used = new Set();
+    lack.forEach(m => {
+      let pick = null;
+      for (let i = 0; i < free.length && pick == null; i++) if (free[i] > m && !used.has(free[i])) pick = free[i];
+      for (let i = free.length - 1; i >= 0 && pick == null; i--) if (free[i] < m && !used.has(free[i])) pick = free[i];
+      if (pick != null){ used.add(pick); out.add(pick); }
+    });
+    return out;
+  };
+
   Yomu.order = order;
 })();
 
@@ -1215,6 +1244,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
         theme: 'auto', enFont: 'sans', enSize: 'm',                            // 見た目(§8-3。theme は 'auto' か、色の組の名前)
         restore: true,
         provider: d.provider,
+        modelsV: levels.modelsV,                                                // 翻訳のモデルの初期値の版(levels.modelsV。前の初期値のままの所を移すため=core/settings.js)
         models: util.clone(d.models),
         aux: util.clone(d.aux),
         limits: util.clone(d.limits),
@@ -1982,6 +2012,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     ['profile', 'models', 'aux', 'limits', 'voice', 'log', 'x'].forEach(k => want(k, isPlain(s[k])));
     levels.ids.forEach(id => want('models/' + id, isPlain(s.models[id])));
     want('level', levels.has(s.level));
+    want('modelsV', num(s.modelsV));
     want('ratio', num(s.ratio));
     s.ratio = Math.min(100, Math.max(0, Math.round(s.ratio / config.ratio.step) * config.ratio.step));
     want('style', STYLES.includes(s.style));
@@ -2027,6 +2058,22 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       if (!Object.prototype.hasOwnProperty.call(s.limits, to)) s.limits[to] = s.limits[old];
       delete s.limits[old];
     });
+    return moveDefaults(s);
+  }
+  // 翻訳のモデルの初期値を変えたとき(levels.modelsV・levels.prior。工程T-2c)、前の初期値のままのレベルだけを、新しい初期値に移す。
+  //   自分で選び直したレベルは、触らない。modelsV の無い設定は、版 1(版 0.1.21 まで)。移したら modelsV を今の版にする
+  //   (読むときに行う。次に設定を変えたとき、保存にも入る。それまでは、読むたびに同じように移す=何度行っても同じ結果)
+  function moveDefaults(s){
+    const from = typeof s.modelsV === 'number' && isFinite(s.modelsV) ? s.modelsV : 1;
+    if (from >= levels.modelsV) return s;
+    for (let v = from; v < levels.modelsV; v++){
+      const old = levels.prior[v] || {};
+      Object.keys(old).forEach(id => {
+        const m = isPlain(s.models) ? s.models[id] : null;
+        if (isPlain(m) && m.m === old[id].m && m.think === old[id].think) s.models[id] = Object.assign({}, m, util.clone(levels.defaults.models[id]));
+      });
+    }
+    s.modelsV = levels.modelsV;
     return s;
   }
 
@@ -2076,11 +2123,12 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
         return s;
       }).then(() => { swap(next); return settings.get(); });
     },
-    // そのレベルの、翻訳のモデルと思考
+    // そのレベルの、翻訳のモデルと思考。考える深さを選ぶ所を出していない間(config.ui.thinkPick が false)は、いつも思考なし
+    //   (保存にある思考の選び方は、消さずに残す。工程T-2c: 「軽く考える」は、訳では効き目が見えなかった=設計メモ 2-3)
     modelFor(level){
       const s = cur || schema.make.settings();
       const m = (isPlain(s.models[level]) && s.models[level]) || levels.defaults.models[level] || levels.defaults.models[levels.initial];
-      return { m: m.m, think: m.think };
+      return { m: m.m, think: config.ui.thinkPick ? m.think : 'none' };
     },
     on(fn){ subs.add(fn); return () => subs.delete(fn); }
   };
@@ -2567,14 +2615,31 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
   const util = Yomu.util, levels = Yomu.levels;
   const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
-  // 翻訳の、レベルごとの文面(現行 getLearningModeInstruction のまま。鍵は、現行の learningMode の名前 = levels の legacy)
+  // 翻訳の、レベルごとの文面(鍵は、現行の learningMode の名前 = levels の legacy)
+  //   通常・2級・準1級は、現行 getLearningModeInstruction のまま。3級・準2級は、工程T-2 の案 c3(engine/exp_out/a1c3.txt・a2c3.txt の @level の下)を
+  //   機械で写した(v4。tests/check_prompts.js が、案のファイルと1字ずつ突き合わせる)
   const LEVEL = {
-    eiken_grade3: `【英語学習モード: 英検3級レベル（中学卒業・CEFR A1相当）】
-- 英検3級相当の基礎的な語彙と平易な文法を用い、シンプルで自然な英語に翻訳してください。
-- 直訳によるぎこちない英語（例: "It's hard for me"等）を禁止します。中学生が知っている自然な日常表現（例: "I don't know what to do", "I'm in trouble"等）を用いてください。
-- 難解な語彙は避け、平易な基本語（run, jump, dodge, very, safe, maze, spell等）に言い換えてください。`,
-    eiken_grade_pre2: `【英語学習モード: 英検準2級レベル（高校中級・CEFR A2相当）】
-- 英検準2級相当の語彙・日常会話表現を目安とし、文脈に合った自然な現代英語に翻訳してください。`,
+    eiken_grade3: `【英語学習モード: 英検3級レベル（中学卒業程度）】
+- 英語を学んでいる中学卒業程度の読者が、辞書をあまり引かずに読めるように翻訳してください。
+- 使う語は、中学校で習う基本語（CEFR の A1〜A2 の語。日常でよく使う約2,000語）に限ってください。それより難しい語は、やさしい語の組み合わせや短い言いかえにしてください。言いかえるとニュアンスが変わりすぎるときだけ、難しい語を使ってかまいません。
+- 話に欠かせない物や場所の名前は、言いかえると不自然になるなら、そのまま使ってかまいません。
+- 人の呼び方（「様」などの敬称や、身分・立場の呼び名）は、やさしい語の決まりに当てはめず、場面に合うふつうの英語の呼び方にしてください。
+- 文法は、中学で習う形だけで書いてください（現在・過去・未来・進行形・現在完了・受け身・助動詞・不定詞・動名詞・比較・関係代名詞の who・which・that・名詞のすぐ後ろに付く分詞・接続詞・会話の短縮形の I'm・don't など）。
+- 次の形は中学で習わないので使わず、かっこの中の形にしてください: 過去完了の had＋過去分詞（過去形にする）／助動詞＋have＋過去分詞（過去形にするか、I'm sure などを使う）／-ing や -ed の句をカンマでつなぐ分詞構文（2つの文に分けるか、and・when・because でつなぐ）／場所を文の頭に出して主語をあとに置く倒置（There was … の形にするか、主語から始める）／whose・whom・前置詞＋which（2つの文に分ける）／with＋名詞＋分詞（and でつなぐ）。
+- 長くなる文は、2つの短い文に分けてかまいません。
+- 地の文の時制は、まわりの語りにそろえてください（過去形の語りの中では、日本語が現在形でも過去形にします）。
+- 日本語の言い回しを1語ずつ英語に置きかえず、同じ場面で英語を話す人がふつうに言う、やさしい言い方を選んでください。
+- やさしくしても、子どもっぽい英語にはしないでください。原文の内容は、省かず・足さずに伝えてください。`,
+    eiken_grade_pre2: `【英語学習モード: 英検準2級レベル（高校中級程度）】
+- 英語を学んでいる高校中級程度の読者が、辞書をあまり引かずに読めるように翻訳してください。
+- 使う語は、高校1年生までに習う語（CEFR の A2 までの語を中心に、B1 の語は少しなら可。約3,000語）を目安にしてください。それより難しい語や、書き言葉らしい硬い語は、よく使う語に言いかえてください。言いかえるとニュアンスが変わりすぎるときだけ、難しい語を使ってかまいません。
+- 話に欠かせない物や場所の名前は、言いかえると不自然になるなら、そのまま使ってかまいません。
+- 人の呼び方（「様」などの敬称や、身分・立場の呼び名）は、やさしい語の決まりに当てはめず、場面に合うふつうの英語の呼び方にしてください。
+- 文法は、高校1年までに習う形を目安にしてください（会話の短縮形の I'm・don't などをふくむ、中学で習う形に加えて、過去完了・whose・関係副詞の where と when は使ってかまいません）。
+- 次の形は避け、かっこの中の形にしてください: -ing や -ed の句をカンマでつなぐ分詞構文（2つの文に分けるか、接続詞でつなぐ）／場所を文の頭に出して主語をあとに置く倒置（主語から始める）／助動詞＋have＋過去分詞（過去形にするか、I'm sure などを使う）／with＋名詞＋分詞（and でつなぐ）。
+- 地の文の時制は、まわりの語りにそろえてください（過去形の語りの中では、日本語が現在形でも過去形にします）。
+- 日本語の言い回しを1語ずつ英語に置きかえず、同じ場面で英語を話す人がふつうに言う言い方を選んでください。
+- 子どもっぽい英語にはしないでください。原文の内容は、省かず・足さずに伝えてください。`,
     eiken_grade2: `【英語学習モード: 英検2級レベル（高校卒業・大学入試・CEFR B1相当）】
 - 英検2級（高校卒業・大学入学共通テスト程度）相当の実践的な重要語彙を目安とし、文脈に合った自然な現代英語に翻訳してください。`,
     eiken_grade_pre1: `【英語学習モード: 英検準1級レベル（大学上級・難関大・CEFR B2〜C1相当）】
@@ -2601,14 +2666,19 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
   const level = levelId => LEVEL[legacyOf(levelId)];
   const vocabLevel = levelId => VOCAB[legacyOf(levelId)];
 
-  // 訳の出し方(設計メモ 2-3。現行には無い)。**仮決め**: 本物の AI の返事を読んで決めた(v2 = 工程3c-4 の2つ・v3 = 工程E1b の4つ)。文面の確定は、工程T(指示文の磨き込み)
+  // 訳の出し方(設計メモ 2-3。現行には無い。どのレベルにも入る「共通の部分」)。本物の AI の返事を読んで決めた
+  //   (v2 = 工程3c-4 の2つ・v3 = 工程E1b の4つ・v4 = 工程T-2 の案 c3 の7つ=engine/exp_out/c3.txt を機械で写した)
   //   ルール4(語り手・主語)のすぐ後ろに、この順で入る。比べる台本(tools/exp_translate.js)は、translate の o.style で、別の案に差しかえる
   //   「様」の所に、敬称の例(Mr.・Lord など)を書かない: 本物の AI は、例に引かれる(Lord を例に出すと、灯台守を Lord と呼んだ。部品の約束 §6-8 の「工程E1b の結果」)
+  //   c3 で足した「身分の高い相手には Mr.・Ms. にしない」の副作用(さん・君の人に Mr.)は、エンジンが機械で外す(core/fix.js)
   const STYLE = [
+    '【主語と視点】: 日本語で主語が省かれた地の文（人物の気持ち・体の感じ・考えを表す短い文も）は、語り手が三人称なら、he / she や名前を主語にしてください。地の文を "I" "my" "me" で書くのは、語り手が一人称の話のときだけです（せりふや、人物が書いた手紙・メモの文面は、その人物から見た人称のままにします）。',
+    '【せりふの言い方】: せりふは、その人物が実際に口にする、ふだんの会話の英語にしてください。会話では I\'m・don\'t・it\'s のような短縮形を使うのがふつうで、学習モードでも同じです（短縮しない形は、強く言い張る・よそよそしい響きになるので、あらたまった口調の人物や、強調したい所だけにしてください）。',
     '【話し相手の呼び方】: せりふの中で、話している相手を名前や呼び名で指している文は、相手を "you" で表し、名前は呼びかけとして残してください（例: 相手のケンに向かって言う「ケンはどう思う？」→ "What do you think, Ken?"）。その場にいない人物を指している場合は、he / she や名前のままにしてください。',
-    '【敬称の扱い】: 人名に付く「さん・君・ちゃん」は英語に出さず、名前だけにしてください（例: ケンさん → Ken。"Mr." "Ms." も付けません）。"-san" "-kun" "-sama" のようなローマ字の敬称は、どの敬称でも付けないでください。「様」は、相手との関係に合う自然な英語の呼び方にしてください。「先生」「先輩」のように呼び名そのものである語は、文脈に合う自然な英語にしてください。',
+    '【敬称の扱い】: 人名に付く「さん・君・ちゃん」は英語に出さず、名前だけにしてください（例: ケンさん・ケンさーん → Ken。"Mr." "Ms." も付けません）。"-san" "-kun" "-sama" のようなローマ字の敬称は、どの敬称でも付けないでください。「様」は、相手との関係に合う自然な英語の呼び方にしてください（貴族や領主、仕えている家の人のように身分の高い相手には、"Mr." "Ms." ではなく、身分に合う呼び方にします）。「先生」「先輩」のように呼び名そのものである語は、文脈に合う自然な英語にしてください。',
     '【人物の性別】: 登場人物の性別は、本文全体（一人称・呼ばれ方・まわりの描写）から判断し、人物ごとに he / she のどちらかに決めて、すべての文でそろえてください。はっきり書かれていない人物も、文脈からいちばん自然な方に決めてください。1人の人物を they / their で受けたり、代名詞を避けるために名前をくり返したり、不自然な文にしたりしないでください。',
-    '【文の中の「」】: <t> の中に「…」（せりふ・呼び名・引用）がある場合は、その部分を英語の二重引用符で囲み、地の文と合わせて1つの英文にしてください（例: 「行こう」とケンは言った。→ "en": "\\"Let\'s go,\\" Ken said."）。<t> が「 で始まっていても、引用符を省かないでください。JSON の文字列の中なので、英文中の " は \\" と書いてください。'
+    '【文の中の「」】: <t> の中に「…」（せりふ・呼び名・引用）がある場合は、その部分を英語の二重引用符で囲み、地の文と合わせて1つの英文にしてください（例: 「行こう」とケンは言った。→ "en": "\\"Let\'s go,\\" Ken said."）。<t> が「 で始まっていても、引用符を省かないでください。JSON の文字列の中なので、英文中の " は \\" と書いてください。せりふだけの文（<t> の外側に「」がある文）は、引用符を付けずに、英文だけを出力してください。',
+    '【モードの指示を守る】: 冒頭の【…モード】に書かれた、使う語と文法の決まりを、最初の文から最後の文まで守ってください。'
   ];
 
   // ---- 翻訳(§6-1) ----
@@ -2709,7 +2779,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     ]).join('\n');
   }
 
-  Yomu.prompts = { V: 3, STYLE: STYLE.slice(), SCENES: Object.keys(SCENES), level, translate, vocabLevel, idioms, dict };
+  Yomu.prompts = { V: 4, STYLE: STYLE.slice(), SCENES: Object.keys(SCENES), level, translate, vocabLevel, idioms, dict };
 })();
 
 /* ---- core/wire.js ---- */
@@ -2942,6 +3012,15 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const BANG_RUN = new RegExp('[！？!?' + String.fromCharCode(0x203C, 0x2047, 0x2048, 0x2049, 0xFE0E, 0xFE0F) + ']{2,}', 'g');
   const SAME_RUN = /([^\p{L}\p{N}])\1+/gu;
   const sizeOf = nm => String(nm).replace(BANG_RUN, '！').replace(SAME_RUN, '$1').length;
+  // 順 8 の疑いの印(§6-4)。w = 英文の語数・len = 日本語の長さ(sizeOf)→ 's'(短すぎの疑い)/ 'l'(長すぎの疑い)/ null
+  //   返ってきた訳を、エンジンが機械で直したとき(core/fix.js)も、同じ決まりで付け直す(wire.flag)
+  function flagFor(w, len){
+    const C = config.check;
+    if (w < len * C.shortFlag) return 's';
+    if (w > len * C.longFlag[0] + C.longFlag[1]) return 'l';
+    return null;
+  }
+  const flag = (s, en) => flagFor(T.words(String(en == null ? '' : en).trim()), sizeOf(normOf(s)));
   // 返ってきた目印 → { c, cl, b, bl }。c = 囲みの印を除いて、比べるための形にしたもの / b = ルビの印(｜・《…》・閉じていない 《…)も除いたもの
   //   cl・bl = それぞれの、記号も数えた長さ。文字でなければ null。比べる文字が残らない(記号だけ・空)なら { sym: true }
   //   とても長い目印は、初めの KEY_MAX 文字だけを見る(文より長い目印は、どのみち合わない。長い記号の並びで、時間がかからないように)
@@ -3070,8 +3149,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       // 8. 疑いの印(捨てない)
       const item = { sid: map[n], en };
       if (nk) item.nk = 1;
-      if (w < len * C.shortFlag){ item.f = 's'; rep.flagShort++; }
-      else if (w > len * C.longFlag[0] + C.longFlag[1]){ item.f = 'l'; rep.flagLong++; }
+      const fl = flagFor(w, len);
+      if (fl === 's'){ item.f = 's'; rep.flagShort++; }
+      else if (fl === 'l'){ item.f = 'l'; rep.flagLong++; }
       filled[n] = true;
       rep.got++;
       if (onItem) onItem(item);
@@ -3247,7 +3327,212 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     };
   }
 
-  Yomu.wire = { V: 1, build, array, reader, idOf, canon };
+  Yomu.wire = { V: 1, build, array, reader, idOf, canon, flag };
+})();
+
+/* ---- core/fix.js ---- */
+// core/fix.js — 返ってきた訳の、機械の直し(部品の約束 §6-4 の「機械の直し」。工程T-2c。設計メモ 2-3)
+//   指示文で直そうとすると、別の所がくずれた取りこぼしを、エンジンの側で直す(2026-10-16 利用者と決めた 3 つ):
+//   ① title: さん・君・ちゃん(のばした形も)の人に付いた Mr.・Mrs.・Ms.・Miss を外す。
+//      その文の日本語に「様」など、英語の敬称に当たる語もあるときは、さん・君・ちゃんの付いた名前と音が合い、様などの付いた名前と音が合わない敬称だけを外す
+//      (「お嬢様ー！　ハロルドさーん！」→ Young lady! Mr. Harold! の Mr. だけ。音が合うか分からない名前=漢字の名前などは、触らない)
+//   ② quote: せりふだけの文(「」が文の外)の英文が、まるごと二重引用符で囲まれていたら、外側の引用符を外す(日本語の側に 『』 などがある文は、触らない)
+//   ③ pair: 同じ段落で、間に字の無いとなりの文どうし(どちらも、この通信で送った文)で、
+//      後ろの英文が、前の英文の後ろにまるごと入っていたら、前の方から切る(文の切れ目で、3 語以上が、そっくり同じとき)。
+//      2 つの英文が同じ(両方の訳が入った形。英文が 2 文以上)なら、2 つとも未訳に戻す(2026-10-16 利用者。「続きを訳す」で拾える)。
+//      日本語でも重なっている(せりふのくり返し)ときは、触らない
+//   迷ったら、直さない(正しい英文を壊さない)。直したら、疑いの印 f を、直したあとの英文で付け直す(wire.flag)
+//   stream: 届いた順の訳に、上の 3 つを当てて、呼んだ側へ渡す。③のために、前の文は、となりの文が届くまで渡すのを待つ
+//   (待つのは、となりの文も送っていて、まだ届いていないときだけ。返事が終わったら、待っていた文を全部渡す)
+(function(){
+  'use strict';
+  const util = Yomu.util, T = Yomu.text, wire = Yomu.wire;
+  const ch = String.fromCharCode;
+  // 全角のかっこ・長音などは、番号で作る(書く道具が、半角に変えることがあるため。engine/README.md の「書くときの注意」)
+  const QUOTE_JP = ch(0x300C, 0x300D, 0x300E, 0x300F, 0xFF08, 0xFF09);          // 「」『』（）
+  const LONG = ch(0x30FC, 0x301C, 0xFF5E);                                       // ー 〜 ～
+  const DQ_OPEN = '"' + ch(0x201C), DQ_CLOSE = '"' + ch(0x201D);                 // " “ / " ”
+  const NAME_CH = '[\\p{sc=Katakana}\\p{sc=Han}' + ch(0x3005) + LONG + ']';     // 名前になる字(カタカナ・漢字・々・長音)
+  // さん・くん・君・ちゃん(のばした形も: さーん・さぁん・ちゃーん)
+  const HON = 'さ[ぁあ' + LONG + ']*ん|く[ぅう' + LONG + ']*ん|君|ち[ゃャ][ぁあ' + LONG + ']*ん';
+  const HON_RE = new RegExp('(' + NAME_CH + '+?)(?:' + HON + ')', 'gu');
+  // 名前ではない語の、さん・君(皆さん・お父さん・奥さん・パン屋さん・お客さん・主君 など)。その語の最後の字で見る
+  const NOT_NAME = new Set(Array.from('皆父母兄姉奥爺婆坊嬢屋者員手長主方神客隣子諸'));
+  // 英語の敬称に当たる語(この語の付いた人には、Mr. などが正しい=設計メモ 2-3 の「様」)
+  const SAMA_RE = new RegExp('(' + NAME_CH + '+?)(?:様|さま|殿|氏|卿|先生|夫人|嬢)', 'gu');
+  const SAMA_ANY = /様|殿|氏|卿|先生|夫人|閣下|陛下|殿下|ミスター|ミセス|ミズ|Mr|Mrs|Ms|Miss/;
+  const TITLE_RE = /\b(?:Mr|Mrs|Ms|Miss|Mister)\.?\s+(?=([A-Z][A-Za-z'’-]*))/g;
+
+  // ---- 名前の音を、子音の並びにして比べる(粗い。合わなければ、触らない)----
+  const KANA_C = {};
+  [['カキクケコ', 'k'], ['ガギグゲゴ', 'g'], ['サシスセソ', 's'], ['ザジズゼゾヂヅ', 'z'], ['タチツテト', 't'], ['ダデド', 'd'], ['ナニヌネノ', 'n'], ['ン', 'n'],
+    ['ハヒフヘホ', 'h'], ['バビブベボヴ', 'b'], ['パピプペポ', 'p'], ['マミムメモ', 'm'], ['ラリルレロ', 'r'], ['ワヰヱヲ', 'b']].forEach(([ks, c]) => Array.from(ks).forEach(k => { KANA_C[k] = c; }));
+  const dedupe = s => s.replace(/(.)\1+/g, '$1');
+  const kanaSkel = name => dedupe(Array.from(name).map(k => KANA_C[k] || '').join(''));
+  const enSkel = name => dedupe(String(name).toLowerCase().replace(/ph/g, 'h').replace(/ck/g, 'k').replace(/([^aeiouy])h/g, '$1')
+    .replace(/[aeiouy'’-]/g, '').replace(/l/g, 'r').replace(/[vw]/g, 'b').replace(/f/g, 'h').replace(/[cq]/g, 'k').replace(/j/g, 'z').replace(/x/g, 'ks'));
+  const isKana = name => /^[\p{sc=Katakana}ー]+$/u.test(name.replace(new RegExp('[' + LONG + ']', 'g'), 'ー'));
+  function namesOf(jp, re, skip){
+    const out = [];
+    re.lastIndex = 0;
+    for (let m; (m = re.exec(jp));){
+      const name = m[1];
+      if (skip && NOT_NAME.has(name[name.length - 1])) continue;
+      out.push(name);
+    }
+    return out;
+  }
+
+  // ① さん・君・ちゃんの人に付いた敬称を外す → { en, n }(n = 外した数)
+  function title(jp, en){
+    jp = String(jp == null ? '' : jp); en = String(en == null ? '' : en);
+    const hon = namesOf(jp, HON_RE, true);
+    if (!hon.length || /\bMr\.?\s+and\s+Mrs\b/.test(en)) return { en, n: 0 };   // Mr. and Mrs. Smith の形は、触らない(片方だけ外すと、くずれる)
+    const mixed = SAMA_ANY.test(jp) || /さま/.test(jp.replace(/さまざま|ありさま|すさま/g, ''));
+    const honSk = hon.filter(isKana).map(kanaSkel).filter(Boolean);
+    const samaSk = namesOf(jp, SAMA_RE, false).filter(isKana).map(kanaSkel).filter(Boolean);
+    let n = 0;
+    TITLE_RE.lastIndex = 0;
+    const out = en.replace(TITLE_RE, (m, name) => {
+      if (mixed){
+        const sk = enSkel(name);
+        if (!sk || !honSk.includes(sk) || samaSk.includes(sk)) return m;   // さんの人と音が合わない・様の人と音が合う: 触らない
+      }
+      n++;
+      return '';
+    });
+    return { en: n ? out.replace(/ {2,}/g, ' ').trim() : en, n };
+  }
+
+  // ② せりふだけの文の、外側の引用符を外す → { en, n }(n = 1 外した / 0)
+  function quote(sent, en){
+    en = String(en == null ? '' : en);
+    if (!sent || !sent.q) return { en, n: 0 };
+    const jp = String(sent.text || '').trim();
+    if (!jp || QUOTE_JP.includes(jp[0]) || QUOTE_JP.includes(jp[jp.length - 1])) return { en, n: 0 };   // 日本語の側の記号(『帳面の文』など)に当たる引用符かもしれない
+    const e = en.trim();
+    if (e.length < 3 || !DQ_OPEN.includes(e[0])) return { en, n: 0 };
+    let tail = '', body = e.slice(1);
+    if (/[.!?]$/.test(body) && DQ_CLOSE.includes(body[body.length - 2])){ tail = body[body.length - 1]; body = body.slice(0, -1); }
+    if (!DQ_CLOSE.includes(body[body.length - 1])) return { en, n: 0 };
+    body = body.slice(0, -1);
+    if (/["“”]/.test(body) || !/[\p{L}\p{N}]/u.test(body)) return { en, n: 0 };   // 中にも引用符がある("A," he said, "B.")・中身が無い
+    body = body.trim();
+    if (tail && !/[.!?…]$/.test(body)) body += tail;
+    return { en: body, n: 1 };
+  }
+
+  // ---- ③ となりの文どうし ----
+  const plainJp = jp => String(jp || '').replace(/《[^》]*》/g, '').replace(/｜/g, '');
+  // 含まれた方の日本語の漢字とカタカナ(無ければ、ひらがな)のうち、もう片方の日本語にもある字の割合(物差しの echo と同じ考え。tools/measure.js)
+  function jpShare(x, y){
+    const px = Array.from(plainJp(x)), py = new Set(Array.from(plainJp(y)));
+    let cs = px.filter(c => /[\p{sc=Han}\p{sc=Katakana}]/u.test(c));
+    if (!cs.length) cs = px.filter(c => /\p{sc=Hiragana}/u.test(c));
+    cs = Array.from(new Set(cs));
+    return cs.length ? cs.filter(c => py.has(c)).length / cs.length : 0;
+  }
+  const ECHO = 0.6;
+  // 比べるための語の並び(曲がった引用符をまっすぐに・大文字と小文字を同じに)。位置も返す(切る所を、もとの英文で決めるため)
+  const STRAIGHT = s => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').toLowerCase();
+  function toks(s){
+    const out = [];
+    const re = /\S+/g;
+    for (let m; (m = re.exec(s));) out.push({ t: STRAIGHT(m[0]), at: m.index });
+    return out;
+  }
+  const sentences = en => (String(en).match(/[^.!?…]+[.!?…]+["'”’)]*/g) || []).filter(x => /[\p{L}\p{N}]/u.test(x)).length;
+  // → null(触らない)/ { cut: 前の英文の、切ったあとの形 } / { same: true }(2 つとも未訳に戻す)
+  function pair(sa, sb, enA, enB){
+    if (!sa || !sb) return null;
+    const a = toks(String(enA || '').trim()), b = toks(String(enB || '').trim());
+    if (b.length < 3 || a.length < b.length) return null;
+    const k = a.length - b.length;
+    for (let i = 0; i < b.length; i++) if (a[k + i].t !== b[i].t) return null;
+    // 日本語でも重なっている(くり返し)なら、触らない。後ろの英文が前の英文に入っている形は、後ろの日本語が前の日本語に入っているか(物差しの echo と同じ向き)。
+    //   同じ英文は、両方の向きで重なっているとき(「行こう。」「行こう。」)
+    const inA = jpShare(sb.text, sa.text) >= ECHO;
+    if (k === 0){
+      if (inA && jpShare(sa.text, sb.text) >= ECHO) return null;
+      return sentences(enA) >= 2 ? { same: true } : null;   // 同じ英文。1 文だけなら、ちがう日本語に同じ訳(Yes. と Yes.)かもしれないので、触らない
+    }
+    if (inA) return null;
+    const head = String(enA).trim().slice(0, a[k].at).trimEnd();
+    if (!/[.!?…]["'”’)]*$/.test(head) || !T.words(head)) return null;   // 文の切れ目でなければ、切らない
+    return { cut: head };
+  }
+
+  // ---- 届いた順の訳に当てる ----
+  //   o = { model, sids: 送った文(文書の順), onItem(item) }。item = reader の 1 件 { sid, en, f?, nk? }
+  //   → { push(item), end(rep) → rep(直した数と、未訳に戻した文を足したもの)}
+  function stream(o){
+    const model = o.model, S = model.sents, map = Array.isArray(o.sids) ? o.sids.slice() : [], sent = new Set(map), onItem = o.onItem;
+    const n = { title: 0, quote: 0, cut: 0, same: 0 };
+    const held = new Map(), state = new Map(), out = new Map();   // state: sid → 'out'(渡した)/ 'drop'(未訳に戻した)
+    let ended = null;
+    const gapOk = (a, b) => { const p = model.paras[a.p]; return !!p && typeof p.text === 'string' && p.text.slice(a.b, b.a).trim() === ''; };
+    const nextOf = sid => { const a = S[sid], b = S[sid + 1]; return a && b && b.p === a.p && b.target && sent.has(b.sid) && sent.has(a.sid) && gapOk(a, b) ? b.sid : -1; };
+    const prevOf = sid => (sid > 0 && nextOf(sid - 1) === sid ? sid - 1 : -1);
+    const reflag = it => { const f = wire.flag(S[it.sid], it.en); if (f) it.f = f; else delete it.f; };
+    const emit = it => { state.set(it.sid, 'out'); out.set(it.sid, it); onItem(it); };
+    // a = 前(まだ渡していない)、b = 後ろ。→ 'drop'(2 つとも未訳に戻した)/ 'ok'(a を切ったかもしれない)
+    function settle(a, b){
+      const r = pair(S[a.sid], S[b.sid], a.en, b.en);
+      if (r && r.same){ n.same += 2; state.set(a.sid, 'drop'); state.set(b.sid, 'drop'); held.delete(a.sid); held.delete(b.sid); return 'drop'; }
+      if (r && r.cut != null){ n.cut++; a.en = r.cut; reflag(a); }
+      return 'ok';
+    }
+    return {
+      push(item){
+        if (ended || !item || !S[item.sid]) return;
+        const it = Object.assign({}, item), s = S[it.sid];
+        let en = it.en;
+        const q = quote(s, en); if (q.n){ n.quote++; en = q.en; }
+        const t = title(s.text, en); if (t.n){ n.title++; en = t.en; }
+        if (en !== it.en){ it.en = en; reflag(it); }
+        // 前の文が、この文を待っていたら、比べてから、前の文を渡す
+        const p = prevOf(it.sid);
+        if (p >= 0 && held.has(p)){
+          const a = held.get(p);
+          if (settle(a, it) === 'drop') return;
+          held.delete(p); emit(a);
+        }
+        // 後ろの文が、まだ届いていなければ、待つ。先に届いていたら(順が入れかわった)、ここで比べる
+        const nx = nextOf(it.sid);
+        if (nx >= 0 && !state.has(nx) && !held.has(nx)){ held.set(it.sid, it); return; }
+        if (nx >= 0 && held.has(nx)){ if (settle(it, held.get(nx)) === 'drop') return; }
+        else if (nx >= 0 && state.get(nx) === 'out'){
+          const r = pair(s, S[nx], it.en, out.get(nx).en);   // 後ろの文は、もう渡した: 切るだけ(未訳には戻さない)
+          if (r && r.cut != null){ n.cut++; it.en = r.cut; reflag(it); }
+        }
+        emit(it);
+      },
+      end(rep){
+        if (!ended){
+          Array.from(held.values()).sort((x, y) => x.sid - y.sid).forEach(emit);
+          held.clear();
+          ended = { counts: Object.assign({}, n) };
+        }
+        if (!util.isPlain(rep)) return rep;
+        const r = util.clone(rep), c = ended.counts;
+        const M = map.length;
+        r.got = out.size;
+        r.missing = map.filter(sid => state.get(sid) !== 'out');
+        if (M){
+          const B = Math.min(10, M), tot = new Array(B).fill(0), ok = new Array(B).fill(0);
+          map.forEach((sid, i) => { const b = Math.floor(i * B / M); tot[b]++; if (state.get(sid) === 'out') ok[b]++; });
+          r.tenths = tot.map((x, b) => Math.round(ok[b] / x * 100) / 100);
+        }
+        const all = Array.from(out.values());
+        r.flagShort = all.filter(x => x.f === 's').length;
+        r.flagLong = all.filter(x => x.f === 'l').length;
+        r.fixTitle = c.title; r.fixQuote = c.quote; r.fixCut = c.cut; r.fixSame = c.same;   // 直した文の数(§8-6 の通信の記録には、0 でないものだけ残る)
+        return r;
+      }
+    };
+  }
+
+  Yomu.fix = { title, quote, pair, stream, jpShare };
 })();
 
 /* ---- core/tokens.js ---- */
@@ -4377,7 +4662,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const translate = { match, missing };
 
   // ---- 翻訳 ----
-  //   o = { model: 文のデータ, level, sids?, rec?, use?, page?, tr?, signal?, on?: { item(sid, en, f, nk), progress(got, total) } }
+  //   o = { model: 文のデータ, level, sids?, rec?, use?, page?, tr?, signal?, fix?, on?: { item(sid, en, f, nk), progress(got, total) } }
+  //   fix = false なら、機械の直し(core/fix.js)を当てない(比べる台本だけが使う。エンジンは渡さない)
   //   sids を省くと: rec(保存した訳)があれば、まだ訳の無い対象の文。無ければ、対象の文の全部
   //   → { rep, run, model, think, provider, promptV, wireV, block? }(run = 通信の記録の id。残せなかったら null)
   //   失敗(reject)にも、同じ欄が付く(e.rep・e.run など)
@@ -4393,15 +4679,19 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (max > 0 && built.M > max) built = wire.build(o.model, built.map.slice(0, max), opt);   // 残りは未訳のまま(「続きを訳す」で拾う)
     const tell = teller();
     let got = 0;
-    const reader = wire.reader({ model: o.model, map: built.map, marked: built.marked, K: built.K, onItem: it => {
+    const give = it => {
       got++;
       tell.call(on.item, [it.sid, it.en, it.f, it.nk]);      // nk = 1: 番号だけで決めた文(目印を1つも返してこない返事。rep.suspect を見てから使う=進行役)
       tell.call(on.progress, [got, built.M]);
-    } });
+    };
+    // 確かめ(§6-4)を通った文に、機械の直し(core/fix.js。工程T-2c)を当ててから渡す。o.fix が false なら、直さない(比べる台本が、AI の返事そのものを測るため)
+    const fixer = o.fix === false ? null : Y.fix.stream({ model: o.model, sids: built.map, onItem: give });
+    const reader = wire.reader({ model: o.model, map: built.map, marked: built.marked, K: built.K, onItem: fixer ? it => fixer.push(it) : give });
+    const finish = f => (fixer ? fixer.end(reader.end(f)) : reader.end(f));
     // 送る文が無ければ、通信しない
-    if (!built.M) return { rep: reader.end('stop'), run: null, model: ai.m, think: ai.think, provider: null, promptV: prompts.V, wireV: wire.V };
+    if (!built.M) return { rep: finish('stop'), run: null, model: ai.m, think: ai.think, provider: null, promptV: prompts.V, wireV: wire.V };
     const prompt = prompts.translate({ level: o.level, body: built.body, M: built.M, K: built.K, ruby: built.ruby });
-    const res = await exchange({ role: 'translate', ai, prompt, signal: o.signal, push: t => reader.push(t), end: f => reader.end(f),
+    const res = await exchange({ role: 'translate', ai, prompt, signal: o.signal, push: t => reader.push(t), end: finish,
       meta: { page: pageOf(o), level: o.level, tr: o.tr, sent: { targets: built.M, chars: built.chars } } });
     return settle(res, tell);
   }));
@@ -5318,7 +5608,22 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const emit = (name, data) => subs[name].forEach(fn => { try { fn(data); } catch (e){} });
   const quiet = p => Promise.resolve(p).catch(() => null);
   const hit = m => quota.hit(m).catch(() => false);          // 数えの失敗で、訳すのを止めない
-  const shownSet = () => (ranks ? order.shown(ranks, ratio) : new Set());
+  // 英語にする文: 固定の順番の上から N%(order.shown)。訳していない間は、その中の未訳の文を、すぐ後ろの訳のある文で埋めて、N% を保つ(order.fill。工程T-2c 利用者)。
+  //   訳している間(続きを訳す・訳し直す)は、その前に埋めていた文を、そのまま英語にしておく(訳し始めたときに、出ていた英文を消さない。終わったら決め直す=
+  //   続きを訳すで未訳が埋まれば、代わりに英語にしていた文は日本語に戻る)。割合・レベル(順番)が変わったら、前に埋めた文は使わない
+  let fillFor = null;
+  const shownSet = () => {
+    if (!ranks) return new Set();
+    const base = order.shown(ranks, ratio);
+    if (!model) return base;
+    if (job){
+      if (fillFor && fillFor.ratio === ratio && fillFor.ranks === ranks && fillFor.model === model) fillFor.set.forEach(sid => { if (have.has(sid)) base.add(sid); });
+      return base;
+    }
+    const out = order.fill(base, model.targets, sid => have.has(sid));
+    fillFor = { ratio, ranks, model, set: new Set(Array.from(out).filter(sid => !base.has(sid))) };
+    return out;
+  };
   const missingOf = () => (model ? model.targets.filter(sid => !have.has(sid)) : []);
   const ready = () => !!model && state !== 'none';
   // 使用中: 訳している・訳す前の確かめ・熟語さがし・レベルの切り替え。この間は、ブレンド(保存から出すのは除く)・続き・訳し直す・熟語さがし・レベルを受けない
@@ -6293,12 +6598,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'mod.listed': '{n} 個の AI が見つかりました',
     'mod.listNoKey': 'API キーがまだ入っていません。「AI につなぐ」で入れてください',
     'mod.reset': 'はじめの設定に戻す({model}・{think})',
+    'mod.resetM': 'はじめの設定に戻す({model})',              // 考える深さを選ぶ所を出していない間(config.ui.thinkPick)
     'mod.resetDone': 'はじめの設定に戻しました',
     'mod.first': 'はじめの設定',
     'mod.now': '今の設定',
     'mod.fetched': '一覧から取ってきた AI',
     'mod.pick': 'これにする',
     'mod.set': '「{level}」の訳す AI を、{model}・{think}にしました',
+    'mod.setM': '「{level}」の訳す AI を、{model}にしました',   // 同上
     'mod.onLimit.lead': '訳す AI が、その日の上限に達して、訳せなかったときの動きです。',
     'mod.onLimit.set': '上限に達したときは「{name}」にしました',
     'runs.lead': '翻訳と熟語さがしの通信を、新しい順に並べています({days} 日分)。',
@@ -8694,6 +9001,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 // ui/settings_more.js — 設定の画面の続き(部品の約束 §9-6。工程4c-2a): 翻訳の設定・訳す AI(目標ごと)・通信の記録・音声
 //   画面の型と部品は ui/settings.js のもの(Yomu.uiSettings)を使う。ここは、画面を足すだけ(add)。
 //   翻訳の設定: 今日つかった回数(AI ごと。1日の目安は、利用者が直す数=達しても止めない)・訳す AI と考える深さ(目標ごと)・上限に達したとき。
+//     考える深さは、config.ui.thinkPick が true のときだけ出す(今は出さない=訳はいつも思考なし。工程T-2c)
 //     訳す AI・考える深さ・上限に達したとき、は、選んで「これにする」(回数と訳に効くので、押して決める。工程5b-2c)。声・速さは、選ぶと、すぐ保存して、短い知らせ「保存しました」
 //     出す前に、つなぎ方に聞く(Yomu.plan.shows('quota'|'modelChoice'|'model'|'runs')。自分の API キーで使うときだけ見せる=設計メモ 2-2)
 //   「AI の一覧を取る」は、回数に数えない通信(Yomu.llm.models)。結果は、ボタンのすぐ下
@@ -8709,6 +9017,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const okLine = text => ui.el('div', { class: 'okline' }, [ui.icon('check', 18, 2.6), ui.el('span', { text })]);
   const levelName = id => (id === levels.initial ? ui.t('mod.std') : levels.name(id));
   const thinkName = k => ui.t('mod.think.' + k);
+  const thinkPick = () => !!cfg.ui.thinkPick;
+  // 訳す AI の呼び名(考える深さを選ぶ所を出しているときだけ、深さも添える)
+  const aiName = ai => (thinkPick() ? ui.t('mod.pair', { model: S.short(ai.m), think: thinkName(ai.think) }) : S.short(ai.m));
   // 選ぶ札を並べて、押したら fn(id)。戻りは { box, set(id) }
   function choice(list, now, fn){
     const btns = list.map(o => S.opt(o, id => { S.press(btns, id); fn(id); }));
@@ -8764,7 +9075,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         ui.el('div', { class: 'rows', 'data-box': 'levels' }, levels.ids.map(id => {
           const r = S.row('level-' + id, levelName(id) + (id === now ? ui.t('mod.nowMark') : ''), () => S.go('model', id));
           const ai = Y.settings.modelFor(id);
-          r.val.textContent = ui.t('mod.pair', { model: S.short(ai.m), think: thinkName(ai.think) });
+          r.val.textContent = aiName(ai);
           return r.b;
         })),
         ui.el('p', { class: 'hint', text: ui.t('mod.perLevelNote') }),
@@ -8838,24 +9149,24 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       }).then(() => { if (alive()) listBtn.disabled = false; });
     } }, [ui.el('span', { class: 'two' }, [ui.el('span', { text: ui.t('mod.list') }), ui.el('span', { class: 'cost', text: ui.t('mod.listFree') })])]);
     const thinkBox = ui.el('div', { 'data-box': 'think' });
-    const drawThink = () => S.fill(thinkBox, [choice(levels.thinkModes.map(k => ({ id: k, title: thinkName(k), sub: ui.t('mod.thinkSub.' + k), tags: tagsOf(k === def.think, k === savedT) })), pickT, k => { pickT = k; }).box]);
+    const drawThink = () => thinkPick() && S.fill(thinkBox, [choice(levels.thinkModes.map(k => ({ id: k, title: thinkName(k), sub: ui.t('mod.thinkSub.' + k), tags: tagsOf(k === def.think, k === savedT) })), pickT, k => { pickT = k; }).box]);
     drawThink();
     // はじめの設定に戻す: 押したら、すぐ保存する(押して決めるボタン。選ぶ札とは違う)
     const reset = ui.el('button', { class: 'textbtn', 'data-act': 'reset', onclick: () => {
       save({ models: { [level]: { m: def.m, think: def.think } } }).then(ok => { if (ok && alive()){ pickM = savedM = def.m; pickT = savedT = def.think; drawAi(); drawThink(); ui.toast(ui.t('mod.resetDone')); } });
-    } }, [ui.t('mod.reset', { model: S.short(def.m), think: thinkName(def.think) })]);
+    } }, [thinkPick() ? ui.t('mod.reset', { model: S.short(def.m), think: thinkName(def.think) }) : ui.t('mod.resetM', { model: S.short(def.m) })]);
     const apply = ui.el('button', { class: 'primary', 'data-act': 'apply', onclick: () => {
       apply.disabled = true;
       save({ models: { [level]: { m: pickM, think: pickT } } }).then(ok => {
         if (!alive()) return;
         apply.disabled = false;
-        if (ok){ ui.toast(ui.t('mod.set', { level: levelName(level), model: S.short(pickM), think: thinkName(pickT) })); S.go('models'); }
+        if (ok){ ui.toast(thinkPick() ? ui.t('mod.set', { level: levelName(level), model: S.short(pickM), think: thinkName(pickT) }) : ui.t('mod.setM', { level: levelName(level), model: S.short(pickM) })); S.go('models'); }
       });
     } }, [ui.el('span', { text: ui.t('mod.pick') })]);
     return S.shell({ name: 'model', title: ui.t('mod.title'), back: 'models', body: [
       ui.el('h1', { class: 'h1', text: levelName(level) }),
       ui.el('div', { class: 'label', text: ui.t('mod.ai') }), aiBox, listBtn, result,
-      ui.el('div', { class: 'label', text: ui.t('mod.think') }), thinkBox,
+      thinkPick() ? ui.el('div', { class: 'label', text: ui.t('mod.think') }) : null, thinkPick() ? thinkBox : null,
       reset
     ], foot: [apply] });
   }
