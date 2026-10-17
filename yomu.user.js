@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.27
+// @version      0.1.28
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -20,7 +20,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.27 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.28 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -150,7 +150,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.27',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.28',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -181,7 +181,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
         link: 0.5, linkMin: 25,    // リンクの字がこの割合以上で、linkMin 字以上のまとまりで、続きを切る(見出しのリンク・記事の一覧)
         at: [2000, 6000],          // 起動のあと、もう一度見る時(ms)。ほかに、load のあとと、最初のタップかキーの tapMs あと
         tapMs: 1000,
-        log: false,                // 確かめ用の版だけ true: 見分けにかかった時間を、全サイト共通の保存の logKey に新しい logMax 件だけ残す(工程8d。ふだんは、記事と分かるまで保存にさわらない)
+        log: true,                 // 版 0.1.28(工程8d の測る版)は true。測り終えたら false に戻して配る。確かめ用の版だけ true: 見分けにかかった時間を、全サイト共通の保存の logKey に新しい logMax 件だけ残す(工程8d。ふだんは、記事と分かるまで保存にさわらない)
         logKey: 'diag/detect',
         logMax: 20
       },
@@ -10721,7 +10721,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // 確かめ用の版だけ(config.page.detect.log): 見分けにかかった時間を、全サイト共通の保存に新しい logMax 件だけ(工程8d が iPhone で測る。ページの名前・文章は入れない)
     const note = (r, ms, why) => {
       if (!D.log) return;
-      const rec = { at: Date.now(), why, ms: Math.round(ms * 10) / 10, since: Math.round(now() - T0), res: r.info ? 'ok' : r.why };
+      const rec = { at: Date.now(), why, ms: Math.round(ms * 10) / 10, since: Math.round(now() - T0), t0: Math.round(T0), res: r.info ? 'ok' : r.why };
       try {
         Promise.resolve(Y.env.shared.get(D.logKey)).then(list => {
           const a = Array.isArray(list) ? list.slice(-(D.logMax - 1)) : [];
