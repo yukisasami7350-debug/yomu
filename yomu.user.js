@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.29
+// @version      0.1.30
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -20,7 +20,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.29 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.30 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -150,7 +150,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.29',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.30',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -181,7 +181,9 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
         link: 0.5, linkMin: 25,    // リンクの字がこの割合以上で、linkMin 字以上のまとまりで、続きを切る(見出しのリンク・記事の一覧)
         at: [2000, 6000],          // 起動のあと、もう一度見る時(ms)。ほかに、load のあとと、最初のタップかキーの tapMs あと
         tapMs: 1000,
-        log: true,                 // 版 0.1.28・0.1.29(工程8d の測る版)は true。測り終えたら false に戻して配る。確かめ用の版だけ true: 見分けにかかった時間を、全サイト共通の保存の logKey に新しい logMax 件だけ残す(工程8d。ふだんは、記事と分かるまで保存にさわらない)
+        redrawMs: 1000,            // 記事と分かったあと、この間隔で、ページの側が本文を作り直していないか(覚えた段落・描いた英文がページから外れたか)を見る(工程8d: Yahoo!ニュース。0 = 見ない)
+        redrawMax: 5,              // 作り直しに付き合うのは、1 ページでこの回数まで(何度も作り直すページで、探し直しを続けない)
+        log: false,                // 版 0.1.28・0.1.29(工程8d の測る版)だけ true にした(0.1.30 で false に戻した)。確かめ用の版だけ true: 見分けにかかった時間を、全サイト共通の保存の logKey に新しい logMax 件だけ残す(工程8d。ふだんは、記事と分かるまで保存にさわらない)
         logKey: 'diag/detect',
         logMax: 20
       },
@@ -6774,6 +6776,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     },
     // 今の状態(進行役と検査が使う)
     attached: () => !!doc,
+    // 包んだ文が、ページから外れたか(ページの側が本文を作り直した=React などで作ったページ。工程8d)。包んでいなければ false
+    lost(){
+      if (!doc) return false;
+      for (const e of entries.values()) if (!e.main.isConnected) return true;
+      return false;
+    },
     state: sid => { const e = entries.get(Number(sid)); return e ? e.st : null; },
     has: sid => entries.has(Number(sid))
   };
@@ -10713,7 +10721,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   function web(doc, win){
     try { if (win && win.top && win.top !== win) return; } catch (e){ return; }   // いちばん外のページだけ(Tampermonkey は @noframes。ブックマークレットの束のため)
     const D = Y.config.page.detect, diag = Y.diag;
-    let armed = false, left = false, found = null, lastWhy = null, lastSig = '', moved = false, timers = [], offTap = null, offLoad = null;
+    let armed = false, left = false, found = null, lastWhy = null, lastSig = '', moved = false, timers = [], offTap = null, offLoad = null, redrawT = null, redraws = 0;
     const clear = () => {
       timers.forEach(t => clearTimeout(t)); timers = [];
       if (offTap){ offTap(); offTap = null; }
@@ -10763,7 +10771,28 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         armed = true; left = true;
       } else if (!left && win){ left = true; leaving(doc, win); }   // 知らせのためだけに土台を作っていた(下の nojp): 離れるときの控えは、記事と分かってから
       Y.page.dismiss();                         // 「日本語の文が見つかりませんでした」が出ていたら、消す
+      watchRedraw();
       return Y.page.start({ info });
+    };
+    // ページの側が本文を作り直した(React などで作ったページ。工程8d: Yahoo!ニュースは、開いてすぐ覚えた段落を、あとで作り直していた=英文を、外れた古い段落に描いていた):
+    //   覚えた段落か、描いた英文が、ページから外れたら、片づけて探し直す(保存した訳は、通信なしで戻る=開き直したときと同じ)。
+    //   訳している・熟語をさがしている最中は待つ(止めると、通信を無駄にする)。1 ページで redrawMax 回まで
+    const stopRedraw = () => { if (redrawT){ clearInterval(redrawT); redrawT = null; } };
+    const watchRedraw = () => {
+      stopRedraw();
+      if (!win || !D.redrawMs) return;
+      redrawT = setInterval(() => {
+        if (!found){ stopRedraw(); return; }
+        if (Y.page.status().busy) return;
+        const gone = found.paras.some(el => !el.isConnected) || !!(Y.render && Y.render.lost && Y.render.lost());
+        if (!gone) return;
+        stopRedraw();
+        if (++redraws > D.redrawMax){ diag.mark('redraw.max'); return; }
+        found = null;
+        clear();
+        const again = () => { diag.mark('redraw', redraws); attempt('redraw'); if (!found) schedule(false); };
+        Y.page.leave().then(again, again);
+      }, D.redrawMs);
     };
     const attempt = why => {
       if (found) return;
@@ -10807,7 +10836,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     Y.env.onToggle(toggle, { label: label() });
     // URL が変わったら(ページを読み込み直さずに移るサイト): 片づけて、見分けを、はじめから
     Y.sites.watch(() => {
-      found = null; moved = true;
+      found = null; moved = true; redraws = 0;
+      stopRedraw();
       clear();
       const again = () => { diag.restart(); diag.mark('url'); schedule(false); };
       if (armed) Y.page.leave().then(again, again); else again();
