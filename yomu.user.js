@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.24
+// @version      0.1.25
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.24 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.25 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.24',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.25',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -2634,7 +2634,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 
   // 翻訳の、レベルごとの文面(鍵は、現行の learningMode の名前 = levels の legacy)
   //   通常・2級・準1級は、現行 getLearningModeInstruction のまま。3級・準2級は、工程T-2 の案 c3(engine/exp_out/a1c3.txt・a2c3.txt の @level の下)を
-  //   機械で写した(v4。tests/check_prompts.js が、案のファイルと1字ずつ突き合わせる)
+  //   機械で写した(v4。tests/check_prompts.js が、案のファイルと1字ずつ突き合わせる)。
+  //   v6(工程T-6): 3級は案2(exp_out/a1t6b.txt=直訳ぐせを避ける頼み 3 行+創作の例)・準2級は案1(exp_out/a2t6a.txt=頼み 3 行)の @level の下を、機械で写した
   const LEVEL = {
     eiken_grade3: `【英語学習モード: 英検3級レベル（中学卒業程度）】
 - 英語を学んでいる中学卒業程度の読者が、辞書をあまり引かずに読めるように翻訳してください。
@@ -2645,7 +2646,10 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 - 次の形は中学で習わないので使わず、かっこの中の形にしてください: 過去完了の had＋過去分詞（過去形にする）／助動詞＋have＋過去分詞（過去形にするか、I'm sure などを使う）／-ing や -ed の句をカンマでつなぐ分詞構文（2つの文に分けるか、and・when・because でつなぐ）／場所を文の頭に出して主語をあとに置く倒置（There was … の形にするか、主語から始める）／whose・whom・前置詞＋which（2つの文に分ける）／with＋名詞＋分詞（and でつなぐ）。
 - 長くなる文は、2つの短い文に分けてかまいません。
 - 地の文の時制は、まわりの語りにそろえてください（過去形の語りの中では、日本語が現在形でも過去形にします）。
-- 日本語の言い回しを1語ずつ英語に置きかえず、同じ場面で英語を話す人がふつうに言う、やさしい言い方を選んでください。
+- 日本語の文を、語の順に1語ずつ英語へ置きかえないでください。先に、その場面で何が起きているか（だれが何をしたか・どう感じたか）をつかみ、英語を話す人が同じ場面でふつうに言う文を考えてから、語と文法をこのモードの範囲に合わせてください。
+- 次の所は、日本語の形をなぞった英語になりやすいので、特に気をつけてください: 時を表す言葉／顔や体の動きと表情／あいさつ・お礼・ねぎらいのように、決まった場面で言う言葉／声・音・色・形の言い方／物の置き場所や、建物・家具の中の位置／気持ちや様子を表す言葉（動作の様子を表す副詞など）。英語で同じことをふつう何と言うかを考え、日本語の名詞や動詞を、そのまま英語の語に置きかえないでください。
+- give up・pick up・get off のような、やさしい語を組み合わせた言い方は、やさしい語の範囲に入ります。英語でふつうに使う言い方なら、使ってください。
+- 例（日本語の形をなぞった英語 → ふつうの英語）: 「彼女は目を丸くした」→ × She made her eyes round. → ○ Her eyes went wide.／「彼は首をかしげた」→ × He bent his neck. → ○ He tilted his head.／「歩き回って、足が棒になった」→ × My legs became sticks. → ○ My legs were so tired from walking.
 - やさしくしても、子どもっぽい英語にはしないでください。原文の内容は、省かず・足さずに伝えてください。`,
     eiken_grade_pre2: `【英語学習モード: 英検準2級レベル（高校中級程度）】
 - 英語を学んでいる高校中級程度の読者が、辞書をあまり引かずに読めるように翻訳してください。
@@ -2655,7 +2659,9 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 - 文法は、高校1年までに習う形を目安にしてください（会話の短縮形の I'm・don't などをふくむ、中学で習う形に加えて、過去完了・whose・関係副詞の where と when は使ってかまいません）。
 - 次の形は避け、かっこの中の形にしてください: -ing や -ed の句をカンマでつなぐ分詞構文（2つの文に分けるか、接続詞でつなぐ）／場所を文の頭に出して主語をあとに置く倒置（主語から始める）／助動詞＋have＋過去分詞（過去形にするか、I'm sure などを使う）／with＋名詞＋分詞（and でつなぐ）。
 - 地の文の時制は、まわりの語りにそろえてください（過去形の語りの中では、日本語が現在形でも過去形にします）。
-- 日本語の言い回しを1語ずつ英語に置きかえず、同じ場面で英語を話す人がふつうに言う言い方を選んでください。
+- 日本語の文を、語の順に1語ずつ英語へ置きかえないでください。先に、その場面で何が起きているか（だれが何をしたか・どう感じたか）をつかみ、英語を話す人が同じ場面でふつうに言う文を考えてから、語と文法をこのモードの範囲に合わせてください。
+- 次の所は、日本語の形をなぞった英語になりやすいので、特に気をつけてください: 時を表す言葉／顔や体の動きと表情／あいさつ・お礼・ねぎらいのように、決まった場面で言う言葉／声・音・色・形の言い方／物の置き場所や、建物・家具の中の位置／気持ちや様子を表す言葉（動作の様子を表す副詞など）。英語で同じことをふつう何と言うかを考え、日本語の名詞や動詞を、そのまま英語の語に置きかえないでください。
+- give up・pick up・get off のような、よく使う語を組み合わせた言い方は、英語でふつうに使う言い方なら、使ってください。
 - 子どもっぽい英語にはしないでください。原文の内容は、省かず・足さずに伝えてください。`,
     eiken_grade2: `【英語学習モード: 英検2級レベル（高校卒業・大学入試・CEFR B1相当）】
 - 英検2級（高校卒業・大学入学共通テスト程度）相当の実践的な重要語彙を目安とし、文脈に合った自然な現代英語に翻訳してください。`,
@@ -2812,7 +2818,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     ]).join('\n');
   }
 
-  Yomu.prompts = { V: 5, IV, STYLE: STYLE.slice(), SCENES: Object.keys(SCENES), level, translate, vocabLevel, idioms, dict };
+  Yomu.prompts = { V: 6, IV, STYLE: STYLE.slice(), SCENES: Object.keys(SCENES), level, translate, vocabLevel, idioms, dict };
 })();
 
 /* ---- core/wire.js ---- */
@@ -3634,7 +3640,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 //   ① title: さん・君・ちゃん(のばした形も)の人に付いた Mr.・Mrs.・Ms.・Miss を外す。
 //      その文の日本語に「様」など、英語の敬称に当たる語もあるときは、さん・君・ちゃんの付いた名前と音が合い、様などの付いた名前と音が合わない敬称だけを外す
 //      (「お嬢様ー！　ハロルドさーん！」→ Young lady! Mr. Harold! の Mr. だけ。音が合うか分からない名前=漢字の名前などは、触らない)
-//   ② quote: せりふだけの文(「」が文の外)の英文が、まるごと二重引用符で囲まれていたら、外側の引用符を外す(日本語の側に 『』 などがある文は、触らない)
+//   ② quote: せりふだけの文(「」が文の外)の英文が、まるごと二重引用符で囲まれていたら、外側の引用符を外す(日本語の側に 『』 などがある文は、触らない)。
+//      片側だけの引用符(頭だけ・終わりだけ。英文の中の二重引用符が 1 つだけで、端にある)も外す(工程T-6。日本語の中に 『』 などがあれば、触らない)
 //   ③ pair: 同じ段落で、間に字の無いとなりの文どうし(どちらも、この通信で送った文)で、
 //      後ろの英文が、前の英文の後ろにまるごと入っていたら、前の方から切る(文の切れ目で、3 語以上が、そっくり同じとき)。
 //      2 つの英文が同じ(両方の訳が入った形。英文が 2 文以上)なら、文の数が合えば分ける(wire.split。工程T-4b。2026-10-16 利用者の OK)。
@@ -3710,6 +3717,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const jp = String(sent.text || '').trim();
     if (!jp || QUOTE_JP.includes(jp[0]) || QUOTE_JP.includes(jp[jp.length - 1])) return { en, n: 0 };   // 日本語の側の記号(『帳面の文』など)に当たる引用符かもしれない
     const e = en.trim();
+    const one = oneSide(jp, e);
+    if (one != null) return { en: one, n: 1 };
     if (e.length < 3 || !DQ_OPEN.includes(e[0])) return { en, n: 0 };
     let tail = '', body = e.slice(1);
     if (/[.!?]$/.test(body) && DQ_CLOSE.includes(body[body.length - 2])){ tail = body[body.length - 1]; body = body.slice(0, -1); }
@@ -3719,6 +3728,22 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     body = body.trim();
     if (tail && !/[.!?…]$/.test(body)) body += tail;
     return { en: body, n: 1 };
+  }
+  // ② の続き(工程T-6): 片側だけの引用符(頭だけ・終わりだけ)を外す → 外した英文 / null(触らない)
+  //   1 つの「」の中の 2 文を、AI が 1 つの引用のように書き、頭の文に開き、終わりの文に閉じだけが付いた形(準2級の t3-5 で 10 か所)。
+  //   英文の中の二重引用符が、ちょうど 1 つで、端にあるときだけ。日本語の中に 『』（） があれば触らない(その記号に当たる引用符かもしれない)
+  function oneSide(jp, e){
+    if (Array.from(QUOTE_JP).some(c => jp.includes(c))) return null;
+    if ((e.match(/["“”]/g) || []).length !== 1 || e.length < 3) return null;
+    let body;
+    if (DQ_OPEN.includes(e[0])) body = e.slice(1);
+    else if (DQ_CLOSE.includes(e[e.length - 1])) body = e.slice(0, -1);
+    else if (/[.!?]$/.test(e) && DQ_CLOSE.includes(e[e.length - 2])){
+      body = e.slice(0, -2);
+      if (!/[.!?…]$/.test(body.trim())) body = body.trimEnd() + e[e.length - 1];
+    } else return null;
+    body = body.trim();
+    return /[\p{L}\p{N}]/u.test(body) ? body : null;
   }
 
   // ---- ③ となりの文どうし ----
