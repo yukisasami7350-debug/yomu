@@ -1,11 +1,9 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.26
+// @version      0.1.27
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
-// @match        https://ncode.syosetu.com/*
-// @match        https://novel18.syosetu.com/*
-// @match        https://kakuyomu.jp/*
+// @match        *://*/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
@@ -22,10 +20,11 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.26 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.27 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
+Yomu.t0 = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();   // 束が動き始めた時(どのページでもの見分けの時間を測る=§9-8)
 Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/dict-v1.txt","dictBytes":4510087};
 
 /* ---- shell/env_userscript.js ---- */
@@ -135,7 +134,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     dict: { load: dictLoad },
     info: { handler: String((gmInfo && gmInfo.scriptHandler) || 'userscript'), ios: /iP(hone|ad|od)/.test(ua) || (/Macintosh/.test(ua) && touch), touch },
     // Tampermonkey のメニューに 1 行(§2-2。v1.50 工程8c-1)。PC の Tampermonkey では、拡張機能のメニューに出る見込み。
-    //   iPhone では、工程1(2026-10-02)で、前の版が足した項目が出なかった(§11-1)。新しい Tampermonkey で出るかを、確かめ直す(工程8c-1)。
+    //   iPhone でも出る(工程8c-1。版 0.1.26 で確かめた=§11-1。工程1 では、前の版の項目が出なかった)。
     //   入口は、今までどおりページの上にもある(メニューに出なくても、困らない)
     onToggle(fn, opt){
       if (typeof fn !== 'function' || typeof GM_registerMenuCommand !== 'function') return;
@@ -151,7 +150,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.26',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.27',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -169,7 +168,28 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       sweepLegacy: true,           // 今の版(小説まぜりんご)が動いていなければ、それがサイトの保存に残したもの(API キーの控え など)を消す(§9-8)
       pollMs: 250,                 // 探し直す間隔
       watchMs: 1000,               // URL が変わったかを見る間隔
-      stuckMs: 6000                // 本文ページなのに、起動(保存を読む)がこれだけ終わらなければ、知らせる(store.openMs より長く。§9-8)
+      stuckMs: 6000,               // 本文ページなのに、起動(保存を読む)がこれだけ終わらなければ、知らせる(store.openMs より長く。§9-8)
+      // どのページでも: 記事のあるページの見分け(§3。v1.51 工程8c-1。線は工程8b が本物の 27 ページで決めた案3 改。出さなすぎ寄り=設計メモ 2-6。使いながら直す)
+      detect: {
+        w: 2.5,                    // 日本語の字(かな・漢字・全角の記号)1 字を、英語の何字と数えるか(見本の英訳で 2.50〜2.66)
+        kana: 0.15,                // かなの割合が、これより少なければ、日本語のページと見ない
+        sample: 3000,              // 日本語の確かめで、本文の字を前から何字まで見るか(空白を除く)
+        chars: 500,                // いちばん長く続いた所の、リンクでない字(重みつき。日本語で約 200 字)がこれ以上
+        ends: 3,                   // 文の終わり(。！？ など)がこれ以上
+        same: 0.4,                 // その字の、この割合以上が、同じ親にある(節 section はまたぐ)
+        list: 0.5,                 // 箇条書きと表の中の字が、この割合より少ない
+        link: 0.5, linkMin: 25,    // リンクの字がこの割合以上で、linkMin 字以上のまとまりで、続きを切る(見出しのリンク・記事の一覧)
+        at: [2000, 6000],          // 起動のあと、もう一度見る時(ms)。ほかに、load のあとと、最初のタップかキーの tapMs あと
+        tapMs: 1000,
+        log: false,                // 確かめ用の版だけ true: 見分けにかかった時間を、全サイト共通の保存の logKey に新しい logMax 件だけ残す(工程8d。ふだんは、記事と分かるまで保存にさわらない)
+        logKey: 'diag/detect',
+        logMax: 20
+      },
+      web: {                       // どのページでもの鍵(§3 の「鍵」。あとから変えにくい=§8)
+        dropQuery: '^(utm_.*|fbclid|gclid|gbraid|wbraid|dclid|msclkid|yclid|twclid|ttclid|igshid|mc_cid|mc_eid|_ga|_gl)$',   // URL の ? から後ろで、見ない名前(広告の追跡の印。正規表現の字・大文字小文字は見ない)
+        epMax: 200, epHead: 120,   // pageKey の / のあとが epMax 字を超えたら、頭の epHead 字+~+全体のハッシュ
+        hideMax: 200               // 右下のボタンを出さないサイトの数の上限(設定 hide。工程8c-2。超えたら古い方から落とす)
+      }
     },
     diag: {                        // 調べるための記録(§9-8)
       leave: true,                 // ページを離れたときの様子を、全サイト共通の保存に1つ控えるか
@@ -279,6 +299,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       fileName: 'yomu',            // 設定の「書き出す」で作るファイルの名前の頭(yomu-all-年月日.json。アプリ名は入れない)
       runsPage: 20,                // 設定の「通信の記録」を、1回に出す件数(「もっと見る」で、この数ずつ)
       toastMs: 2400,               // 短い知らせを出しておく時間
+      toastLongMs: 6000,           // 長い短い知らせ(右下のボタンを出さないサイトにした など。戻し方まで読めるように)
       twoTapMs: 4000,              // 2回タップで確かめる操作の、2回目を待つ時間
       aiWaitMs: 30000,             // 「AIに聞く」: これだけの間、何も届かなければ、止めて知らせる(工程5c-3: Google の側が混んで、返事が来ないまま「聞いています…」が続いた。数は目分量=ふだんの答えは数秒)
       twoTapMinMs: 350,            // 1回目から、これより早い2回目は数えない(指が弾んだ二度押し)
@@ -400,6 +421,968 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     snapshot(){ return { ms: clock() - t0, stage: stageNow, marks: marks.map(m => m.slice()), more, wait: Y.diag.waiting() }; }
   };
 })();
+
+/* ---- core/plan.js ---- */
+// core/plan.js — つなぎ方ごとの、画面の見せ方の決まり(部品の約束 §9-2。設計メモ 2-2・5章)
+//   つなぎ方 = AI の使い方の形。今あるのは own(各自が、自分の API キーを入れて使う)だけ。
+//   managed(こちらで用意した従量課金の API を使う=販売のとき)は、まだ作っていない。ここにあるのは、そのときに「内部のことを見せない」ための決まりだけ。
+//   画面の部品は、通信の数・モデルの名前などを出す前に、ここに聞く(出し分けを、部品の中に散らさない)。文言の差しかえは ui/text.js(鍵@つなぎ方)
+(function(){
+  'use strict';
+  const cfg = Yomu.config;
+  // 見せるもの: cost = 回数を使う押せる所の「通信2回」/ model = モデルの名前(Flash など)/ quota = 今日つかった回数 / runs = 通信の記録 / modelChoice = モデルと思考を選ぶ所
+  const SHOWS = {
+    own:     { cost: true,  model: true,  quota: true,  runs: true,  modelChoice: true },
+    managed: { cost: false, model: false, quota: false, runs: false, modelChoice: false }
+  };
+
+  Yomu.plan = {
+    kinds: () => Object.keys(SHOWS),
+    // 今のつなぎ方(知らない名前なら own)。今は、初期値(config.plan.kind)だけ。つなぎ方を選ぶ画面(工程4c)ができたら、ここが設定を読む
+    kind(){ const k = cfg.plan && cfg.plan.kind; return Object.prototype.hasOwnProperty.call(SHOWS, k) ? k : 'own'; },
+    // それを画面に見せるか(知らない名前は、見せない)
+    shows(what){ return SHOWS[this.kind()][what] === true; }
+  };
+})();
+
+/* ---- page/sites.js ---- */
+// page/sites.js — サイトへの当てはめ(部品の約束 §3)
+//   本文ページかどうかを見分け、本文の段落と、前書き・後書きの段落を分けて返す。本文ページでなければ null(操作部を出さない)。
+//   なろうとカクヨムの形は、2026-10-03 に工程4a-1 が実物で確かめた(§3 の表)。見本ページ(localhost)は、dev の束だけが同じ当てはめを効かせる。
+(function(){
+  'use strict';
+  const Y = Yomu;
+  const config = Yomu.config, util = Yomu.util;
+  const adapters = [];
+  const LOCAL = ['localhost', '127.0.0.1'];
+
+  const textOf = el => (el ? String(el.textContent || '').replace(/[ \t\r\n]+/g, ' ').trim() : '');   // 全角の空白は、題名の一部として残す
+  const pathOf = a => { try { return new URL(a.getAttribute('href'), a.ownerDocument.baseURI).pathname.toLowerCase(); } catch (e){ return ''; } };
+  const hrefOf = a => { try { return a ? new URL(a.getAttribute('href'), a.ownerDocument.baseURI).href : null; } catch (e){ return null; } };
+  const allP = roots => roots.reduce((out, r) => out.concat(Array.from(r.querySelectorAll('p'))), []);
+
+  // なろう(narou・narou18)。作品は n+4けた+英字、話は数字。短編は話の番号が無い(ep '0')
+  //   本文の段落は id が L数字。前書きは .p-novel__text--preface の中の Lp数字、後書きは .p-novel__text--afterword の中の La数字(確かめた)
+  const NOTE_BLOCK = '.p-novel__text--preface, .p-novel__text--afterword';
+  const narou = (id, host) => ({
+    id, hosts: [host],
+    page(loc){
+      const m = /^\/(n\d{4}[a-z]{1,3})\/(?:(\d+)\/?)?$/i.exec(loc.pathname);
+      return m ? { work: m[1].toLowerCase(), ep: m[2] ? String(Number(m[2])) : '0' } : null;
+    },
+    roots(doc){ const b = doc.querySelector('.p-novel__body') || doc.getElementById('novel_honbun'); return b ? [b] : []; },
+    paras(roots){
+      const all = allP(roots);
+      const inNote = p => !!p.closest(NOTE_BLOCK);
+      const main = all.filter(p => /^L\d+$/.test(p.id) && !inNote(p));
+      // 本文の段落が1つも見つからないときは、入れ物の中の p を全部本文として扱う(見分けが外れても、訳せなくならない)
+      if (!main.length) return { main: all, notes: [] };
+      return { main, notes: all.filter(p => main.indexOf(p) < 0 && (/^L[pa]\d+$/.test(p.id) || inNote(p))) };
+    },
+    title(doc, pg){
+      const h1 = textOf(doc.querySelector('.p-novel__title'));
+      if (pg.ep === '0') return { work: h1, ep: '' };                                   // 短編: h1 が作品名
+      const want = '/' + pg.work + '/';
+      const link = Array.from(doc.querySelectorAll('.c-announce a')).find(a => pathOf(a) === want);
+      return { work: textOf(link), ep: h1 };
+    },
+    next(doc){ return hrefOf(doc.querySelector('a.c-pager__item--next')); }
+  });
+
+  // カクヨム。本文は .widget-episodeBody の中の p(前書き・後書きの入れ物は無い)。縦組みは body の writingDirection-vertical(確かめた)
+  const kakuyomu = {
+    id: 'kakuyomu', hosts: ['kakuyomu.jp'],
+    page(loc){
+      const m = /^\/works\/(\d+)\/episodes\/(\d+)\/?$/.exec(loc.pathname);
+      return m ? { work: m[1], ep: m[2] } : null;
+    },
+    roots(doc){ const b = doc.querySelector('.widget-episodeBody') || doc.querySelector('.js-episode-body'); return b ? [b] : []; },
+    paras(roots){ return { main: allP(roots), notes: [] }; },
+    title(doc){ return { work: textOf(doc.querySelector('#worksEpisodesEpisodeHeader h1')), ep: textOf(doc.querySelector('.widget-episodeTitle')) }; },
+    next(doc){ return hrefOf(doc.getElementById('contentMain-readNextEpisode')); },
+    vertical(doc){ return !!(doc.body && doc.body.classList.contains('writingDirection-vertical')); }
+  };
+
+  // 縦組みか(当てはめが見分け方を持っていればそれ、無ければ本文の入れ物の writing-mode)
+  function isVertical(adapter, doc, roots){
+    if (adapter.vertical && adapter.vertical(doc)) return true;
+    const view = doc.defaultView, el = roots[0];
+    if (!view || !view.getComputedStyle || !el) return false;
+    return /^(vertical|tb|sideways)/.test(String(view.getComputedStyle(el).writingMode || ''));
+  }
+
+  // URL → { adapter, pg } | null
+  function pick(loc){
+    if (!loc || typeof loc.pathname !== 'string') return null;
+    const host = String(loc.hostname || '').toLowerCase();
+    // 見本ページ: dev の束だけ。/samples/narou.html・/samples/kakuyomu.html(-名前 を付けると、話の番号がその名前になる)
+    if (LOCAL.indexOf(host) >= 0){
+      if (!(Y.env && Y.env.dev)) return null;
+      const m = /^\/samples\/(narou|kakuyomu)(?:-([a-z0-9_]+))?\.html$/i.exec(loc.pathname);
+      const a = m && adapters.find(x => x.id === m[1].toLowerCase());
+      return a ? { adapter: a, pg: { work: 'sample', ep: m[2] ? m[2].toLowerCase() : '1' } } : null;
+    }
+    for (const a of adapters){
+      if (a.hosts.indexOf(host) < 0) continue;
+      const pg = a.page(loc);
+      if (pg) return { adapter: a, pg };
+    }
+    return null;
+  }
+
+  // 本文ページなら PageInfo、でなければ null
+  function detect(loc, doc){
+    const hit = pick(loc);
+    if (!hit || !doc) return null;
+    const { adapter, pg } = hit;
+    const roots = (adapter.roots(doc) || []).filter(Boolean);
+    if (!roots.length) return null;
+    const { main, notes } = adapter.paras(roots);
+    if (!main.length) return null;
+    const t = adapter.title(doc, pg) || {};
+    const workKey = adapter.id + ':' + pg.work;
+    return {
+      site: adapter.id, scene: 'novel', workKey, pageKey: workKey + '/' + pg.ep,   // scene = 場面(v1.51。どのページでもは 'article'=page/detect.js)
+      title: { work: t.work || textOf(doc.querySelector('title')), ep: t.ep || '' },
+      roots, paras: main, notes,
+      skip: adapter.skip || 'rt,rp',
+      next: adapter.next ? adapter.next(doc) : null,
+      vertical: isVertical(adapter, doc, roots)
+    };
+  }
+
+  // 既知のサイトか(なろう・カクヨムのホスト・dev の束の見本ページ)。既知のサイトでは、本文ページでなくても、今までどおりの起動(§9-8)。
+  //   既知でないページは、どのページでもの見分け(page/detect.js)
+  function known(loc){
+    if (!loc || typeof loc.pathname !== 'string') return false;
+    const host = String(loc.hostname || '').toLowerCase();
+    if (LOCAL.indexOf(host) >= 0) return !!pick(loc);
+    return adapters.some(a => a.hosts.indexOf(host) >= 0);
+  }
+  const WEB = {};   // どのページでも(site: 'web')の当てはめ: 縦組みは本文の入れ物の writing-mode だけで見る
+
+  Yomu.sites = {
+    detect,
+    known,
+    add(adapter){
+      if (!adapter || typeof adapter.id !== 'string' || !Array.isArray(adapter.hosts) || typeof adapter.page !== 'function'
+        || typeof adapter.roots !== 'function' || typeof adapter.paras !== 'function' || typeof adapter.title !== 'function') throw util.error('bad', '当てはめの形がおかしい');
+      const i = adapters.findIndex(a => a.id === adapter.id);
+      if (i >= 0) adapters[i] = adapter; else adapters.push(adapter);
+    },
+    // 本文ページの URL なのに、本文の入れ物がまだ無いとき(あとから描くサイト)は、opt.ms(初期値 config.page.waitMs)まで探し直す。
+    //   本文ページの URL でなければ、すぐに null。opt.signal が中止されたら null
+    wait(loc, doc, opt){
+      opt = opt || {};
+      const ms = opt.ms == null ? config.page.waitMs : opt.ms, every = opt.every || config.page.pollMs;
+      return new Promise(resolve => {
+        const t0 = Date.now();
+        (function again(){
+          if (opt.signal && opt.signal.aborted) return resolve(null);
+          const info = detect(loc, doc);
+          if (info || !pick(loc) || Date.now() - t0 >= ms) return resolve(info);
+          setTimeout(again, every);
+        })();
+      });
+    },
+    // いまの表示が縦組みか(カクヨムは、ページを読み込み直さずに縦組みへ切り替えられる)
+    vertical(info, doc){
+      const hit = info && (adapters.find(a => a.id === info.site) || (info.site === 'web' ? WEB : null));
+      const d = doc || (info && info.roots[0] && info.roots[0].ownerDocument);
+      return !!(hit && d && isVertical(hit, d, info.roots));
+    },
+    // 本文の背景の色(CSS の色の文字)。本文の入れ物から上へたどって、最初に見つかった、透けていない背景。見つからなければ null
+    //   確かめた(2026-10-09 工程4b-2): カクヨムは #contentMain-inner(body のクラス colorTheme-○○ で変わる)、なろうは body(クラス js-customlayout数字 で変わる)
+    background(info, doc){
+      const d = doc || (info && info.roots[0] && info.roots[0].ownerDocument);
+      const view = d && d.defaultView;
+      if (!view || !view.getComputedStyle || !info) return null;
+      for (let el = info.roots[0]; el && el.nodeType === 1; el = el.parentElement){
+        let c = '';
+        try { c = view.getComputedStyle(el).backgroundColor; } catch (e){}
+        const p = Y.theme.parse(c);
+        if (p && p[3] >= 0.5) return c;
+      }
+      return null;
+    },
+    // URL が変わったら fn(新しい URL)。ページを読み込み直さずに移るサイトへの備え。戻りは見張りを止める関数
+    watch(fn, opt){
+      opt = opt || {};
+      const get = opt.get || (() => location.href);
+      let last = get();
+      const t = setInterval(() => {
+        const now = get();
+        if (now === last) return;
+        last = now;
+        try { fn(now); } catch (e){ /* 見張りは止めない */ }
+      }, opt.every || config.page.watchMs);
+      return () => clearInterval(t);
+    },
+    _pick: pick   // 検査用
+  };
+
+  Yomu.sites.add(narou('narou', 'ncode.syosetu.com'));
+  Yomu.sites.add(narou('narou18', 'novel18.syosetu.com'));   // 〔未確認〕作りはなろうと同じと見ている(年齢の確かめがあるので開いていない)
+  Yomu.sites.add(kakuyomu);
+})();
+
+/* ---- page/detect.js ---- */
+// page/detect.js — どのページでも: 記事のあるページの見分けと、本文の取り出し・鍵(部品の約束 §3 の「どのページでも」。v1.51 工程8c-1)
+//   なろう・カクヨム(既知のサイト)は page/sites.js。ここは、既知でないページだけを見る。
+//   見分けは、工程8b の試作 tools/readerable_proto.js の planC と案3 改(E)を移したもの(数を見るための欄は移していない)。
+//   束の、先に動く小さな部分に入る(§2-3): 読み込むときに使うのは config と util だけ。ページの保存・画面の部品には、さわらない
+(function(){
+  'use strict';
+  const Y = Yomu;
+  const config = Yomu.config, util = Yomu.util;
+  const LOCAL = ['localhost', '127.0.0.1'];
+
+  const BLOCK = 'p,div,section,article,main,td,th,li,dd,dt,blockquote,pre,h1,h2,h3,h4,h5,h6,header,footer,nav,aside,figure,figcaption,form,table,tr,tbody,ul,ol,dl,body,center,details,summary,fieldset,address';
+  const SKIP = 'script,style,noscript,template,textarea,select,option,button,svg,math,iframe,object,label';
+  const BAD = 'nav,aside,footer,header,form,menu,dialog,[role="navigation"],[role="banner"],[role="contentinfo"],[role="complementary"],[role="search"],[role="dialog"],[hidden],[aria-hidden="true"]';
+  // Readability の「本文でなさそうな名前」と「本文かもしれない名前」(class か id に当たるか)
+  const UNLIKELY = /-ad-|ai2html|banner|breadcrumbs|combx|comment|community|cover-wrap|disqus|extra|footer|gdpr|header|legends|menu|related|remark|replies|rss|shoutbox|sidebar|skyscraper|social|sponsor|supplemental|ad-break|agegate|pagination|pager|popup|yom-remote/i;
+  const MAYBE = /and|article|body|column|content|main|mathjax|shadow/i;
+  const LISTY = /^(LI|DD|DT|TD|TH)$/;
+  // 本文の段落にしないもの(日本語のまま。2026-10-17 利用者=設計メモ 2-6): 見出し・写真の説明・表・pre の中
+  const NOT_PARA = 'h1,h2,h3,h4,h5,h6,figure,table,pre';
+
+  const cfgD = () => config.page.detect;
+
+  // 字を数える: n = 字の数・wide = 日本語の字(かな・漢字・全角の記号)・kana・sp = 空白・ends = 文の終わり(。！？ と、うしろが空白か終わりの . ! ?)
+  function count(s){
+    let wide = 0, kana = 0, sp = 0, ends = 0;
+    for (let i = 0; i < s.length; i++){
+      const c = s.charCodeAt(i);
+      if (c <= 32 || c === 0xa0){ sp++; continue; }
+      if ((c >= 0x3040 && c <= 0x30ff) || (c >= 0x31f0 && c <= 0x31ff) || (c >= 0xff66 && c <= 0xff9f)){ kana++; wide++; continue; }
+      if ((c >= 0x3400 && c <= 0x4dbf) || (c >= 0x4e00 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff)){ wide++; continue; }
+      if ((c >= 0x3000 && c <= 0x303f) || (c >= 0xff01 && c <= 0xff60)){
+        wide++;
+        if (c === 0x3002 || c === 0xff01 || c === 0xff1f) ends++;
+        continue;
+      }
+      if (c === 46 || c === 33 || c === 63){ const d = s.charCodeAt(i + 1); if (!(d > 32) && d !== 46) ends++; }
+    }
+    return { n: s.length, wide, kana, sp, ends };
+  }
+  const unlikely = el => { const m = (el.getAttribute('class') || '') + ' ' + (el.id || ''); return UNLIKELY.test(m) && !MAYBE.test(m); };
+  // 画面の形があるか(jsdom には無い=画面に出ているかの確かめを切る)
+  const hasLayout = doc => { try { return !!(doc.body && doc.body.getClientRects && doc.body.getClientRects().length > 0); } catch (e){ return false; } };
+  const shown = el => { try { return el.checkVisibility ? el.checkVisibility({ visibilityProperty: true }) : el.getClientRects().length > 0; } catch (e){ return true; } };
+  const hiddenByAttr = el => {
+    for (let e = el; e && e.nodeType === 1; e = e.parentElement){
+      if (e.hasAttribute('hidden') || e.getAttribute('aria-hidden') === 'true' || (e.style && e.style.display === 'none')) return true;
+    }
+    return false;
+  };
+
+  // 本文の文字の節を、文書の順に(飛ばす要素の中は、まるごと見ない)
+  function texts(doc, each){
+    const body = doc.body;
+    if (!body) return;
+    const view = doc.defaultView, NF = (view && view.NodeFilter) || { SHOW_ELEMENT: 1, SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2, FILTER_SKIP: 3 };
+    const tw = doc.createTreeWalker(body, NF.SHOW_ELEMENT | NF.SHOW_TEXT, {
+      acceptNode: n => (n.nodeType === 1 ? (n.matches(SKIP) ? NF.FILTER_REJECT : NF.FILTER_SKIP) : NF.FILTER_ACCEPT)
+    });
+    for (let t = tw.nextNode(); t; t = tw.nextNode()){
+      const v = t.nodeValue;
+      if (!v || !/\S/.test(v)) continue;
+      if (each(t, v) === false) return;
+    }
+  }
+
+  // 止める条件: 画面に出ているパスワードの入力欄(ログイン・お金の手続きの画面)
+  function stop(doc){
+    if (!doc || !doc.querySelectorAll) return true;
+    const vis = hasLayout(doc);
+    return Array.from(doc.querySelectorAll('input[type="password" i]')).some(el => !hiddenByAttr(el) && (!vis || shown(el)) && !el.disabled);
+  }
+
+  // 日本語の確かめ(軽い。先にする): 本文の字を前から sample 字まで(空白を除く)見て、かなの割合
+  function kana(doc){
+    const max = cfgD().sample;
+    let n = 0, k = 0;
+    texts(doc, (t, v) => {
+      const c = count(v);
+      n += c.n - c.sp; k += c.kana;
+      return n < max;
+    });
+    return { n, kana: k, share: n ? k / n : 0 };
+  }
+
+  // 見分け(案3 改): 文書の順に並んだまとまりを前から見て、いちばん長く続いた所を選ぶ
+  //   loose = メニューから(線をゆるめる: かなと、文が 1 つ以上だけ)。vis = 画面に出ていないまとまりを除く(省くと、画面の形があるときだけ)
+  function scan(doc, opt){
+    opt = opt || {};
+    const D = cfgD(), W = D.w;
+    const body = doc && doc.body;
+    const none = why => ({ ok: false, why, s: 0, ends: 0, nb: 0, grpS: 0, liS: 0, kana: 0, blocks: [] });
+    if (!body) return none('short');
+    const vis = opt.vis == null ? hasLayout(doc) : !!opt.vis;
+    const blocks = new Map();   // 文書の順(最初の字が出た順)
+    texts(doc, (t, v) => {
+      const pe = t.parentElement;
+      if (!pe) return;
+      const b = pe.closest(BLOCK) || body;
+      let r = blocks.get(b);
+      if (!r){ r = { all: 0, link: 0, ends: 0, kana: 0, ch: 0 }; blocks.set(b, r); }
+      const s = v.replace(/\s+/g, ' ');
+      const c = count(s);
+      const w = s.length + (W - 1) * c.wide;
+      r.all += w; r.ends += c.ends; r.kana += c.kana; r.ch += c.n - c.sp;
+      if (pe.closest('a[href]')) r.link += w;
+    });
+    const cache = new Map();
+    const bad = el => {
+      const path = [];
+      let res = false;
+      for (let e = el; e && e !== body && e.nodeType === 1; e = e.parentElement){
+        if (cache.has(e)){ res = cache.get(e); break; }
+        path.push(e);
+        if (e.matches(BAD) || (e.style && e.style.display === 'none') || unlikely(e)){ res = true; break; }
+      }
+      path.forEach(e => cache.set(e, res));
+      return res;
+    };
+    let best = null, cur = null;
+    const close = () => { if (cur && (!best || cur.s > best.s)) best = cur; cur = null; };
+    blocks.forEach((r, b) => {
+      if (!r.all) return;
+      if (bad(b) || (vis && !shown(b))){ close(); return; }                        // 頭・足・メニュー・関連の記事・画面に出ていない所 などで切る
+      if (r.link / r.all >= D.link && r.link >= D.linkMin){ close(); return; }     // リンクの多いまとまり(見出しのリンク・一覧)で切る
+      if (!cur) cur = { s: 0, ends: 0, kana: 0, ch: 0, list: [] };
+      const own = r.all - r.link;
+      cur.s += own; cur.ends += r.ends; cur.kana += r.kana; cur.ch += r.ch;
+      cur.list.push([b, own, r]);
+    });
+    close();
+    if (!best) return none('short');
+    // まとまりの形: 同じ親にある字の割合(節 section はまたぐ)・箇条書きと表の中の字の割合
+    let inList = 0;
+    const byS = new Map();
+    best.list.forEach(([b, own]) => {
+      if (LISTY.test(b.tagName)) inList += own;
+      let q = b.parentElement;
+      while (q && q.tagName === 'SECTION' && q.parentElement && q.parentElement !== body) q = q.parentElement;
+      byS.set(q, (byS.get(q) || 0) + own);
+    });
+    let top = 0;
+    byS.forEach(v => { top = Math.max(top, v); });
+    const out = {
+      s: Math.round(best.s), ends: best.ends, nb: best.list.length,
+      grpS: best.s ? top / best.s : 0, liS: best.s ? inList / best.s : 0, kana: best.ch ? best.kana / best.ch : 0,
+      blocks: best.list.map(x => x[0]), _list: best.list, _all: blocks
+    };
+    let why = null;
+    if (out.kana < D.kana) why = 'nojp';
+    else if (opt.loose){ if (out.ends < 1) why = 'few'; }
+    else if (out.s < D.chars) why = 'short';
+    else if (out.ends < D.ends) why = 'few';
+    else if (out.grpS < D.same) why = 'scattered';
+    else if (out.liS >= D.list) why = 'list';
+    out.ok = !why; out.why = why;
+    return out;
+  }
+
+  // 本文の取り出し: いちばん長く続いた所のまとまり → 段落(§3 の「本文の場所」)
+  function parasOf(sc){
+    const all = sc._all, inner = new Set();
+    all.forEach((r, b) => { for (let e = b.parentElement; e; e = e.parentElement){ if (inner.has(e)) break; inner.add(e); } });   // ほかのまとまりを中に持つ入れ物
+    return sc._list.filter(([b, own, r]) => !inner.has(b) && !b.closest(NOT_PARA) && own > 0 && r.link / r.all < config.page.detect.link).map(x => x[0]);
+  }
+  function common(els){
+    if (!els.length) return null;
+    let a = els[0].parentElement;
+    while (a && !els.every(e => a.contains(e))) a = a.parentElement;
+    return a;
+  }
+
+  // 鍵(§3 の「鍵」。あとから変えにくい=§8)
+  function queryOf(search, drop){
+    const out = [];
+    String(search || '').replace(/^\?/, '').split('&').forEach(kv => {
+      if (!kv) return;
+      const i = kv.indexOf('=');
+      const k = i < 0 ? kv : kv.slice(0, i);
+      let name = k;
+      try { name = decodeURIComponent(k.replace(/\+/g, ' ')); } catch (e){}
+      if (drop.test(name)) return;
+      out.push(kv);
+    });
+    return out.sort().join('&');
+  }
+  const pathOf = p => String(p || '').replace(/\/{2,}/g, '/').replace(/^\//, '').replace(/\/$/, '');
+  function keys(loc, doc){
+    const W = config.page.web;
+    const drop = new RegExp(W.dropQuery, 'i');
+    const host = String(loc.hostname || '').toLowerCase();
+    const workKey = 'web:' + host;
+    const path = pathOf(loc.pathname);
+    let search = loc.search;
+    // 同じホストで同じ道の正規の URL があれば、問いは、そちらのもの
+    const link = doc && doc.querySelector && doc.querySelector('link[rel="canonical" i][href]');
+    if (link){
+      try {
+        const c = new URL(link.getAttribute('href'), doc.baseURI || loc.href);
+        if (c.hostname.toLowerCase() === host && pathOf(c.pathname) === path) search = c.search;
+      } catch (e){}
+    }
+    const qs = queryOf(search, drop);
+    let ep = (path || '_') + (qs ? '?' + qs : '');
+    if (ep.length > W.epMax) ep = ep.slice(0, W.epHead) + '~' + util.hash53(ep);
+    return { workKey, pageKey: workKey + '/' + ep };
+  }
+
+  const clean = s => String(s || '').replace(/[ \t\r\n]+/g, ' ').trim();
+  function titleOf(doc, host){
+    const m = doc.querySelector('meta[property="og:site_name"][content]');
+    const h1 = doc.querySelector('h1');
+    const t = doc.querySelector('title');
+    return { work: clean(m && m.getAttribute('content')) || host, ep: clean(h1 && h1.textContent) || clean(t && t.textContent) };
+  }
+  function vertical(doc, el){
+    const view = doc.defaultView;
+    if (!view || !view.getComputedStyle || !el) return false;
+    try { return /^(vertical|tb|sideways)/.test(String(view.getComputedStyle(el).writingMode || '')); } catch (e){ return false; }
+  }
+
+  // 止める条件 → 日本語の確かめ → 見分け → 本文の取り出し → PageInfo
+  function page(loc, doc, opt){
+    opt = opt || {};
+    if (!loc || !doc || !doc.body) return { info: null, why: 'short', scan: null };
+    if (stop(doc)) return { info: null, why: 'stop', scan: null };
+    const k = kana(doc);
+    if (k.share < cfgD().kana) return { info: null, why: 'nojp', scan: null };
+    const sc = scan(doc, { loose: !!opt.loose, vis: opt.vis });
+    const pub = { ok: sc.ok, why: sc.why, s: sc.s, ends: sc.ends, nb: sc.nb, grpS: sc.grpS, liS: sc.liS, kana: sc.kana, blocks: sc.blocks };
+    if (!sc.ok) return { info: null, why: sc.why, scan: pub };
+    const paras = parasOf(sc);
+    if (!paras.length) return { info: null, why: 'none', scan: Object.assign(pub, { ok: false, why: 'none' }) };
+    const root = common(paras) || doc.body;
+    const host = String(loc.hostname || '').toLowerCase();
+    const kk = keys(loc, doc);
+    return {
+      info: {
+        site: 'web', scene: 'article', workKey: kk.workKey, pageKey: kk.pageKey,
+        title: titleOf(doc, host),
+        roots: [root], paras, notes: [], skip: 'rt,rp', next: null,
+        vertical: vertical(doc, root)
+      },
+      why: null, scan: pub
+    };
+  }
+
+  // 本文の頭の字のハッシュ(URL が変わったあと、本文が入れかわったかを見る)
+  function sig(info){
+    if (!info || !info.paras) return '';
+    let s = '';
+    for (const p of info.paras){ s += clean(p.textContent); if (s.length >= 300) break; }
+    return util.hash53(s.slice(0, 300));
+  }
+
+  // 見分けをするページか(既知のサイトでない。localhost・127.0.0.1 は、dev の束の /samples/web/ だけ)
+  function web(loc){
+    if (!loc || typeof loc.pathname !== 'string') return false;
+    if (!/^https?:$/.test(String(loc.protocol || ''))) return false;
+    if (Y.sites && Y.sites.known(loc)) return false;
+    const host = String(loc.hostname || '').toLowerCase();
+    if (LOCAL.indexOf(host) >= 0) return !!(Y.env && Y.env.dev) && /^\/samples\/web\//.test(loc.pathname);
+    return !!host;
+  }
+
+  Yomu.detect = { web, stop, kana, scan: (doc, opt) => { const r = scan(doc, opt); delete r._list; delete r._all; return r; }, page, keys, sig, _count: count };
+})();
+
+/* ---- ui/text.js ---- */
+// ui/text.js — 画面の文言の表(部品の約束 §9-2・§9-5)。画面に出す日本語は、ここに1か所
+//   つなぎ方ごとに文言を変えるときは、「鍵@つなぎ方」の行を足す(例: 'note.partial@managed')。あれば、そちらを使う(core/plan.js)
+//   {名前} の所は、t(key, vars) の vars で入れかえる。{app} は、いつもアプリ名(仮の名前なので、ここには書かない。ビルドが build.config.json の displayName を Yomu.build.name に入れる=§1-1)
+(function(){
+  'use strict';
+  const Y = Yomu;
+  const plan = Yomu.plan;
+  const appName = () => (Y.build && Y.build.name) || 'yomu';
+  const T = {
+    // 回数を使う押せる所に書く、通信の数(設計メモ 2-2)。見せるかどうかは、つなぎ方で決まる(Yomu.plan.shows('cost')。出すのは Yomu.ui.cost・withCost)
+    'cost.1': '通信1回',
+    'cost.2': '通信2回',
+    'cost.wrap': '{label}({cost})',
+    // 入口のボタン・進み具合・操作部
+    'dock.blend': 'ブレンド',
+    'dock.blendName': '{label}、{cost}',
+    'dock.menu': '{app} のメニュー',
+    'dock.ratio': '英語の割合',
+    'dock.ratioValue': '{v}%',
+    'dock.orig': '原文',
+    'dock.fold': '英語の割合 {v}%',
+    'dock.progress': '英訳しています',
+    'dock.stay': 'この画面のままで、お待ちください',
+    'dock.missing': '未訳 {n} / {all} 文',   // all = 対象の文の数(分母があると、だいたい訳せている、と分かる=工程5c-1 利用者)
+    'dock.count': '{got} / {total} 文',
+    'dock.cancel': '中止する',
+    // 知らせの行(§9-5)。押せる所のうち、回数を使うものには、部品が通信の数を足す(Yomu.ui.withCost)
+    'note.close': 'とじる',
+    'note.noKey': 'API キーがまだ入っていません',
+    'note.limitMin': '混み合っています。{sec} 秒ほど待ってから、もう一度押してください',
+    'note.limitMinSoon': '混み合っています。少し待ってから、もう一度押してください',
+    'note.switched': '{from} が今日の上限のため、{to} で訳しました',
+    'note.partial': '残り {n} 文は未訳です',
+    // 途中で切れたときは、わけと、どうすればよいかを添える(設計メモ 2-5。工程5c-1)
+    'note.cutBusy': 'Google の側が混んでいて、途中で止まりました。残り {n} 文は、少し待ってから訳してください',
+    'note.cutNet': '通信がとぎれて、途中で止まりました。残り {n} 文は未訳です',
+    'note.needTranslate': 'この目標では、まだ訳していません',
+    'note.blocked': 'この話は、AI が内容を理由に訳せませんでした(届いた分は出ています)',
+    'note.idioms': '熟語さがしができませんでした(英文は読めます)',
+    'note.idiomsLimit': '今日の上限のため、熟語さがしができませんでした(英文は読めます)',
+    'note.idiomsPart': '熟語さがしが、途中までしか届きませんでした(英文は読めます)',
+    'note.suspect': '訳の並びがずれているおそれがあるため、{n} 文を出しませんでした',
+    'note.vertical': '縦組みでは英語を出せません。横組みにすると、英語まじりで読めます',
+    'note.full': '端末の保存がいっぱいで、保存できませんでした',
+    'note.evicted': '保存がいっぱいなので、古い訳を {n} ページ消しました',
+    'note.newer': '新しい版で保存したデータがあります。{app} を新しくしてください',
+    'note.conflict': '今の版(小説まぜりんご)と同時には動かせません。どちらかを止めてください',
+    'note.stuckIos': 'アプリの準備が止まっています。Safari をいったん閉じて、開き直すと直ります',
+    'note.stuck': 'アプリの準備が止まっています。ブラウザをいったん閉じて、開き直すと直ります',
+    'act.fix': '直し方を見る',
+    // Tampermonkey のメニューから押したのに、日本語の文が見つからなかった(どのページでも。工程8c-2。行き止まりにしない=どうすればよいかを添える)
+    'note.nojp': '英語まじりにできる日本語の文が、見つかりませんでした。本文が出てから、もう一度押してください',
+    'act.settings': '設定をひらく',
+    'act.more': '続きを訳す',
+    'act.translate': '訳す',
+    'act.redo': '訳し直す',
+    'act.idioms': 'やり直す',
+    // 1日の上限(キャンバス「無料枠を使い切ったとき」)
+    'limit.title': '{model} は今日の無料枠を使い切りました',
+    'limit.descLite': '{lite} でも訳せますが、文の組み立てが少し固くなります。無料枠は毎日 夕方(16〜17時ごろ)に戻ります。',
+    'limit.desc': '無料枠は毎日 夕方(16〜17時ごろ)に戻ります。',
+    'limit.later': 'あとにする',
+    'limit.lite': '{lite} で訳す',
+    // 失敗の種類ごとの文(§5-5)
+    'err.auth': 'API キーが正しくないか、使えません。設定で確かめてください',
+    'err.limit': '上限に当たりました。少し待ってから、もう一度押してください(続くときは、今日の上限かもしれません)',
+    'err.billing': 'Google の側で、支払いの設定が必要だと言われました',
+    'err.model': 'このモデルは使えません。翻訳の設定で選び直してください',
+    'err.bad': 'Google が設定を受け付けませんでした',
+    'err.busy': 'Google の側が混み合っています。少し待ってから、もう一度押してください',
+    'err.network': 'つながりませんでした。電波を確かめてください',
+    'err.parse': '返事を読めませんでした。もう一度押してください',
+    'err.empty': '使える訳が返ってきませんでした。もう一度押してください',
+    'err.other': 'うまくいきませんでした。もう一度押してください',
+    'err.detail': '{text}({detail})',
+    'clip': '{text}…',
+    // Tampermonkey のメニュー(ブラウザの拡張機能のメニューの中。§2-2 の env.onToggle。v1.50 工程8c-1。文言は工程8c-2)
+    'tm.toggle': 'このページをブレンド / 日本語に戻す',
+    // メニュー(キャンバス3ページ目。学習レベルは出さない=設計メモ 2-5)
+    'menu.page': 'このページ',
+    'menu.offline': 'オフライン保存',
+    'menu.redo': '訳し直す',
+    'menu.blend': 'ブレンド(このページを訳す)',
+    'menu.redoArmed': 'もう一度押すと、訳し直します',
+    'menu.more': '続きを訳す(残り {n} 文)',
+    'menu.idioms': '熟語さがしをやり直す',
+    'menu.look': '見た目',
+    'menu.settings': '設定',
+    'menu.learn': '学ぶ画面をひらく',
+    // 右下のボタンを出さないサイト(どのページでも。工程8c-2。設計メモ 2-6)。2回タップで決める
+    'menu.hide': 'このサイトでは、右下のボタンを出さない',
+    'menu.hideArmed': 'もう一度押すと、このサイトでは出しません',
+    'menu.hidden': '{site} では、右下のボタンを出しません。戻すときは、設定の「ボタンを出さないサイト」から',
+    // 見た目(キャンバス3ページ目の「メニュー › 見た目」)。色の組の呼び名は 'theme.名前'(core/theme.js の組と、そろえる)
+    'look.back': 'メニューにもどる',
+    'look.theme': 'テーマ(操作部と板、英文の色)',
+    'look.auto': 'サイトの色に合わせる(自動)',
+    'look.autoShort': 'サイトの色に合わせる',
+    'look.autoNow': '今は「{name}」',
+    'look.abc': 'Abc',
+    'theme.white': '白',
+    'theme.cream': '生成り',
+    'theme.dark': '暗い',
+    'theme.sky': '水色',
+    'look.font': '英文の書体',
+    'look.font.sans': 'ゴシック体',
+    'look.font.serif': 'セリフ体',
+    'look.font.site': 'サイトと同じ',
+    'look.size': '英文の文字の大きさ',
+    'look.size.s': '小さめ',
+    'look.size.m': 'サイトと同じ',
+    'look.size.l': '大きめ',
+    'look.style': '英文の見せ方',
+    'look.marker': 'マーカー',
+    'look.quiet': '書体だけ',
+    'look.sampleJp': '彼女は笑った。',
+    'look.sampleEn': 'It was true.',
+    // 単語の板(§9-4。キャンバス 4・4b・3ページ目の「単語の板 — もとの語」)
+    'word.label': '単語の意味',
+    'word.idiom': '熟語',
+    'word.srcDict': '内蔵辞書(通信なし)',
+    'word.base': 'もとの形',
+    'word.viaTail': ' の{kind}',
+    'word.kind.s': '複数形・三単現',
+    'word.kind.pl': '複数形',
+    'word.kind.3sg': '三単現',
+    'word.kind.pres': '現在形',
+    'word.kind.ed': '過去形・過去分詞',
+    'word.kind.past': '過去形',
+    'word.kind.pp': '過去分詞',
+    'word.kind.ing': '-ing の形',
+    'word.kind.comp': '比較級',
+    'word.kind.sup': '最上級',
+    'word.kind.adv': '副詞の形',
+    'word.kind.poss': '「’s」の付いた形',
+    'word.kind.contr': '短縮形',
+    'word.kind.other': '変化した形',
+    'word.also': 'もとの語',
+    'word.alsoCase': '同じつづりの語',
+    'word.more': 'ほかの意味も見る(あと {n})',
+    'word.moreCut': 'つづきを見る',
+    'word.none': '内蔵辞書にありません',
+    'word.loading': '辞書を用意しています…',
+    'word.loadingPct': '辞書を用意しています… {pct}%',
+    'word.dictNet': '辞書を取ってこられませんでした。電波を確かめてください',
+    'word.dictBad': '辞書を使えませんでした',
+    'word.retry': 'もう一度',
+    'word.say': '発音を聞く',
+    'word.saySent': 'この文を聞く',
+    'word.ask': 'この文での意味をAIに聞く',
+    'word.asking': 'AIに聞いています…',
+    'word.aiSame': 'AI(この文での意味)',
+    'word.aiOther': 'AI(前に、別の文で聞いた意味)',
+    'word.aiLimit': '今日の上限のため、AIに聞けません',
+    'word.aiBlocked': 'AI が、内容を理由に答えませんでした',
+    'word.aiEmpty': '答えが返ってきませんでした。もう一度押してください',
+    'word.aiSlow': '{sec} 秒待っても、返事がありませんでした。Google の側が混んでいるのかもしれません。少し待ってから、もう一度押してください',
+    'word.add': '単語帳に追加',
+    'word.added': '単語帳に入っています',
+    'word.addedHint': '外すときは、ここを押す',
+    'word.removeArmed': 'もう一度押すと外します',
+    'word.removed': '単語帳から外しました',
+    'word.addFail': '単語帳に入れられませんでした',
+    'word.removeFail': '単語帳から外せませんでした',
+    'word.prev': '前へひろげる',
+    'word.next': '後ろへひろげる',
+    'word.reset': 'もとに戻す',
+    // 設定(§9-6。画面いっぱいに出す)。トップは、行き先の一覧(まだ無い行き先は、右に「準備中」)
+    'set.title': '設定',
+    'set.back': '設定にもどる',
+    'set.groupAi': 'AI',
+    'set.connect': 'AI につなぐ',
+    'set.keyIn': 'キーが入っています',
+    'set.keyNone': 'キーがまだです',
+    'set.models': '翻訳の設定',
+    'set.groupRead': '読み方',
+    'set.goal': '目標',
+    'set.groupMore': '記録とデータ',
+    'set.runs': '通信の記録',
+    'set.voice': '音声',
+    'set.data': '記録・書き出しと読み込み',
+    'set.soon': '準備中',
+    // 設定 › AI につなぐ(キャンバス3ページ目の「AI につなぐ」)
+    'con.lead': '英語にするときだけ、AI に文を送ります。いまは、自分の Gemini のキーで使います(無料の枠があります)。',
+    'con.way': 'つなぎ方',
+    'con.way.own': '自分の Gemini のキー',
+    'con.step1': 'Google AI Studio をひらく(Google のアカウントで入る)',
+    'con.step2': '「API キーを作成」を押す',
+    'con.step3': 'できたキーをコピーして、下に貼る',
+    'con.open': 'Google AI Studio をひらく(別のタブ)',
+    'con.key': 'API キー',
+    'con.has': 'キーは入っています(画面には出しません)。入れかえるときは、新しいキーを貼ってください。',
+    'con.paste': '貼り付け',
+    'con.pasteFail': '貼り付けられませんでした。欄を長押しして、貼り付けてください',
+    'con.check': 'つながるかを確かめる',
+    'con.checkNote': '貼ったキーは、ここで保存します。',
+    'con.checkFree': '確かめには、回数を使いません。',
+    'con.checking': '確かめています…',
+    'con.ok': 'つながりました',
+    'con.empty': 'API キーを貼ってください',
+    'con.bad': 'このキーでは、つながりませんでした。キーを確かめてください',
+    'con.unchecked': 'キーは保存しました。つながるかは、確かめられませんでした。{why}',
+    'con.local': 'キーは、この端末の中にだけ保存します。書き出すデータにも入りません。',
+    'con.drop': 'キーを消す',
+    'con.dropArmed': 'もう一度押すと消します',
+    'con.dropped': 'キーを消しました',
+    // 設定 › 目標(キャンバス3ページ目。ある人だけ。学習レベルを変える入口は、ここだけ)。級の呼び名は core/levels.js
+    'set.goalNone': '決めない',
+    'goal.h1': '目標は、ある人だけ',
+    'goal.lead': 'はじめは、自然な英語のまま読みます。試験などの目標がある人は、それに合わせた英文にできます。',
+    'goal.none': '目標は決めない',
+    'goal.noneSub': '自然な英語のまま、気楽に読む',
+    'goal.some': '目標がある人は',
+    'goal.eiken': '英検・学校',
+    'goal.eikenSub': '級に合わせた英文で読む',
+    'goal.now': '今は「{name}」',
+    'goal.toeic': 'TOEIC・ビジネス',
+    'goal.toeicSub': '仕事で使う英語を目指す',
+    'goal.toefl': 'TOEFL・学術',
+    'goal.toeflSub': '留学や論文の英語を目指す',
+    'goal.pick': 'これにする',
+    'goal.toGrade': '級を選ぶ',
+    'goal.h2': '目標を選んでください',
+    'goal.lead2': '今の力は聞きません。目指す所だけで決めます。',
+    'goal.grade.a1': '中学卒業程度',
+    'goal.grade.a2': '高校中級程度',
+    'goal.grade.b1': '高校卒業程度',
+    'goal.grade.b2': '大学中級程度',
+    'goal.gives': 'この目標で用意するもの',
+    'goal.diff': '英文のむずかしさ',
+    'goal.diffVal': '{name}向けの英文',
+    'goal.ai': '訳す AI',
+    'goal.aiLimit': '{model}(1日の目安 {n} 回)',
+    'goal.set': '目標を「{name}」にしました',
+    'goal.setNone': '目標を決めない(自然な英語)にしました',
+    'goal.busy': '訳している間は、変えられません。終わってから、もう一度押してください',
+    'act.goal': '目標を変える',
+    // 最初の設定(3枚: ようこそ → AI につなぐ → 使い方。キャンバス3ページ目の1段目。見本の文は創作)
+    'setup.label': 'はじめに',
+    'setup.skip': 'とばす',
+    'setup.back': 'もどる',
+    'setup.step': '2つのうち {n} つ目',
+    'setup.hero1': 'いつもの小説が、',
+    'setup.hero2': '少しずつ英語になる。',
+    'setup.demoA': '朝の霧は、灯台の足もとまで這い上がってきていた。',
+    'setup.demoEn': 'I wiped the cold glass with my sleeve and looked out at the sea.',
+    'setup.demoB': '波の音だけが、いつもと同じ調子で続いている。',
+    'setup.welcomeNote': 'はじめに、AI につなぎます。1分ほどです。むずかしさは選びません。自然な英語のまま読みます。',
+    'setup.start': 'はじめる',
+    'setup.checkNext': 'つながるか確かめて、つぎへ',
+    'setup.later': 'あとで入れる',
+    'setup.howTitle': '使い方は、4つだけ',
+    'setup.how1': '「ブレンド」を押すと、英語がまざります',
+    'setup.how1d': '押すまでは、何も送りません。',
+    'setup.how2': 'つまみで、英語の割合を変えます',
+    'setup.how2d': '何度動かしても、通信しません。',
+    'setup.how3': '「あ」で、その文だけ日本語に戻せます',
+    'setup.how3d': '単語をタップすると、意味が出ます。',
+    'setup.how4': 'ロゴを押すと、メニューがひらきます',
+    'setup.how4d': '設定や、試験などの目標は、ここから。',
+    'setup.chip': 'あ',
+    'setup.howNote': 'キーも、メニューの「設定」で変えられます。',
+    'setup.go': '読みはじめる',
+    // まだ無い機能の入口(設計メモ 2-5)
+    'set.saveFail': '保存できませんでした',
+    'set.saved': '保存しました',
+    'set.voiceAuto': '端末に合わせる',
+    'set.voiceAuto.pick': '自動で選ぶ',
+    'set.hide': 'ボタンを出さないサイト',
+    'set.hideNone': 'なし',
+    'set.hideN': '{n} 件',
+    'hide.title': 'ボタンを出さないサイト',
+    'hide.lead': 'ここにあるサイトでは、記事のページでも、右下のボタンを出しません。英語まじりにしたいときは、Tampermonkey のメニューの「{tm}」から。',
+    'hide.none': 'まだ、ありません。記事のページで、右下のロゴを押して出るメニューから選べます。',
+    'hide.back': '出すように戻す',
+    'hide.backName': '{site} で、ボタンを出すように戻す',
+    'hide.backDone': '{site} で、右下のボタンを出すようにしました',
+    'mod.lead': '訳すのに使う AI と、今日つかった回数です。',
+    'mod.loading': '読んでいます…',
+    'mod.today': '今日つかった回数',
+    'mod.used': '今日 {n} 回',
+    'mod.hit': '今日は、上限に当たりました',
+    'mod.limit': '1日の目安',
+    'mod.times': '回',
+    'mod.limitBad': '目安は、0〜99999 の数字で入れてください',
+    'mod.limitSaved': '目安を保存しました',
+    'mod.limitReset': '空にしたので、はじめの値({n} 回)に戻しました',
+    'mod.none': 'まだ、数えたものはありません',
+    'mod.todayNote': '目安は、自分で決める数です(本当の上限は、Google AI Studio で見られます)。目安に達しても、止めません。回数は、毎日 夕方(16〜17時ごろ)に 0 に戻ります。',
+    'mod.perLevel': '訳す AI(目標ごと)',
+    'mod.std': '目標は決めない',
+    'mod.nowMark': '(今)',
+    'mod.pair': '{model}・{think}',
+    'mod.perLevelNote': '熟語さがしと「AIに聞く」は、いつも Flash-Lite を使います。',
+    'mod.think': '考える深さ',
+    'mod.think.none': '考えない',
+    'mod.think.light': '軽く考える',
+    'mod.think.auto': 'おまかせ',
+    'mod.thinkSub.none': 'いちばん速い。ふつうは、これで足ります',
+    'mod.thinkSub.light': '少し考えてから訳す(やさしい英文に組み直すとき向き)',
+    'mod.thinkSub.auto': 'AI が決める(時間がかかることがあります)',
+    'mod.onLimit': '1日の上限に達したとき',
+    'mod.onLimit.ask': 'そのつど聞く',
+    'mod.onLimit.askSub': 'あとにするか、Flash-Lite で訳すかを選びます',
+    'mod.onLimit.lite': 'Flash-Lite で訳す',
+    'mod.onLimit.liteSub': '聞かずに切りかえて、訳したあとで知らせます',
+    'mod.title': '訳す AI',
+    'mod.ai': 'AI',
+    'mod.list': 'ほかの AI を、一覧から取ってくる',
+    'mod.listFree': '回数は使いません',
+    'mod.listing': '取っています…',
+    'mod.listed': '{n} 個の AI が見つかりました',
+    'mod.listNoKey': 'API キーがまだ入っていません。「AI につなぐ」で入れてください',
+    'mod.reset': 'はじめの設定に戻す({model}・{think})',
+    'mod.resetM': 'はじめの設定に戻す({model})',              // 考える深さを選ぶ所を出していない間(config.ui.thinkPick)
+    'mod.resetDone': 'はじめの設定に戻しました',
+    'mod.first': 'はじめの設定',
+    'mod.now': '今の設定',
+    'mod.fetched': '一覧から取ってきた AI',
+    'mod.pick': 'これにする',
+    'mod.set': '「{level}」の訳す AI を、{model}・{think}にしました',
+    'mod.setM': '「{level}」の訳す AI を、{model}にしました',   // 同上
+    'mod.onLimit.lead': '訳す AI が、その日の上限に達して、訳せなかったときの動きです。',
+    'mod.onLimit.set': '上限に達したときは「{name}」にしました',
+    'runs.lead': '翻訳と熟語さがしの通信を、新しい順に並べています({days} 日分)。',
+    'runs.rate': '翻訳で使えた文',
+    'runs.today': '今日',
+    'runs.week': '直近7日',
+    'runs.sum': '{got} / {sent} 文({pct}%)・翻訳 {n} 回',
+    'runs.sumNone': '翻訳は、まだありません',
+    'runs.list': '通信の一覧',
+    'runs.none': 'まだ、記録はありません',
+    'runs.more': 'もっと見る',
+    'runs.role.tr': '翻訳',
+    'runs.role.idiom': '熟語さがし',
+    'runs.tr': '送った {sent} 文・使えた {got} 文・未訳 {miss} 文・{s} 秒',
+    'runs.idiom': '送った {sent} 文・{s} 秒',
+    'runs.err': '失敗: {kind}',
+    'runs.abort': '中止',
+    'runs.drop': '並びがずれた疑いで、使わなかった',
+    'runs.length': '長さの上限で、途中まで',
+    'voice.lead': '単語と文を読み上げる声です。',
+    'voice.voice': '声',
+    'voice.auto': '端末の設定に合わせる',
+    'voice.auto.pick': '自動で選ぶ',
+    'voice.autoSub.ios': 'iPhone の設定で選ばれている声で読みます',
+    'voice.autoSub': 'この端末で、いちばん自然な声を自動で選びます',
+    'voice.lang.en-US': 'アメリカの英語',
+    'voice.lang.en-GB': 'イギリスの英語',
+    'voice.lang.en-AU': 'オーストラリアの英語',
+    'voice.lang.en-IN': 'インドの英語',
+    'voice.lang.en-IE': 'アイルランドの英語',
+    'voice.lang.en-ZA': '南アフリカの英語',
+    'voice.lang.other': '英語({lang})',
+    'voice.wide': 'ほかの声も見る({n})',
+    'voice.rate': '速さ',
+    'voice.rate.slow': 'ゆっくり',
+    'voice.rate.mid': 'ふつう',
+    'voice.rate.fast': 'はやい',
+    'voice.try': '試しに聞く',
+    'voice.stop': '止める',
+    'voice.sample': 'The fog never lifts in this harbor town.',
+    'voice.cannot': 'この端末では、読み上げが使えません',
+    'voice.good': 'enhanced|premium|natural|拡張|プレミアム',
+    'voice.tip': 'より自然な声にするには',
+    'voice.tip.ios.1': 'iPhone の「設定」→「アクセシビリティ」→「リーダーと読み上げ」→「声」→「英語」をひらく(見つからなければ、設定の検索で「声」)',
+    'voice.tip.ios.2': '名前に「拡張」か「プレミアム」と付いた声を選んで、ダウンロードする(1つ 100〜300MB ほど。Wi-Fi で)',
+    'voice.tip.ios.3': 'この画面をひらき直して、上の「声」から、入れた声を選ぶ',
+    'voice.tipNote.ios': '上の道順は、iOS 26 のものです。Apple の側の画面なので、名前や場所は、iOS の版で変わることがあります。',
+    'voice.tip.android.1': '端末の「設定」→「ユーザー補助」→「テキスト読み上げの設定」をひらく',
+    'voice.tip.android.2': '優先するエンジンを Google のものにして、歯車の印 →「音声データをインストール」→ 英語を選ぶ',
+    'voice.tip.android.3': 'この画面をひらき直して、上の「声」を選ぶ',
+    'voice.tipNote.android': '機種によって、名前や場所が違います。',
+    'voice.tipNote.edge': 'Edge には、自然な声(名前に Natural と付く声)が、はじめから入っています。「自動で選ぶ」のままで、その声を選びます。入れるものは、ありません。',
+    // 設定 › 記録・書き出しと読み込み(§9-6。工程4c-2b)
+    'data.log': '読んだ記録を残す',
+    'data.log.on': '残す',
+    'data.log.off': '残さない',
+    'data.logNote': '読んだ時間や、英語で読んだ文の数を、この端末に残します。「残さない」にしても、今までの記録は消えません。',
+    'data.restore': '開き直したら、自動で戻す',
+    'data.restore.on': '戻す',
+    'data.restore.off': '戻さない',
+    'data.restoreNote': '前に訳したページを開き直したとき、押さなくても、前と同じ表示に戻します(通信はしません)。',
+    'data.out': '書き出す',
+    'data.outNote': 'ファイルにして、この端末に保存します。機種を変えるときや、ほかの端末へ写すときに使います。API キーと、訳したページは入りません。',
+    'data.outVocab': '単語帳を書き出す',
+    'data.words': '{n} 語',
+    'data.outAll': '全部を書き出す',
+    'data.outAllSub': '設定・単語帳・記録',
+    'data.outing': '用意しています…',
+    'data.outDone': '「{name}」を用意しました。保存の画面が出たら、保存してください。',
+    'data.outLink': '保存が始まらないときは、ここを押す',
+    'data.outNone': 'まだ、書き出すものがありません',
+    'data.outFail': '書き出せませんでした。もう一度押してください',
+    'data.in': '読み込む',
+    'data.inNote': 'このアプリで書き出したファイルを選びます。選んだだけでは、まだ何も変わりません。',
+    'data.inPick': 'ファイルを選ぶ',
+    'data.inTip': 'iPhone で、ファイルが見つからないとき',
+    'data.inTip.ios.1': '選ぶ画面の下の「最近使った項目」を見る(書き出したすぐあとは、ここに出ます)',
+    'data.inTip.ios.2': '無ければ、下の「ブラウズ」を、場所の一覧が出るまで押して、「ダウンロード」をひらく',
+    'data.inTip.ios.3': '上の検索の欄に「{name}」と入れて、「{name}-all-日付.json」を選ぶ(このアプリのファイルのほかは、うすい色で、選べません)',
+    'data.inFile': '選んだファイル',
+    'data.inAt': '書き出した日時',
+    'data.inAtNone': '分かりません',
+    'data.inHas': '入っているもの',
+    'data.inPicked': 'ファイルを読みました。入っているもの: {has}',
+    'data.part.settings': '設定',
+    'data.part.vocab': '単語帳 {n} 語',
+    'data.part.log': '読んだ記録 {n} 日分',
+    'data.part.logx': '読んだ記録の詳しい分',
+    'data.part.runs': '通信の記録',
+    'data.part.quota': '回数の記録',
+    'data.inMerge': '手元に足す',
+    'data.inMergeNote': '「手元に足す」では、手元のものは消えません。同じ単語は、新しい方を残します。設定は、入っていれば、ファイルの中身になります。',
+    'data.inReplace': '手元を消して、置きかえる',
+    'data.inReplaceArmed': 'もう一度押すと、置きかえます',
+    'data.inReplaceNote': '「置きかえる」では、ファイルに入っている種類(単語帳・記録・今日つかった回数など)の、手元の分を消してから入れます。もとに戻せません。',
+    'data.inDoing': '読み込んでいます…',
+    'data.inDone': '読み込みました',
+    'data.inDoneReplace': '置きかえました',
+    'data.inVocab': '単語帳は、{n} 語になりました。',
+    'data.inReload': '読み込んだ設定(目標など)は、ページを開き直すと、そろいます。',
+    'data.inSkipped': '読めなかったものが {n} つあり、飛ばしました。',
+    'data.inKey': 'API キーは、ファイルに入っていません。「AI につなぐ」で入れてください。',
+    'data.inBad.format': 'このファイルは、読み込めません(このアプリで書き出したファイルではないようです)',
+    'data.inBad.newer': '新しい版で書き出したファイルなので、読み込めません。先に、このアプリを新しくしてください',
+    'data.inBad.full': '保存がいっぱいで、途中で止まりました。空きを作ってから、同じファイルをもう一度読み込むと、続きが入ります',
+    'data.inBad.read': 'ファイルを読めませんでした。もう一度選んでください',
+    'data.busy': '前の読み込みか、消す操作が、まだ終わっていません。少し待ってから、もう一度',
+    'data.inBad.empty': 'このファイルには、読み込めるものが入っていません',
+    'data.site': 'このサイトの保存',
+    'data.pages': 'このサイトで保存したページ',
+    'data.pagesN': '{n} 件',
+    'data.clear': 'このサイトの保存を消す',
+    'data.clearArmed': 'もう一度押すと、消します',
+    'data.cleared': '{n} 件を消しました',
+    'data.clearCost': '({cost})',
+    'data.clearNote': '消すのは、訳したページの保存だけです。消したページをもう一度英語にするときは、訳し直しになります{cost}。単語帳・記録・「AIに聞く」の答え・辞書は、消えません。',
+    'data.clearBusy': '訳している間は、消せません',
+    'data.about': 'この版',
+    'data.ver': '版',
+    'data.env': '入れ物',
+    'data.env.page': 'ページに直接(見本ページ)',
+    'data.env.userscript': 'ユーザースクリプト',
+    'data.env.extension': '拡張機能',
+    'data.storeShared': '保存先(全サイト共通)',
+    'data.storeSite': '保存先(このサイト)',
+    'data.store.gm': 'Tampermonkey の保存',
+    'data.store.ext': '拡張機能の保存',
+    'data.store.idb': 'この端末の中(IndexedDB)',
+    'data.store.ls': 'この端末の中(localStorage。入る量は少なめ)',
+    'data.store.mem': '保存できていません(このページを閉じると消えます)',
+    'data.memWarn': 'この端末では、保存ができていません。訳したページや記録は、このページを閉じると消えます。',
+    // うまく動かないときの画面(ui/settings_diag.js)
+    'fix.title': '直し方',
+    'fix.head': 'アプリの準備が止まっています',
+    'fix.lead': 'この端末の保存を読むのを、待ったままになっています。訳したページや単語帳は、消えていません。',
+    'fix.ios1': '画面の下のふちから、上へゆっくりなぞって、途中で指を止めます',
+    'fix.ios1d': 'ホームボタンのある iPhone は、ホームボタンを2回押します。',
+    'fix.ios2': 'Safari の画面を、上へ払って閉じます',
+    'fix.ios2d': 'ホーム画面に戻るだけでは、直りません。',
+    'fix.ios3': 'Safari を開き直します',
+    'fix.ios3d': '開いていたページは、そのまま残っています。',
+    'fix.pc1': 'ブラウザの窓を、全部閉じます',
+    'fix.pc1d': 'このページを読み込み直すだけでは、直らないことがあります。',
+    'fix.pc2': 'ブラウザを開き直して、このページを開きます',
+    'fix.pc2d': '訳したページは、そのまま出ます。',
+    'diag.label': '調べるための記録',
+    'diag.note': 'うまく動かないわけを調べるための記録です。入っているのは、数字と、段階の名前だけです。小説の文と API キーは、入りません。',
+    'diag.copy': '記録を写す',
+    'diag.copied': '写しました。メッセージに貼り付けて、送ってください',
+    'diag.copyFail': '自動では写せませんでした。下の字を長押しして、全部を選んで写してください',
+    'soon': '準備中です'
+  };
+
+  const own = key => Object.prototype.hasOwnProperty.call(T, key);
+  function t(key, vars){
+    const alt = key + '@' + plan.kind();
+    const s = own(alt) ? T[alt] : T[key];
+    if (s == null) return String(key);
+    return s.replace(/\{(\w+)\}/g, (m, k) => (k === 'app' ? appName() : vars && vars[k] != null ? String(vars[k]) : ''));
+  }
+
+  Yomu.msg = { t, app: appName, has: own, keys: () => Object.keys(T) };
+})();
+
+/* ---- Yomu.rest: 残りの部品。起動が呼ぶまで動かさない(§2-3) ---- */
+Yomu.rest = function(){
 
 /* ---- core/levels.js ---- */
 // core/levels.js — 学習レベルの一覧と、モデル・思考の初期値(部品の約束 §1-3・§5-3・§8-3、設計メモ 2-3)
@@ -625,29 +1608,6 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       const set = this.get(name);
       return (keys || KEYS).map(k => this.varName(k, prefix) + ':' + set[k]).join(';') + ';';
     }
-  };
-})();
-
-/* ---- core/plan.js ---- */
-// core/plan.js — つなぎ方ごとの、画面の見せ方の決まり(部品の約束 §9-2。設計メモ 2-2・5章)
-//   つなぎ方 = AI の使い方の形。今あるのは own(各自が、自分の API キーを入れて使う)だけ。
-//   managed(こちらで用意した従量課金の API を使う=販売のとき)は、まだ作っていない。ここにあるのは、そのときに「内部のことを見せない」ための決まりだけ。
-//   画面の部品は、通信の数・モデルの名前などを出す前に、ここに聞く(出し分けを、部品の中に散らさない)。文言の差しかえは ui/text.js(鍵@つなぎ方)
-(function(){
-  'use strict';
-  const cfg = Yomu.config;
-  // 見せるもの: cost = 回数を使う押せる所の「通信2回」/ model = モデルの名前(Flash など)/ quota = 今日つかった回数 / runs = 通信の記録 / modelChoice = モデルと思考を選ぶ所
-  const SHOWS = {
-    own:     { cost: true,  model: true,  quota: true,  runs: true,  modelChoice: true },
-    managed: { cost: false, model: false, quota: false, runs: false, modelChoice: false }
-  };
-
-  Yomu.plan = {
-    kinds: () => Object.keys(SHOWS),
-    // 今のつなぎ方(知らない名前なら own)。今は、初期値(config.plan.kind)だけ。つなぎ方を選ぶ画面(工程4c)ができたら、ここが設定を読む
-    kind(){ const k = cfg.plan && cfg.plan.kind; return Object.prototype.hasOwnProperty.call(SHOWS, k) ? k : 'own'; },
-    // それを画面に見せるか(知らない名前は、見せない)
-    shows(what){ return SHOWS[this.kind()][what] === true; }
   };
 })();
 
@@ -1277,6 +2237,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
         onLimit: 'ask',
         voice: { name: '', rate: config.voice.rate },
         log: { on: true, detail: 'full' },
+        hide: [],                                                              // 右下のボタンを出さないサイト(どのページでも。工程8c-2)= [{ h: ホスト名, at }]
         x: {}
       };
     },
@@ -2060,6 +3021,14 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       want('models/' + id + '/m', text(s.models[id].m));
       want('models/' + id + '/think', levels.thinkModes.includes(s.models[id].think));
     });
+    // 右下のボタンを出さないサイト(工程8c-2): [{ h: ホスト名(小文字), at }]。同じホストは 1 つ・config.page.web.hideMax まで(新しい方を残す)
+    want('hide', Array.isArray(s.hide));
+    const okHide = s.hide.filter(e => isPlain(e) && text(e.h));
+    if (strict && okHide.length !== s.hide.length) throw util.error('bad', '設定の値がおかしい: hide');
+    const seen = new Set();
+    s.hide = okHide.map(e => ({ h: e.h.toLowerCase(), at: text(e.at) ? e.at : '' }))
+      .filter(e => (seen.has(e.h) ? false : (seen.add(e.h), true)))
+      .slice(-config.page.web.hideMax);
     Object.keys(base.aux).forEach(k => want('aux/' + k, text(s.aux[k])));
     Object.keys(s.limits).forEach(model => {   // 1日の目安(利用者が直す数)。数でないものは置かない
       if (num(s.limits[model]) && s.limits[model] >= 0) return;
@@ -2156,7 +3125,20 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       const m = (isPlain(s.models[level]) && s.models[level]) || levels.defaults.models[level] || levels.defaults.models[levels.initial];
       return { m: m.m, think: config.ui.thinkPick ? m.think : 'none' };
     },
-    on(fn){ subs.add(fn); return () => subs.delete(fn); }
+    on(fn){ subs.add(fn); return () => subs.delete(fn); },
+    // 右下のボタンを出さないサイト(工程8c-2。設計メモ 2-6)。host はホスト名(www. も、そのまま)
+    hidden(host){ const h = String(host || '').toLowerCase(); return !!h && settings.get().hide.some(e => e.h === h); },
+    hide(host){
+      const h = String(host || '').toLowerCase();
+      if (!h) return Promise.reject(util.error('bad', 'サイトの名前が無い'));
+      const list = settings.get().hide.filter(e => e.h !== h);
+      list.push({ h, at: util.nowISO() });
+      return settings.set({ hide: list });
+    },
+    unhide(host){
+      const h = String(host || '').toLowerCase();
+      return settings.set({ hide: settings.get().hide.filter(e => e.h !== h) });
+    }
   };
 
   // ---- API キー(§8-2 の 10)。手元に持ち続けない(使うたびに読む) ----
@@ -5311,176 +6293,6 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   Yomu.translate = translate;
 })();
 
-/* ---- page/sites.js ---- */
-// page/sites.js — サイトへの当てはめ(部品の約束 §3)
-//   本文ページかどうかを見分け、本文の段落と、前書き・後書きの段落を分けて返す。本文ページでなければ null(操作部を出さない)。
-//   なろうとカクヨムの形は、2026-10-03 に工程4a-1 が実物で確かめた(§3 の表)。見本ページ(localhost)は、dev の束だけが同じ当てはめを効かせる。
-(function(){
-  'use strict';
-  const Y = Yomu;
-  const config = Yomu.config, util = Yomu.util;
-  const adapters = [];
-  const LOCAL = ['localhost', '127.0.0.1'];
-
-  const textOf = el => (el ? String(el.textContent || '').replace(/[ \t\r\n]+/g, ' ').trim() : '');   // 全角の空白は、題名の一部として残す
-  const pathOf = a => { try { return new URL(a.getAttribute('href'), a.ownerDocument.baseURI).pathname.toLowerCase(); } catch (e){ return ''; } };
-  const hrefOf = a => { try { return a ? new URL(a.getAttribute('href'), a.ownerDocument.baseURI).href : null; } catch (e){ return null; } };
-  const allP = roots => roots.reduce((out, r) => out.concat(Array.from(r.querySelectorAll('p'))), []);
-
-  // なろう(narou・narou18)。作品は n+4けた+英字、話は数字。短編は話の番号が無い(ep '0')
-  //   本文の段落は id が L数字。前書きは .p-novel__text--preface の中の Lp数字、後書きは .p-novel__text--afterword の中の La数字(確かめた)
-  const NOTE_BLOCK = '.p-novel__text--preface, .p-novel__text--afterword';
-  const narou = (id, host) => ({
-    id, hosts: [host],
-    page(loc){
-      const m = /^\/(n\d{4}[a-z]{1,3})\/(?:(\d+)\/?)?$/i.exec(loc.pathname);
-      return m ? { work: m[1].toLowerCase(), ep: m[2] ? String(Number(m[2])) : '0' } : null;
-    },
-    roots(doc){ const b = doc.querySelector('.p-novel__body') || doc.getElementById('novel_honbun'); return b ? [b] : []; },
-    paras(roots){
-      const all = allP(roots);
-      const inNote = p => !!p.closest(NOTE_BLOCK);
-      const main = all.filter(p => /^L\d+$/.test(p.id) && !inNote(p));
-      // 本文の段落が1つも見つからないときは、入れ物の中の p を全部本文として扱う(見分けが外れても、訳せなくならない)
-      if (!main.length) return { main: all, notes: [] };
-      return { main, notes: all.filter(p => main.indexOf(p) < 0 && (/^L[pa]\d+$/.test(p.id) || inNote(p))) };
-    },
-    title(doc, pg){
-      const h1 = textOf(doc.querySelector('.p-novel__title'));
-      if (pg.ep === '0') return { work: h1, ep: '' };                                   // 短編: h1 が作品名
-      const want = '/' + pg.work + '/';
-      const link = Array.from(doc.querySelectorAll('.c-announce a')).find(a => pathOf(a) === want);
-      return { work: textOf(link), ep: h1 };
-    },
-    next(doc){ return hrefOf(doc.querySelector('a.c-pager__item--next')); }
-  });
-
-  // カクヨム。本文は .widget-episodeBody の中の p(前書き・後書きの入れ物は無い)。縦組みは body の writingDirection-vertical(確かめた)
-  const kakuyomu = {
-    id: 'kakuyomu', hosts: ['kakuyomu.jp'],
-    page(loc){
-      const m = /^\/works\/(\d+)\/episodes\/(\d+)\/?$/.exec(loc.pathname);
-      return m ? { work: m[1], ep: m[2] } : null;
-    },
-    roots(doc){ const b = doc.querySelector('.widget-episodeBody') || doc.querySelector('.js-episode-body'); return b ? [b] : []; },
-    paras(roots){ return { main: allP(roots), notes: [] }; },
-    title(doc){ return { work: textOf(doc.querySelector('#worksEpisodesEpisodeHeader h1')), ep: textOf(doc.querySelector('.widget-episodeTitle')) }; },
-    next(doc){ return hrefOf(doc.getElementById('contentMain-readNextEpisode')); },
-    vertical(doc){ return !!(doc.body && doc.body.classList.contains('writingDirection-vertical')); }
-  };
-
-  // 縦組みか(当てはめが見分け方を持っていればそれ、無ければ本文の入れ物の writing-mode)
-  function isVertical(adapter, doc, roots){
-    if (adapter.vertical && adapter.vertical(doc)) return true;
-    const view = doc.defaultView, el = roots[0];
-    if (!view || !view.getComputedStyle || !el) return false;
-    return /^(vertical|tb|sideways)/.test(String(view.getComputedStyle(el).writingMode || ''));
-  }
-
-  // URL → { adapter, pg } | null
-  function pick(loc){
-    if (!loc || typeof loc.pathname !== 'string') return null;
-    const host = String(loc.hostname || '').toLowerCase();
-    // 見本ページ: dev の束だけ。/samples/narou.html・/samples/kakuyomu.html(-名前 を付けると、話の番号がその名前になる)
-    if (LOCAL.indexOf(host) >= 0){
-      if (!(Y.env && Y.env.dev)) return null;
-      const m = /^\/samples\/(narou|kakuyomu)(?:-([a-z0-9_]+))?\.html$/i.exec(loc.pathname);
-      const a = m && adapters.find(x => x.id === m[1].toLowerCase());
-      return a ? { adapter: a, pg: { work: 'sample', ep: m[2] ? m[2].toLowerCase() : '1' } } : null;
-    }
-    for (const a of adapters){
-      if (a.hosts.indexOf(host) < 0) continue;
-      const pg = a.page(loc);
-      if (pg) return { adapter: a, pg };
-    }
-    return null;
-  }
-
-  // 本文ページなら PageInfo、でなければ null
-  function detect(loc, doc){
-    const hit = pick(loc);
-    if (!hit || !doc) return null;
-    const { adapter, pg } = hit;
-    const roots = (adapter.roots(doc) || []).filter(Boolean);
-    if (!roots.length) return null;
-    const { main, notes } = adapter.paras(roots);
-    if (!main.length) return null;
-    const t = adapter.title(doc, pg) || {};
-    const workKey = adapter.id + ':' + pg.work;
-    return {
-      site: adapter.id, workKey, pageKey: workKey + '/' + pg.ep,
-      title: { work: t.work || textOf(doc.querySelector('title')), ep: t.ep || '' },
-      roots, paras: main, notes,
-      skip: adapter.skip || 'rt,rp',
-      next: adapter.next ? adapter.next(doc) : null,
-      vertical: isVertical(adapter, doc, roots)
-    };
-  }
-
-  Yomu.sites = {
-    detect,
-    add(adapter){
-      if (!adapter || typeof adapter.id !== 'string' || !Array.isArray(adapter.hosts) || typeof adapter.page !== 'function'
-        || typeof adapter.roots !== 'function' || typeof adapter.paras !== 'function' || typeof adapter.title !== 'function') throw util.error('bad', '当てはめの形がおかしい');
-      const i = adapters.findIndex(a => a.id === adapter.id);
-      if (i >= 0) adapters[i] = adapter; else adapters.push(adapter);
-    },
-    // 本文ページの URL なのに、本文の入れ物がまだ無いとき(あとから描くサイト)は、opt.ms(初期値 config.page.waitMs)まで探し直す。
-    //   本文ページの URL でなければ、すぐに null。opt.signal が中止されたら null
-    wait(loc, doc, opt){
-      opt = opt || {};
-      const ms = opt.ms == null ? config.page.waitMs : opt.ms, every = opt.every || config.page.pollMs;
-      return new Promise(resolve => {
-        const t0 = Date.now();
-        (function again(){
-          if (opt.signal && opt.signal.aborted) return resolve(null);
-          const info = detect(loc, doc);
-          if (info || !pick(loc) || Date.now() - t0 >= ms) return resolve(info);
-          setTimeout(again, every);
-        })();
-      });
-    },
-    // いまの表示が縦組みか(カクヨムは、ページを読み込み直さずに縦組みへ切り替えられる)
-    vertical(info, doc){
-      const hit = info && adapters.find(a => a.id === info.site);
-      const d = doc || (info && info.roots[0] && info.roots[0].ownerDocument);
-      return !!(hit && d && isVertical(hit, d, info.roots));
-    },
-    // 本文の背景の色(CSS の色の文字)。本文の入れ物から上へたどって、最初に見つかった、透けていない背景。見つからなければ null
-    //   確かめた(2026-10-09 工程4b-2): カクヨムは #contentMain-inner(body のクラス colorTheme-○○ で変わる)、なろうは body(クラス js-customlayout数字 で変わる)
-    background(info, doc){
-      const d = doc || (info && info.roots[0] && info.roots[0].ownerDocument);
-      const view = d && d.defaultView;
-      if (!view || !view.getComputedStyle || !info) return null;
-      for (let el = info.roots[0]; el && el.nodeType === 1; el = el.parentElement){
-        let c = '';
-        try { c = view.getComputedStyle(el).backgroundColor; } catch (e){}
-        const p = Y.theme.parse(c);
-        if (p && p[3] >= 0.5) return c;
-      }
-      return null;
-    },
-    // URL が変わったら fn(新しい URL)。ページを読み込み直さずに移るサイトへの備え。戻りは見張りを止める関数
-    watch(fn, opt){
-      opt = opt || {};
-      const get = opt.get || (() => location.href);
-      let last = get();
-      const t = setInterval(() => {
-        const now = get();
-        if (now === last) return;
-        last = now;
-        try { fn(now); } catch (e){ /* 見張りは止めない */ }
-      }, opt.every || config.page.watchMs);
-      return () => clearInterval(t);
-    },
-    _pick: pick   // 検査用
-  };
-
-  Yomu.sites.add(narou('narou', 'ncode.syosetu.com'));
-  Yomu.sites.add(narou('narou18', 'novel18.syosetu.com'));   // 〔未確認〕作りはなろうと同じと見ている(年齢の確かめがあるので開いていない)
-  Yomu.sites.add(kakuyomu);
-})();
-
 /* ---- page/extract.js ---- */
 // page/extract.js — 段落を文のデータに直す(部品の約束 §4-2)
 //   段落の文字は、Text ノードを文書の順につないだもの。ルビの読み(rt・rp)と、エンジンが足した要素(.yomu-en・.yomu-chip)は除き、<br> は改行にする。
@@ -6286,7 +7098,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   // ---- 起動(§6-7・§9-8): 当てはめ → 保存の起動 → 文のデータ → 保存を探す → 条件が合えば表示(通信なし) ----
-  //   o = { doc?, loc? }(省くとページの document と location)。本文ページでなければ、保存にもさわらない
+  //   o = { doc?, loc?, info? }(省くとページの document と location。info = どのページでもの見分けが見つけた PageInfo=当てはめの代わり)。本文ページでなければ、保存にもさわらない
   function start(o){
     if (state !== 'none' || starting) return starting || Promise.resolve(status());
     const my = ++epoch;
@@ -6303,7 +7115,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     win = doc ? doc.defaultView : null;     // 先に受けておく(jsdom では、document の欄を読むたびに、ページ全体を数え直すため)
     loc = o.loc || (win ? win.location : null);
     diag.mark('wait');
-    const found = doc && loc ? await sites.wait(loc, doc) : null;
+    const found = o.info || (doc && loc ? await sites.wait(loc, doc) : null);   // o.info = どのページでもの見分けが見つけた本文(§9-8。v1.51)
     if (my !== epoch || !found){ diag.mark(found ? 'left' : 'nopage'); return status(); }
     diag.mark('found', found.site);
     // 本文ページなのに、ここから先(保存を読む)が、いつまでも返ってこないことがある(工程5b-2b: iPhone のなろうで、「次へ」のあと、台が出ない)。
@@ -6840,478 +7652,6 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   };
 })();
 
-/* ---- ui/text.js ---- */
-// ui/text.js — 画面の文言の表(部品の約束 §9-2・§9-5)。画面に出す日本語は、ここに1か所
-//   つなぎ方ごとに文言を変えるときは、「鍵@つなぎ方」の行を足す(例: 'note.partial@managed')。あれば、そちらを使う(core/plan.js)
-//   {名前} の所は、t(key, vars) の vars で入れかえる。{app} は、いつもアプリ名(仮の名前なので、ここには書かない。ビルドが build.config.json の displayName を Yomu.build.name に入れる=§1-1)
-(function(){
-  'use strict';
-  const Y = Yomu;
-  const plan = Yomu.plan;
-  const appName = () => (Y.build && Y.build.name) || 'yomu';
-  const T = {
-    // 回数を使う押せる所に書く、通信の数(設計メモ 2-2)。見せるかどうかは、つなぎ方で決まる(Yomu.plan.shows('cost')。出すのは Yomu.ui.cost・withCost)
-    'cost.1': '通信1回',
-    'cost.2': '通信2回',
-    'cost.wrap': '{label}({cost})',
-    // 入口のボタン・進み具合・操作部
-    'dock.blend': 'ブレンド',
-    'dock.blendName': '{label}、{cost}',
-    'dock.menu': '{app} のメニュー',
-    'dock.ratio': '英語の割合',
-    'dock.ratioValue': '{v}%',
-    'dock.orig': '原文',
-    'dock.fold': '英語の割合 {v}%',
-    'dock.progress': '英訳しています',
-    'dock.stay': 'この画面のままで、お待ちください',
-    'dock.missing': '未訳 {n} / {all} 文',   // all = 対象の文の数(分母があると、だいたい訳せている、と分かる=工程5c-1 利用者)
-    'dock.count': '{got} / {total} 文',
-    'dock.cancel': '中止する',
-    // 知らせの行(§9-5)。押せる所のうち、回数を使うものには、部品が通信の数を足す(Yomu.ui.withCost)
-    'note.close': 'とじる',
-    'note.noKey': 'API キーがまだ入っていません',
-    'note.limitMin': '混み合っています。{sec} 秒ほど待ってから、もう一度押してください',
-    'note.limitMinSoon': '混み合っています。少し待ってから、もう一度押してください',
-    'note.switched': '{from} が今日の上限のため、{to} で訳しました',
-    'note.partial': '残り {n} 文は未訳です',
-    // 途中で切れたときは、わけと、どうすればよいかを添える(設計メモ 2-5。工程5c-1)
-    'note.cutBusy': 'Google の側が混んでいて、途中で止まりました。残り {n} 文は、少し待ってから訳してください',
-    'note.cutNet': '通信がとぎれて、途中で止まりました。残り {n} 文は未訳です',
-    'note.needTranslate': 'この目標では、まだ訳していません',
-    'note.blocked': 'この話は、AI が内容を理由に訳せませんでした(届いた分は出ています)',
-    'note.idioms': '熟語さがしができませんでした(英文は読めます)',
-    'note.idiomsLimit': '今日の上限のため、熟語さがしができませんでした(英文は読めます)',
-    'note.idiomsPart': '熟語さがしが、途中までしか届きませんでした(英文は読めます)',
-    'note.suspect': '訳の並びがずれているおそれがあるため、{n} 文を出しませんでした',
-    'note.vertical': '縦組みでは英語を出せません。横組みにすると、英語まじりで読めます',
-    'note.full': '端末の保存がいっぱいで、保存できませんでした',
-    'note.evicted': '保存がいっぱいなので、古い訳を {n} ページ消しました',
-    'note.newer': '新しい版で保存したデータがあります。{app} を新しくしてください',
-    'note.conflict': '今の版(小説まぜりんご)と同時には動かせません。どちらかを止めてください',
-    'note.stuckIos': 'アプリの準備が止まっています。Safari をいったん閉じて、開き直すと直ります',
-    'note.stuck': 'アプリの準備が止まっています。ブラウザをいったん閉じて、開き直すと直ります',
-    'act.fix': '直し方を見る',
-    'act.settings': '設定をひらく',
-    'act.more': '続きを訳す',
-    'act.translate': '訳す',
-    'act.redo': '訳し直す',
-    'act.idioms': 'やり直す',
-    // 1日の上限(キャンバス「無料枠を使い切ったとき」)
-    'limit.title': '{model} は今日の無料枠を使い切りました',
-    'limit.descLite': '{lite} でも訳せますが、文の組み立てが少し固くなります。無料枠は毎日 夕方(16〜17時ごろ)に戻ります。',
-    'limit.desc': '無料枠は毎日 夕方(16〜17時ごろ)に戻ります。',
-    'limit.later': 'あとにする',
-    'limit.lite': '{lite} で訳す',
-    // 失敗の種類ごとの文(§5-5)
-    'err.auth': 'API キーが正しくないか、使えません。設定で確かめてください',
-    'err.limit': '上限に当たりました。少し待ってから、もう一度押してください(続くときは、今日の上限かもしれません)',
-    'err.billing': 'Google の側で、支払いの設定が必要だと言われました',
-    'err.model': 'このモデルは使えません。翻訳の設定で選び直してください',
-    'err.bad': 'Google が設定を受け付けませんでした',
-    'err.busy': 'Google の側が混み合っています。少し待ってから、もう一度押してください',
-    'err.network': 'つながりませんでした。電波を確かめてください',
-    'err.parse': '返事を読めませんでした。もう一度押してください',
-    'err.empty': '使える訳が返ってきませんでした。もう一度押してください',
-    'err.other': 'うまくいきませんでした。もう一度押してください',
-    'err.detail': '{text}({detail})',
-    'clip': '{text}…',
-    // Tampermonkey のメニュー(ブラウザの拡張機能のメニューの中。§2-2 の env.onToggle。v1.50 工程8c-1。文言は仮=工程8c-2 で利用者に見せて決める)
-    'tm.toggle': 'ブレンド / 日本語に戻す',
-    // メニュー(キャンバス3ページ目。学習レベルは出さない=設計メモ 2-5)
-    'menu.page': 'このページ',
-    'menu.offline': 'オフライン保存',
-    'menu.redo': '訳し直す',
-    'menu.blend': 'ブレンド(このページを訳す)',
-    'menu.redoArmed': 'もう一度押すと、訳し直します',
-    'menu.more': '続きを訳す(残り {n} 文)',
-    'menu.idioms': '熟語さがしをやり直す',
-    'menu.look': '見た目',
-    'menu.settings': '設定',
-    'menu.learn': '学ぶ画面をひらく',
-    // 見た目(キャンバス3ページ目の「メニュー › 見た目」)。色の組の呼び名は 'theme.名前'(core/theme.js の組と、そろえる)
-    'look.back': 'メニューにもどる',
-    'look.theme': 'テーマ(操作部と板、英文の色)',
-    'look.auto': 'サイトの色に合わせる(自動)',
-    'look.autoShort': 'サイトの色に合わせる',
-    'look.autoNow': '今は「{name}」',
-    'look.abc': 'Abc',
-    'theme.white': '白',
-    'theme.cream': '生成り',
-    'theme.dark': '暗い',
-    'theme.sky': '水色',
-    'look.font': '英文の書体',
-    'look.font.sans': 'ゴシック体',
-    'look.font.serif': 'セリフ体',
-    'look.font.site': 'サイトと同じ',
-    'look.size': '英文の文字の大きさ',
-    'look.size.s': '小さめ',
-    'look.size.m': 'サイトと同じ',
-    'look.size.l': '大きめ',
-    'look.style': '英文の見せ方',
-    'look.marker': 'マーカー',
-    'look.quiet': '書体だけ',
-    'look.sampleJp': '彼女は笑った。',
-    'look.sampleEn': 'It was true.',
-    // 単語の板(§9-4。キャンバス 4・4b・3ページ目の「単語の板 — もとの語」)
-    'word.label': '単語の意味',
-    'word.idiom': '熟語',
-    'word.srcDict': '内蔵辞書(通信なし)',
-    'word.base': 'もとの形',
-    'word.viaTail': ' の{kind}',
-    'word.kind.s': '複数形・三単現',
-    'word.kind.pl': '複数形',
-    'word.kind.3sg': '三単現',
-    'word.kind.pres': '現在形',
-    'word.kind.ed': '過去形・過去分詞',
-    'word.kind.past': '過去形',
-    'word.kind.pp': '過去分詞',
-    'word.kind.ing': '-ing の形',
-    'word.kind.comp': '比較級',
-    'word.kind.sup': '最上級',
-    'word.kind.adv': '副詞の形',
-    'word.kind.poss': '「’s」の付いた形',
-    'word.kind.contr': '短縮形',
-    'word.kind.other': '変化した形',
-    'word.also': 'もとの語',
-    'word.alsoCase': '同じつづりの語',
-    'word.more': 'ほかの意味も見る(あと {n})',
-    'word.moreCut': 'つづきを見る',
-    'word.none': '内蔵辞書にありません',
-    'word.loading': '辞書を用意しています…',
-    'word.loadingPct': '辞書を用意しています… {pct}%',
-    'word.dictNet': '辞書を取ってこられませんでした。電波を確かめてください',
-    'word.dictBad': '辞書を使えませんでした',
-    'word.retry': 'もう一度',
-    'word.say': '発音を聞く',
-    'word.saySent': 'この文を聞く',
-    'word.ask': 'この文での意味をAIに聞く',
-    'word.asking': 'AIに聞いています…',
-    'word.aiSame': 'AI(この文での意味)',
-    'word.aiOther': 'AI(前に、別の文で聞いた意味)',
-    'word.aiLimit': '今日の上限のため、AIに聞けません',
-    'word.aiBlocked': 'AI が、内容を理由に答えませんでした',
-    'word.aiEmpty': '答えが返ってきませんでした。もう一度押してください',
-    'word.aiSlow': '{sec} 秒待っても、返事がありませんでした。Google の側が混んでいるのかもしれません。少し待ってから、もう一度押してください',
-    'word.add': '単語帳に追加',
-    'word.added': '単語帳に入っています',
-    'word.addedHint': '外すときは、ここを押す',
-    'word.removeArmed': 'もう一度押すと外します',
-    'word.removed': '単語帳から外しました',
-    'word.addFail': '単語帳に入れられませんでした',
-    'word.removeFail': '単語帳から外せませんでした',
-    'word.prev': '前へひろげる',
-    'word.next': '後ろへひろげる',
-    'word.reset': 'もとに戻す',
-    // 設定(§9-6。画面いっぱいに出す)。トップは、行き先の一覧(まだ無い行き先は、右に「準備中」)
-    'set.title': '設定',
-    'set.back': '設定にもどる',
-    'set.groupAi': 'AI',
-    'set.connect': 'AI につなぐ',
-    'set.keyIn': 'キーが入っています',
-    'set.keyNone': 'キーがまだです',
-    'set.models': '翻訳の設定',
-    'set.groupRead': '読み方',
-    'set.goal': '目標',
-    'set.groupMore': '記録とデータ',
-    'set.runs': '通信の記録',
-    'set.voice': '音声',
-    'set.data': '記録・書き出しと読み込み',
-    'set.soon': '準備中',
-    // 設定 › AI につなぐ(キャンバス3ページ目の「AI につなぐ」)
-    'con.lead': '英語にするときだけ、AI に文を送ります。いまは、自分の Gemini のキーで使います(無料の枠があります)。',
-    'con.way': 'つなぎ方',
-    'con.way.own': '自分の Gemini のキー',
-    'con.step1': 'Google AI Studio をひらく(Google のアカウントで入る)',
-    'con.step2': '「API キーを作成」を押す',
-    'con.step3': 'できたキーをコピーして、下に貼る',
-    'con.open': 'Google AI Studio をひらく(別のタブ)',
-    'con.key': 'API キー',
-    'con.has': 'キーは入っています(画面には出しません)。入れかえるときは、新しいキーを貼ってください。',
-    'con.paste': '貼り付け',
-    'con.pasteFail': '貼り付けられませんでした。欄を長押しして、貼り付けてください',
-    'con.check': 'つながるかを確かめる',
-    'con.checkNote': '貼ったキーは、ここで保存します。',
-    'con.checkFree': '確かめには、回数を使いません。',
-    'con.checking': '確かめています…',
-    'con.ok': 'つながりました',
-    'con.empty': 'API キーを貼ってください',
-    'con.bad': 'このキーでは、つながりませんでした。キーを確かめてください',
-    'con.unchecked': 'キーは保存しました。つながるかは、確かめられませんでした。{why}',
-    'con.local': 'キーは、この端末の中にだけ保存します。書き出すデータにも入りません。',
-    'con.drop': 'キーを消す',
-    'con.dropArmed': 'もう一度押すと消します',
-    'con.dropped': 'キーを消しました',
-    // 設定 › 目標(キャンバス3ページ目。ある人だけ。学習レベルを変える入口は、ここだけ)。級の呼び名は core/levels.js
-    'set.goalNone': '決めない',
-    'goal.h1': '目標は、ある人だけ',
-    'goal.lead': 'はじめは、自然な英語のまま読みます。試験などの目標がある人は、それに合わせた英文にできます。',
-    'goal.none': '目標は決めない',
-    'goal.noneSub': '自然な英語のまま、気楽に読む',
-    'goal.some': '目標がある人は',
-    'goal.eiken': '英検・学校',
-    'goal.eikenSub': '級に合わせた英文で読む',
-    'goal.now': '今は「{name}」',
-    'goal.toeic': 'TOEIC・ビジネス',
-    'goal.toeicSub': '仕事で使う英語を目指す',
-    'goal.toefl': 'TOEFL・学術',
-    'goal.toeflSub': '留学や論文の英語を目指す',
-    'goal.pick': 'これにする',
-    'goal.toGrade': '級を選ぶ',
-    'goal.h2': '目標を選んでください',
-    'goal.lead2': '今の力は聞きません。目指す所だけで決めます。',
-    'goal.grade.a1': '中学卒業程度',
-    'goal.grade.a2': '高校中級程度',
-    'goal.grade.b1': '高校卒業程度',
-    'goal.grade.b2': '大学中級程度',
-    'goal.gives': 'この目標で用意するもの',
-    'goal.diff': '英文のむずかしさ',
-    'goal.diffVal': '{name}向けの英文',
-    'goal.ai': '訳す AI',
-    'goal.aiLimit': '{model}(1日の目安 {n} 回)',
-    'goal.set': '目標を「{name}」にしました',
-    'goal.setNone': '目標を決めない(自然な英語)にしました',
-    'goal.busy': '訳している間は、変えられません。終わってから、もう一度押してください',
-    'act.goal': '目標を変える',
-    // 最初の設定(3枚: ようこそ → AI につなぐ → 使い方。キャンバス3ページ目の1段目。見本の文は創作)
-    'setup.label': 'はじめに',
-    'setup.skip': 'とばす',
-    'setup.back': 'もどる',
-    'setup.step': '2つのうち {n} つ目',
-    'setup.hero1': 'いつもの小説が、',
-    'setup.hero2': '少しずつ英語になる。',
-    'setup.demoA': '朝の霧は、灯台の足もとまで這い上がってきていた。',
-    'setup.demoEn': 'I wiped the cold glass with my sleeve and looked out at the sea.',
-    'setup.demoB': '波の音だけが、いつもと同じ調子で続いている。',
-    'setup.welcomeNote': 'はじめに、AI につなぎます。1分ほどです。むずかしさは選びません。自然な英語のまま読みます。',
-    'setup.start': 'はじめる',
-    'setup.checkNext': 'つながるか確かめて、つぎへ',
-    'setup.later': 'あとで入れる',
-    'setup.howTitle': '使い方は、4つだけ',
-    'setup.how1': '「ブレンド」を押すと、英語がまざります',
-    'setup.how1d': '押すまでは、何も送りません。',
-    'setup.how2': 'つまみで、英語の割合を変えます',
-    'setup.how2d': '何度動かしても、通信しません。',
-    'setup.how3': '「あ」で、その文だけ日本語に戻せます',
-    'setup.how3d': '単語をタップすると、意味が出ます。',
-    'setup.how4': 'ロゴを押すと、メニューがひらきます',
-    'setup.how4d': '設定や、試験などの目標は、ここから。',
-    'setup.chip': 'あ',
-    'setup.howNote': 'キーも、メニューの「設定」で変えられます。',
-    'setup.go': '読みはじめる',
-    // まだ無い機能の入口(設計メモ 2-5)
-    'set.saveFail': '保存できませんでした',
-    'set.saved': '保存しました',
-    'set.voiceAuto': '端末に合わせる',
-    'set.voiceAuto.pick': '自動で選ぶ',
-    'mod.lead': '訳すのに使う AI と、今日つかった回数です。',
-    'mod.loading': '読んでいます…',
-    'mod.today': '今日つかった回数',
-    'mod.used': '今日 {n} 回',
-    'mod.hit': '今日は、上限に当たりました',
-    'mod.limit': '1日の目安',
-    'mod.times': '回',
-    'mod.limitBad': '目安は、0〜99999 の数字で入れてください',
-    'mod.limitSaved': '目安を保存しました',
-    'mod.limitReset': '空にしたので、はじめの値({n} 回)に戻しました',
-    'mod.none': 'まだ、数えたものはありません',
-    'mod.todayNote': '目安は、自分で決める数です(本当の上限は、Google AI Studio で見られます)。目安に達しても、止めません。回数は、毎日 夕方(16〜17時ごろ)に 0 に戻ります。',
-    'mod.perLevel': '訳す AI(目標ごと)',
-    'mod.std': '目標は決めない',
-    'mod.nowMark': '(今)',
-    'mod.pair': '{model}・{think}',
-    'mod.perLevelNote': '熟語さがしと「AIに聞く」は、いつも Flash-Lite を使います。',
-    'mod.think': '考える深さ',
-    'mod.think.none': '考えない',
-    'mod.think.light': '軽く考える',
-    'mod.think.auto': 'おまかせ',
-    'mod.thinkSub.none': 'いちばん速い。ふつうは、これで足ります',
-    'mod.thinkSub.light': '少し考えてから訳す(やさしい英文に組み直すとき向き)',
-    'mod.thinkSub.auto': 'AI が決める(時間がかかることがあります)',
-    'mod.onLimit': '1日の上限に達したとき',
-    'mod.onLimit.ask': 'そのつど聞く',
-    'mod.onLimit.askSub': 'あとにするか、Flash-Lite で訳すかを選びます',
-    'mod.onLimit.lite': 'Flash-Lite で訳す',
-    'mod.onLimit.liteSub': '聞かずに切りかえて、訳したあとで知らせます',
-    'mod.title': '訳す AI',
-    'mod.ai': 'AI',
-    'mod.list': 'ほかの AI を、一覧から取ってくる',
-    'mod.listFree': '回数は使いません',
-    'mod.listing': '取っています…',
-    'mod.listed': '{n} 個の AI が見つかりました',
-    'mod.listNoKey': 'API キーがまだ入っていません。「AI につなぐ」で入れてください',
-    'mod.reset': 'はじめの設定に戻す({model}・{think})',
-    'mod.resetM': 'はじめの設定に戻す({model})',              // 考える深さを選ぶ所を出していない間(config.ui.thinkPick)
-    'mod.resetDone': 'はじめの設定に戻しました',
-    'mod.first': 'はじめの設定',
-    'mod.now': '今の設定',
-    'mod.fetched': '一覧から取ってきた AI',
-    'mod.pick': 'これにする',
-    'mod.set': '「{level}」の訳す AI を、{model}・{think}にしました',
-    'mod.setM': '「{level}」の訳す AI を、{model}にしました',   // 同上
-    'mod.onLimit.lead': '訳す AI が、その日の上限に達して、訳せなかったときの動きです。',
-    'mod.onLimit.set': '上限に達したときは「{name}」にしました',
-    'runs.lead': '翻訳と熟語さがしの通信を、新しい順に並べています({days} 日分)。',
-    'runs.rate': '翻訳で使えた文',
-    'runs.today': '今日',
-    'runs.week': '直近7日',
-    'runs.sum': '{got} / {sent} 文({pct}%)・翻訳 {n} 回',
-    'runs.sumNone': '翻訳は、まだありません',
-    'runs.list': '通信の一覧',
-    'runs.none': 'まだ、記録はありません',
-    'runs.more': 'もっと見る',
-    'runs.role.tr': '翻訳',
-    'runs.role.idiom': '熟語さがし',
-    'runs.tr': '送った {sent} 文・使えた {got} 文・未訳 {miss} 文・{s} 秒',
-    'runs.idiom': '送った {sent} 文・{s} 秒',
-    'runs.err': '失敗: {kind}',
-    'runs.abort': '中止',
-    'runs.drop': '並びがずれた疑いで、使わなかった',
-    'runs.length': '長さの上限で、途中まで',
-    'voice.lead': '単語と文を読み上げる声です。',
-    'voice.voice': '声',
-    'voice.auto': '端末の設定に合わせる',
-    'voice.auto.pick': '自動で選ぶ',
-    'voice.autoSub.ios': 'iPhone の設定で選ばれている声で読みます',
-    'voice.autoSub': 'この端末で、いちばん自然な声を自動で選びます',
-    'voice.lang.en-US': 'アメリカの英語',
-    'voice.lang.en-GB': 'イギリスの英語',
-    'voice.lang.en-AU': 'オーストラリアの英語',
-    'voice.lang.en-IN': 'インドの英語',
-    'voice.lang.en-IE': 'アイルランドの英語',
-    'voice.lang.en-ZA': '南アフリカの英語',
-    'voice.lang.other': '英語({lang})',
-    'voice.wide': 'ほかの声も見る({n})',
-    'voice.rate': '速さ',
-    'voice.rate.slow': 'ゆっくり',
-    'voice.rate.mid': 'ふつう',
-    'voice.rate.fast': 'はやい',
-    'voice.try': '試しに聞く',
-    'voice.stop': '止める',
-    'voice.sample': 'The fog never lifts in this harbor town.',
-    'voice.cannot': 'この端末では、読み上げが使えません',
-    'voice.good': 'enhanced|premium|natural|拡張|プレミアム',
-    'voice.tip': 'より自然な声にするには',
-    'voice.tip.ios.1': 'iPhone の「設定」→「アクセシビリティ」→「リーダーと読み上げ」→「声」→「英語」をひらく(見つからなければ、設定の検索で「声」)',
-    'voice.tip.ios.2': '名前に「拡張」か「プレミアム」と付いた声を選んで、ダウンロードする(1つ 100〜300MB ほど。Wi-Fi で)',
-    'voice.tip.ios.3': 'この画面をひらき直して、上の「声」から、入れた声を選ぶ',
-    'voice.tipNote.ios': '上の道順は、iOS 26 のものです。Apple の側の画面なので、名前や場所は、iOS の版で変わることがあります。',
-    'voice.tip.android.1': '端末の「設定」→「ユーザー補助」→「テキスト読み上げの設定」をひらく',
-    'voice.tip.android.2': '優先するエンジンを Google のものにして、歯車の印 →「音声データをインストール」→ 英語を選ぶ',
-    'voice.tip.android.3': 'この画面をひらき直して、上の「声」を選ぶ',
-    'voice.tipNote.android': '機種によって、名前や場所が違います。',
-    'voice.tipNote.edge': 'Edge には、自然な声(名前に Natural と付く声)が、はじめから入っています。「自動で選ぶ」のままで、その声を選びます。入れるものは、ありません。',
-    // 設定 › 記録・書き出しと読み込み(§9-6。工程4c-2b)
-    'data.log': '読んだ記録を残す',
-    'data.log.on': '残す',
-    'data.log.off': '残さない',
-    'data.logNote': '読んだ時間や、英語で読んだ文の数を、この端末に残します。「残さない」にしても、今までの記録は消えません。',
-    'data.restore': '開き直したら、自動で戻す',
-    'data.restore.on': '戻す',
-    'data.restore.off': '戻さない',
-    'data.restoreNote': '前に訳したページを開き直したとき、押さなくても、前と同じ表示に戻します(通信はしません)。',
-    'data.out': '書き出す',
-    'data.outNote': 'ファイルにして、この端末に保存します。機種を変えるときや、ほかの端末へ写すときに使います。API キーと、訳したページは入りません。',
-    'data.outVocab': '単語帳を書き出す',
-    'data.words': '{n} 語',
-    'data.outAll': '全部を書き出す',
-    'data.outAllSub': '設定・単語帳・記録',
-    'data.outing': '用意しています…',
-    'data.outDone': '「{name}」を用意しました。保存の画面が出たら、保存してください。',
-    'data.outLink': '保存が始まらないときは、ここを押す',
-    'data.outNone': 'まだ、書き出すものがありません',
-    'data.outFail': '書き出せませんでした。もう一度押してください',
-    'data.in': '読み込む',
-    'data.inNote': 'このアプリで書き出したファイルを選びます。選んだだけでは、まだ何も変わりません。',
-    'data.inPick': 'ファイルを選ぶ',
-    'data.inTip': 'iPhone で、ファイルが見つからないとき',
-    'data.inTip.ios.1': '選ぶ画面の下の「最近使った項目」を見る(書き出したすぐあとは、ここに出ます)',
-    'data.inTip.ios.2': '無ければ、下の「ブラウズ」を、場所の一覧が出るまで押して、「ダウンロード」をひらく',
-    'data.inTip.ios.3': '上の検索の欄に「{name}」と入れて、「{name}-all-日付.json」を選ぶ(このアプリのファイルのほかは、うすい色で、選べません)',
-    'data.inFile': '選んだファイル',
-    'data.inAt': '書き出した日時',
-    'data.inAtNone': '分かりません',
-    'data.inHas': '入っているもの',
-    'data.inPicked': 'ファイルを読みました。入っているもの: {has}',
-    'data.part.settings': '設定',
-    'data.part.vocab': '単語帳 {n} 語',
-    'data.part.log': '読んだ記録 {n} 日分',
-    'data.part.logx': '読んだ記録の詳しい分',
-    'data.part.runs': '通信の記録',
-    'data.part.quota': '回数の記録',
-    'data.inMerge': '手元に足す',
-    'data.inMergeNote': '「手元に足す」では、手元のものは消えません。同じ単語は、新しい方を残します。設定は、入っていれば、ファイルの中身になります。',
-    'data.inReplace': '手元を消して、置きかえる',
-    'data.inReplaceArmed': 'もう一度押すと、置きかえます',
-    'data.inReplaceNote': '「置きかえる」では、ファイルに入っている種類(単語帳・記録・今日つかった回数など)の、手元の分を消してから入れます。もとに戻せません。',
-    'data.inDoing': '読み込んでいます…',
-    'data.inDone': '読み込みました',
-    'data.inDoneReplace': '置きかえました',
-    'data.inVocab': '単語帳は、{n} 語になりました。',
-    'data.inReload': '読み込んだ設定(目標など)は、ページを開き直すと、そろいます。',
-    'data.inSkipped': '読めなかったものが {n} つあり、飛ばしました。',
-    'data.inKey': 'API キーは、ファイルに入っていません。「AI につなぐ」で入れてください。',
-    'data.inBad.format': 'このファイルは、読み込めません(このアプリで書き出したファイルではないようです)',
-    'data.inBad.newer': '新しい版で書き出したファイルなので、読み込めません。先に、このアプリを新しくしてください',
-    'data.inBad.full': '保存がいっぱいで、途中で止まりました。空きを作ってから、同じファイルをもう一度読み込むと、続きが入ります',
-    'data.inBad.read': 'ファイルを読めませんでした。もう一度選んでください',
-    'data.busy': '前の読み込みか、消す操作が、まだ終わっていません。少し待ってから、もう一度',
-    'data.inBad.empty': 'このファイルには、読み込めるものが入っていません',
-    'data.site': 'このサイトの保存',
-    'data.pages': 'このサイトで保存したページ',
-    'data.pagesN': '{n} 件',
-    'data.clear': 'このサイトの保存を消す',
-    'data.clearArmed': 'もう一度押すと、消します',
-    'data.cleared': '{n} 件を消しました',
-    'data.clearCost': '({cost})',
-    'data.clearNote': '消すのは、訳したページの保存だけです。消したページをもう一度英語にするときは、訳し直しになります{cost}。単語帳・記録・「AIに聞く」の答え・辞書は、消えません。',
-    'data.clearBusy': '訳している間は、消せません',
-    'data.about': 'この版',
-    'data.ver': '版',
-    'data.env': '入れ物',
-    'data.env.page': 'ページに直接(見本ページ)',
-    'data.env.userscript': 'ユーザースクリプト',
-    'data.env.extension': '拡張機能',
-    'data.storeShared': '保存先(全サイト共通)',
-    'data.storeSite': '保存先(このサイト)',
-    'data.store.gm': 'Tampermonkey の保存',
-    'data.store.ext': '拡張機能の保存',
-    'data.store.idb': 'この端末の中(IndexedDB)',
-    'data.store.ls': 'この端末の中(localStorage。入る量は少なめ)',
-    'data.store.mem': '保存できていません(このページを閉じると消えます)',
-    'data.memWarn': 'この端末では、保存ができていません。訳したページや記録は、このページを閉じると消えます。',
-    // うまく動かないときの画面(ui/settings_diag.js)
-    'fix.title': '直し方',
-    'fix.head': 'アプリの準備が止まっています',
-    'fix.lead': 'この端末の保存を読むのを、待ったままになっています。訳したページや単語帳は、消えていません。',
-    'fix.ios1': '画面の下のふちから、上へゆっくりなぞって、途中で指を止めます',
-    'fix.ios1d': 'ホームボタンのある iPhone は、ホームボタンを2回押します。',
-    'fix.ios2': 'Safari の画面を、上へ払って閉じます',
-    'fix.ios2d': 'ホーム画面に戻るだけでは、直りません。',
-    'fix.ios3': 'Safari を開き直します',
-    'fix.ios3d': '開いていたページは、そのまま残っています。',
-    'fix.pc1': 'ブラウザの窓を、全部閉じます',
-    'fix.pc1d': 'このページを読み込み直すだけでは、直らないことがあります。',
-    'fix.pc2': 'ブラウザを開き直して、このページを開きます',
-    'fix.pc2d': '訳したページは、そのまま出ます。',
-    'diag.label': '調べるための記録',
-    'diag.note': 'うまく動かないわけを調べるための記録です。入っているのは、数字と、段階の名前だけです。小説の文と API キーは、入りません。',
-    'diag.copy': '記録を写す',
-    'diag.copied': '写しました。メッセージに貼り付けて、送ってください',
-    'diag.copyFail': '自動では写せませんでした。下の字を長押しして、全部を選んで写してください',
-    'soon': '準備中です'
-  };
-
-  const own = key => Object.prototype.hasOwnProperty.call(T, key);
-  function t(key, vars){
-    const alt = key + '@' + plan.kind();
-    const s = own(alt) ? T[alt] : T[key];
-    if (s == null) return String(key);
-    return s.replace(/\{(\w+)\}/g, (m, k) => (k === 'app' ? appName() : vars && vars[k] != null ? String(vars[k]) : ''));
-  }
-
-  Yomu.msg = { t, app: appName, has: own, keys: () => Object.keys(T) };
-})();
-
 /* ---- ui/style.js ---- */
 // ui/style.js — 操作部の CSS(部品の約束 §9-2)。Shadow DOM の中だけに効く。並びは、キャンバスの2ページ目・3ページ目(design/round2・round3 の gen.js)
 //   色は、名前を付けた値(core/theme.js)を CSS の変数で読む(色の値を、ここに直接書かない)。書体は、端末に入っているものだけ(Web フォントを読み込まない)
@@ -7411,6 +7751,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.rows { margin-top: 16px; border: 1px solid ' + v('grip') + '; border-radius: 20px; display: flex; flex-direction: column; overflow: hidden; }',
       '.rowbtn { min-height: ' + BIG + 'px; padding: 4px 12px 4px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; ' + t(BODY, 700, TIGHT) + ' }',
       '.rowbtn + .rowbtn { border-top: 1px solid ' + v('grip') + '; }',
+      '.rowbtn[data-armed] { background: ' + v('key') + '; color: ' + v('keyInk') + '; }',   // 2回タップの 1 回目(メニューの「このサイトでは、右下のボタンを出さない」。工程8c-2)
+      '.rowbtn[data-armed] .val { color: inherit; }',
       // 行の名前(左)は、縮めない=右の値が長くても、名前が1字ずつ縦に折れない(工程5b-3: PC の Edge の声の名前)。長い値は、右の側で折り返す
       '.rowbtn > span:first-child { flex: none; max-width: calc(100% - 34px); }',
       '.rowbtn .val { display: flex; align-items: center; gap: 4px; ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; }',
@@ -7528,6 +7870,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.full .lead + .rows { margin-top: 16px; }',
       // 押せない行(今は選べるものが1つだけの「つなぎ方」)。行の形は .rowbtn と同じ
       '.full .rowstat { padding: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; ' + t(BODY, 700, TIGHT) + ' }',
+      '.full .rowstat .host { min-width: 0; overflow-wrap: anywhere; }',
+      '.full .rowstat + .rowstat { border-top: 1px solid ' + v('grip') + '; }',
       '.full .rowstat .val { ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; text-align: right; }',
       '.full .steps { border-top: 1px solid ' + v('grip') + '; padding: 12px 16px 4px; display: flex; flex-direction: column; gap: 8px; }',
       '.full .step { display: flex; align-items: flex-start; gap: 8px; ' + t(BODY, 400, BASE) + ' }',
@@ -7950,6 +8294,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   function onDocClick(e){
     const h = Y.render.hit(e.target);
     if (!h) return;
+    // リンクの中の英語の語・「あ/A」は、リンクへ移らない(どのページでも=記事の本文の中のリンク。§3。v1.51)
+    if (e.target && e.target.closest && e.target.closest('a[href]') && e.preventDefault) e.preventDefault();
     if (h.chip){ quiet(); Y.page.toggle(h.sid); return; }
     const w = find('word');                       // 単語の板(工程4b-1b)
     if (w && w.def.open) w.def.open(h);
@@ -8092,6 +8438,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     doc.documentElement.appendChild(host);
     Y.page.on('state', draw);
     Y.page.on('notice', draw);
+    Y.settings.on(() => draw());                     // 設定が変わった(右下のボタンを出さないサイト など。工程8c-2)
     Y.page.on('progress', p => each('progress', p));
     doc.addEventListener('click', onDocClick);
     doc.addEventListener('keydown', onDocKey);
@@ -8127,6 +8474,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     blend(){ const p = find('dock'); if (p && p.def.blend){ p.def.blend(); return true; } return false; },
     has: name => !!find(name),
     toast, announce,
+    // どのページでも(既知でないサイト)の、このページのホスト名。なろう・カクヨム・本文ページでないときは null(右下のボタンを出さないサイト=工程8c-2)
+    webHost(){ const s = Y.page.status(); return s && s.page && s.page.indexOf('web:') === 0 && win ? String(win.location.hostname).toLowerCase() : null; },
     t: msg.t,
     cost, withCost,
     sheet, unsheet, twoTap,
@@ -8340,7 +8689,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   function draw(s){
     if (s.state === 'off' && (was === 'busy' || was === 'on')) entryAt = Date.now();   // ほかの形(進み具合・操作部)から、入口の台に戻った時刻
     was = s.state;
-    entry.hidden = s.state !== 'off';              // ロゴ(メニュー)は、1日の上限のカードが出ている間も残す(設定へ行ける)
+    const host = ui.webHost();
+    entry.hidden = s.state !== 'off' || (!!host && Y.settings.hidden(host));   // 右下のボタンを出さないサイト(工程8c-2): 日本語のままの台だけを出さない(Tampermonkey のメニューから訳したあとの操作部は出す)              // ロゴ(メニュー)は、1日の上限のカードが出ている間も残す(設定へ行ける)
     launch.hidden = s.state !== 'off' || !!(s.notice && s.notice.kind === 'limit-day');   // 1日の上限のカードが出ている間は、カードの2つのボタンだけ(キャンバス)
     main.hidden = s.state !== 'on';
     if (s.state !== 'on') setOpen(false);
@@ -8424,6 +8774,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       case 'newer': return { text: ui.t('note.newer'), acts: [] };
       case 'conflict': return { text: ui.t('note.conflict'), acts: [] };
       // 起動の途中で、保存を読むのが終わらない: 直し方を、すぐ示す(行き止まりにしない=2026-10-11 利用者)
+      // Tampermonkey のメニューから押したのに、日本語の文が見つからなかった(工程8c-2)。失敗の形で、どうすればよいかを添える
+      case 'nojp': return { text: ui.t('note.nojp'), acts: [] };
       case 'stuck': return { text: ui.t(n.ios ? 'note.stuckIos' : 'note.stuck'), acts: [{ label: ui.t('act.fix'), fn: () => { ui.show('fix'); } }] };
       case 'error': return { text: errorText(n), acts: [] };
       default: return { text: ui.t('err.other'), acts: [] };
@@ -8506,7 +8858,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const ui = Yomu.ui;
   const NAME = 'menu';
 
-  let redoBtn = null, moreBtn = null, moreLabel = null, idiomsBtn = null, lookVal = null, disarm = null, blendBtn = null, blendCost = null, openAt = 0;
+  let hideBtn = null, hideOff = null, redoBtn = null, moreBtn = null, moreLabel = null, idiomsBtn = null, lookVal = null, disarm = null, blendBtn = null, blendCost = null, openAt = 0;
 
   const soon = () => ui.toast(ui.t('soon'));
   const close = () => ui.unsheet(NAME);
@@ -8538,6 +8890,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const more = tile({ item: 'more', wide: true, label: '', cost: 2, fn: () => { close(); ui.run(() => Y.page.more()); } });
     moreBtn = more.b; moreLabel = more.label;
     idiomsBtn = tile({ item: 'idioms', wide: true, label: ui.t('menu.idioms'), cost: 1, fn: () => { close(); ui.run(() => Y.page.idioms()); } }).b;
+    // 右下のボタンを出さないサイト(どのページでもだけ。なろう・カクヨムには出さない=工程8c-2)。取り消せるが、ボタンが消えるので、2回タップで確かめる
+    const host = ui.webHost();
+    const hide = host ? row('hide', ui.t('menu.hide'), null) : null;
+    hideBtn = hide ? hide.b : null;
+    hideOff = hide ? ui.twoTap(hide.b, { label: hide.b.firstChild, armed: ui.t('menu.hideArmed'), fn: () => {
+      close();
+      Y.settings.hide(host).then(() => ui.toast(ui.t('menu.hidden', { site: host }), Y.config.ui.toastLongMs), () => ui.toast(ui.t('set.saveFail')));
+    } }) : null;
     const look = row('look', ui.t('menu.look'), () => { if (!ui.show('look')) soon(); });
     lookVal = look.val;
     return ui.el('div', { class: 'menu' }, [
@@ -8551,6 +8911,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         blendBtn, redoBtn, moreBtn, idiomsBtn
       ]),
       ui.el('div', { class: 'rows' }, [
+        hideBtn,
         look.b,
         row('settings', ui.t('menu.settings'), () => { if (!ui.show('settings')) soon(); }).b,
         row('learn', ui.t('menu.learn'), soon).b
@@ -8581,7 +8942,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       const body = build();
       openAt = Date.now();
       sync(s);
-      const stop = disarm;                            // この板の「訳し直す」の確かめ(閉じたら、やめる)
+      const stopRedo = disarm, stopHide = hideOff;    // この板の「訳し直す」「出さない」の確かめ(閉じたら、やめる)
+      const stop = () => { if (stopRedo) stopRedo(); if (stopHide) stopHide(); };
       ui.sheet(NAME, body, { label: ui.t('dock.menu'), onClose: stop });
     },
     close,
@@ -9274,6 +9636,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     hasKey().then(has => { if (my === gen) connect.val.textContent = ui.t(has ? 'set.keyIn' : 'set.keyNone'); });
     const goalRow = row('goal', ui.t('set.goal'), () => go('goal'));
     goalRow.val.textContent = goalName(ui.status().level);
+    // 右下のボタンを出さないサイト(工程8c-2)。どのサイトでも出す(戻すのは、ここだけ)
+    const hideRow = row('hide', ui.t('set.hide'), to('hide'));
+    const nHide = Y.settings.get().hide.length;
+    if (has('hide')) hideRow.val.textContent = nHide ? ui.t('set.hideN', { n: nHide }) : ui.t('set.hideNone');
     const more = [];
     const voiceRow = row('voice', ui.t('set.voice'), to('voice'));
     if (has('voice')) voiceRow.val.textContent = Y.settings.get().voice.name || ui.t(Y.env && Y.env.info && Y.env.info.ios ? 'set.voiceAuto' : 'set.voiceAuto.pick');   // iPhone は、端末の設定の声。ほかは、こちらが選ぶ(端末に、決める所が無い)
@@ -9283,7 +9649,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (has('models') && Y.plan.shows('model')) modelsRow.val.textContent = short(Y.settings.modelFor(ui.status().level).m);
     return shell({ name: 'top', title: ui.t('set.title'), body: [].concat(
       group(ui.t('set.groupAi'), [connect.b, Y.plan.shows('modelChoice') || Y.plan.shows('quota') ? modelsRow.b : null]),
-      group(ui.t('set.groupRead'), [goalRow.b]),
+      group(ui.t('set.groupRead'), [goalRow.b, hideRow.b]),
       group(ui.t('set.groupMore'), more)
     ) });
   }
@@ -9860,6 +10226,25 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     ], foot: [tryBtn] });   // 「試しに聞く」は、下の行(声の一覧が長くても、いつも見える)
   }
 
+  // ---- 右下のボタンを出さないサイト(工程8c-2。設計メモ 2-6)。戻すのは 1 回押し(ボタンが出るようになるだけ。取り返しがつく) ----
+  function hide(){
+    const alive = S.alive();
+    const list = ui.el('div', { class: 'rows', 'data-box': 'hide' });
+    const draw = () => {
+      const items = Y.settings.get().hide.slice().reverse();     // 新しい順
+      S.fill(list, items.length ? items.map(e => {
+        const b = ui.el('button', { class: 'textbtn', 'data-act': 'unhide', 'data-host': e.h, 'aria-label': ui.t('hide.backName', { site: e.h }), onclick: () => {
+          b.disabled = true;
+          Y.settings.unhide(e.h).then(() => { ui.toast(ui.t('hide.backDone', { site: e.h })); if (alive()) draw(); }, () => { b.disabled = false; ui.toast(ui.t('set.saveFail')); });
+        } }, [ui.t('hide.back')]);
+        return ui.el('div', { class: 'rowstat' }, [ui.el('span', { class: 'host', text: e.h }), b]);
+      }) : [ui.el('div', { class: 'info' }, [ui.el('span', { class: 'cap', text: ui.t('hide.none') })])]);
+    };
+    draw();
+    return S.shell({ name: 'hide', title: ui.t('hide.title'), back: 'top', body: [ui.el('p', { class: 'lead', text: ui.t('hide.lead', { tm: ui.t('tm.toggle') }) }), list] });
+  }
+
+  S.add('hide', hide);
   S.add('models', models);
   S.add('model', model);
   S.add('onlimit', onLimit);
@@ -10143,8 +10528,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const within = (p, ms) => Promise.race([Promise.resolve(p).catch(() => undefined), new Promise(r => setTimeout(() => r(undefined), ms))]);
   const backend = area => { try { return Y.store[area].backend; } catch (e){ return null; } };
 
-  // 記録(その場で作る)。leave = 前のページを離れたときの控え(読めていなければ null)
-  function report(leave){
+  // 記録(その場で作る)。leave = 前のページを離れたときの控え(読めていなければ null)・det = どのページでもの見分けにかかった時間(確かめ用の版だけ。config.page.detect.log)
+  function report(leave, det){
     const info = (Y.env && Y.env.info) || {}, s = Y.page.status(), w = win();
     return {
       v: cfg.version, env: info.handler || null, ios: !!info.ios, host: String(w.location.hostname), now: Date.now(),
@@ -10152,23 +10537,25 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       store: { shared: backend('shared'), site: backend('site'), hold: Y.store.kv.state() },
       boot: Y.diag.snapshot(),
       leave: leave || null,
+      detect: det || undefined,
       place: ui.placeInfo(),
       dict: Y.dict && Y.dict.timing ? Y.dict.timing() : null   // 内蔵辞書を、取る・読む・引くのに、かかった時間(まだ引いていなければ null)
     };
   }
-  const text = leave => HEAD + JSON.stringify(report(leave));
+  const text = (leave, det) => HEAD + JSON.stringify(report(leave, det));
 
   // 「記録を写す」のボタンと、その結果 → [ボタン, 結果の置き場]
   function copyBox(){
-    let leave = null;
-    const D = cfg.diag;
+    let leave = null, det = null;
+    const D = cfg.diag, P = cfg.page.detect;
     if (D && D.leave) within(Promise.resolve().then(() => Y.env.shared.get(D.leaveKey)), D.readMs).then(v => { if (v && typeof v === 'object') leave = v; });
+    if (P && P.log) within(Promise.resolve().then(() => Y.env.shared.get(P.logKey)), D.readMs).then(v => { if (Array.isArray(v)) det = v; });
     const result = ui.el('div', { class: 'result', 'data-result': 'diag', hidden: true });
     const show = (kids, say, fail) => { S.fill(result, kids); result.hidden = false; ui.announce(say, !!fail); };
     const dump = t => show([ui.el('p', { class: 'hint first', text: ui.t('diag.copyFail') }), ui.el('div', { class: 'dump', 'data-dump': '', text: t })], ui.t('diag.copyFail'), true);
     const btn = ui.el('button', { class: 'textbtn gap', 'data-act': 'diag-copy', onclick: () => {
       let t = '';
-      try { t = text(leave); } catch (e){ t = HEAD + JSON.stringify({ v: cfg.version, err: String((e && e.message) || e).slice(0, 120) }); }
+      try { t = text(leave, det); } catch (e){ t = HEAD + JSON.stringify({ v: cfg.version, err: String((e && e.message) || e).slice(0, 120) }); }
       let p = null;
       try { const c = win().navigator.clipboard; p = c && c.writeText ? c.writeText(t) : null; } catch (e){ p = null; }
       if (!p){ dump(t); return; }
@@ -10199,73 +10586,98 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   ui.part('fix', { open(){ S.go('fix'); }, close: () => ui.unsheet('settings') });
 })();
 
+};   /* ---- Yomu.rest のおわり ---- */
+
 /* ---- shell/boot.js ---- */
 // shell/boot.js — 起動(部品の約束 §9-8)。束のいちばん最後で1回だけ呼ばれる(Yomu.boot)
 //   起動では、通信も、辞書の読み込みも、重い処理もしない(ページを開いただけでは何もしない=設計メモ 2-1)。
-//   本文ページでなければ、何も出さずに URL の見張りだけ続ける(保存にもさわらない)
+//   既知のサイト(なろう・カクヨム・見本ページ)は、今までどおり: 印・土台・見張り → 本文ページなら保存の起動 → 表示。本文ページでなければ、URL の見張りだけ。
+//   どのページでも(既知でないページ。v1.51 工程8c-1。2026-10-17 利用者=設計メモ 2-6): 記事と分かるまで、印を付けない・土台を作らない・
+//     見張りを始めない・離れるときの控えを書かない・保存にさわらない。記事と分かったら、残りの部品を動かして(Yomu.rest=§2-3)、今までの起動。
+//     見るのは、起動のとき・load のあと・2 秒と 6 秒あと・最初のタップかキーの 1 秒あと(§3 の「いつ見るか」)
 (function(){
   'use strict';
   const Y = Yomu;
   const MARK = 'data-yomu';
   const LEGACY = 'mazelingo-fab';   // 今の版(小説まぜりんご)のボタン
   const LEGACY_KEYS = 'mazelingo_';   // 今の版が、サイトの保存(localStorage)に残したもの(API キーの控え・訳した話の控え・設定)の、鍵の頭
+  const now = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+  const T0 = typeof Y.t0 === 'number' ? Y.t0 : now();   // 束が動き始めた時(ビルドが束の頭で入れる)
 
-  Yomu.boot = function(){
-    if (typeof document === 'undefined' || !document.documentElement) return;
-    const doc = document, html = doc.documentElement;
-    // 1. 二重に動かさない(§2-3)。2つ目は、何もしない(先に動いている方が、画面を持っている)
-    if (html.hasAttribute(MARK)){
-      try { console.warn('[yomu] もう動いているので、2つ目は動かない'); } catch (e){}
-      return;
-    }
+  // 残りの部品を動かす(1 回だけ。§2-3 の「束を分ける」)
+  function rest(){
+    if (typeof Y.rest !== 'function') return;
+    const f = Y.rest;
+    Y.rest = null;
+    f();
+  }
+  // Tampermonkey のメニューの 1 行から、ブレンドする(入口の「ブレンド」と同じ道=初めてなら、最初の設定を出す)
+  const blendUi = () => { if (!(Y.ui && typeof Y.ui.blend === 'function' && Y.ui.blend())) Y.page.blend(); };
+  const label = () => (Y.msg ? Y.msg.t('tm.toggle') : '');
+  const href = () => String(location.href).split('#')[0];   // ページの中の印(#…)だけの変化は数えない
+
+  // 印・土台・見張り・離れるときの控え(既知のサイトは、すぐ。どのページでもは、記事と分かってから)
+  function arm(doc, win){
+    const html = doc.documentElement;
+    if (html.hasAttribute(MARK)){ try { console.warn('[yomu] もう動いているので、2つ目は動かない'); } catch (e){} return false; }   // 二重に動かさない(§2-3)
     html.setAttribute(MARK, Y.config.version);
-    const diag = Y.diag, win = doc.defaultView;
+    rest();
+    const diag = Y.diag;
     diag.mark('boot', Y.config.version);
-    // 2. 操作部の土台(ui)。見本ページ用の束だけ、試すための帯(にせのキー など)も出す
+    // 操作部の土台(ui)。見本ページ用の束だけ、見本ページ用の状態の行も
     if (Y.ui && typeof Y.ui.mount === 'function') Y.ui.mount({ doc });
     if (Y.devPanel) Y.devPanel.mount();
     if (Y.watch) Y.watch.start({ doc });     // 読んだ時間の見張り(英語まじりで出ている間だけ動く。§8-8)
     diag.mark('ui');
-    // 調べるための控え(§9-8。工程5b-2b): ページを離れたときの様子を、全サイト共通の保存に1つ置く(次のページの「記録を写す」に出る)。動きは変えない。
-    //   persisted = ブラウザが、このページを「戻る」用に凍らせて取っておいた / wait = そのとき、返事を待っていた保存の読み書き(離れたあとに始まった・終わった分も、書き直す)。
-    //   進行役や見張りより先に付ける(それらが、離れるときに始めた書き込みも、入るように)
-    // 離れるとき(§8-1。工程5b-2b): 凍らせて取っておかれるとき(persisted)と、iPhone・iPad では、ここから先、IndexedDB の取引を新しく始めない・つながりを閉じる(Yomu.store.kv.hold)。
-    //   離れるときに始めた取引が、凍ったページの中で終わらないまま残り、次のページの読み書きを、いつまでも待たせるため(なろうで「次へ」のあと、アプリの準備が止まる)。
-    //   iPhone では、離れるときに始めた IndexedDB への書き込みは、もともと残らない(工程P)=失うものは無い。PC で、凍らせないときは、今までどおり書く。
-    //   戻ってきたら(pageshow・表に出た)、取っておいた分を始める。離れた合図のあとも、ページが生きていて見えていたら(合図の順が、思ったとおりでない端末への備え)、同じく始める
-    const L = Y.config.diag || {}, C = Y.config.store;
-    if (win){
-      const ios = !!(Y.env.info && Y.env.info.ios);
-      let leaving = null, holdT = null;
-      const free = () => {
-        if (holdT){ clearInterval(holdT); holdT = null; }
-        Y.store.kv.release();
-      };
-      const write = () => {
-        if (!L.leave || !leaving || leaving.n >= L.leaveMax) return;
-        if (leaving.n && Y.store.shared.backend === 'idb') return;   // 控えの置き場も IndexedDB の入れ物(見本ページ など): 控えを書くこと自体が「取っておいた読み書き」になるので、書き直さない
-        leaving.n++;
-        leaving.wait = diag.waiting().slice(0, 8).map(w => w[0]);
-        leaving.held = Y.store.kv.state().n;
-        try { Promise.resolve(Y.env.shared.set(L.leaveKey, leaving)).catch(() => {}); } catch (e){}
-      };
-      win.addEventListener('pagehide', e => {
-        const persisted = !!(e && e.persisted), held = !!C.holdOnHide && (persisted || ios);
-        if (held){
-          Y.store.kv.hold();
-          if (!holdT) holdT = setInterval(() => { if (doc.visibilityState === 'visible') free(); }, C.holdCheckMs);
-        }
-        leaving = { at: Date.now(), host: String(location.hostname), state: Y.page.state, persisted, hold: held, held: 0, wait: [], n: 0 };
-        write();
-      });
-      win.addEventListener('pageshow', e => {
-        free();
-        if (e && e.persisted){ leaving = null; diag.mark('pageshow', 'persisted'); }
-      });
-      doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible') free(); });
-      diag.onWait(write);
-    }
-    // 3. 今の版と同時に動かさない(今の版のボタンがあれば、動かずに知らせる)。今の版が、あとから動くこともあるので、少し待ってもう一度見る
+    if (win) leaving(doc, win);   // win を渡さない = 離れるときの控えを付けない(どのページでもの、知らせのためだけの土台)
+    return true;
+  }
+
+  // 調べるための控え(§9-8。工程5b-2b): ページを離れたときの様子を、全サイト共通の保存に1つ置く(次のページの「記録を写す」に出る)。動きは変えない。
+  //   persisted = ブラウザが、このページを「戻る」用に凍らせて取っておいた / wait = そのとき、返事を待っていた保存の読み書き(離れたあとに始まった・終わった分も、書き直す)。
+  //   進行役や見張りより先に付ける(それらが、離れるときに始めた書き込みも、入るように)
+  // 離れるとき(§8-1。工程5b-2b): 凍らせて取っておかれるとき(persisted)と、iPhone・iPad では、ここから先、IndexedDB の取引を新しく始めない・つながりを閉じる(Yomu.store.kv.hold)。
+  //   離れるときに始めた取引が、凍ったページの中で終わらないまま残り、次のページの読み書きを、いつまでも待たせるため(なろうで「次へ」のあと、アプリの準備が止まる)。
+  //   iPhone では、離れるときに始めた IndexedDB への書き込みは、もともと残らない(工程P)=失うものは無い。PC で、凍らせないときは、今までどおり書く。
+  //   戻ってきたら(pageshow・表に出た)、取っておいた分を始める。離れた合図のあとも、ページが生きていて見えていたら(合図の順が、思ったとおりでない端末への備え)、同じく始める
+  function leaving(doc, win){
+    const diag = Y.diag, L = Y.config.diag || {}, C = Y.config.store;
+    const ios = !!(Y.env.info && Y.env.info.ios);
+    let left = null, holdT = null;
+    const free = () => {
+      if (holdT){ clearInterval(holdT); holdT = null; }
+      Y.store.kv.release();
+    };
+    const write = () => {
+      if (!L.leave || !left || left.n >= L.leaveMax) return;
+      if (left.n && Y.store.shared.backend === 'idb') return;   // 控えの置き場も IndexedDB の入れ物(見本ページ など): 控えを書くこと自体が「取っておいた読み書き」になるので、書き直さない
+      left.n++;
+      left.wait = diag.waiting().slice(0, 8).map(w => w[0]);
+      left.held = Y.store.kv.state().n;
+      try { Promise.resolve(Y.env.shared.set(L.leaveKey, left)).catch(() => {}); } catch (e){}
+    };
+    win.addEventListener('pagehide', e => {
+      const persisted = !!(e && e.persisted), held = !!C.holdOnHide && (persisted || ios);
+      if (held){
+        Y.store.kv.hold();
+        if (!holdT) holdT = setInterval(() => { if (doc.visibilityState === 'visible') free(); }, C.holdCheckMs);
+      }
+      left = { at: Date.now(), host: String(location.hostname), state: Y.page.state, persisted, hold: held, held: 0, wait: [], n: 0 };
+      write();
+    });
+    win.addEventListener('pageshow', e => {
+      free();
+      if (e && e.persisted){ left = null; diag.mark('pageshow', 'persisted'); }
+    });
+    doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible') free(); });
+    diag.onWait(write);
+  }
+
+  // 既知のサイト(なろう・カクヨム・見本ページ): 今までどおり
+  function known(doc, win){
+    if (!arm(doc, win)) return;
+    const diag = Y.diag;
+    // 今の版と同時に動かさない(今の版のボタンがあれば、動かずに知らせる)。今の版が、あとから動くこともあるので、少し待ってもう一度見る
     const legacy = () => !!doc.getElementById(LEGACY);
     const conflict = () => Y.page.halt('conflict', { with: 'legacy' });
     const go = () => (legacy() ? conflict() : Y.page.start());
@@ -10287,13 +10699,127 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (legacy()){ if (Y.page.status().notice?.kind !== 'conflict') conflict(); return; }
       sweep();
     }, Y.config.page.waitMs);
-    // 4. 入れ物からの「ブレンド/戻す」の合図(拡張のツールバー・Tampermonkey のメニュー。無い入れ物では何もしない)
+    // 入れ物からの「ブレンド/戻す」の合図(拡張のツールバー・Tampermonkey のメニュー。無い入れ物では何もしない)
     Y.env.onToggle(() => {
       const st = Y.page.state;
-      if (st === 'on' || st === 'busy') Y.page.off(); else Y.page.blend();
-    }, { label: Y.msg ? Y.msg.t('tm.toggle') : '' });
-    // 5. URL が変わったら(ページを読み込み直さずに移るサイト)、片づけて、もう一度。ページの中の印(#…)だけの変化は数えない
-    Y.sites.watch(() => { Y.page.leave().then(() => { diag.restart(); diag.mark('url'); go(); }); }, { get: () => String(location.href).split('#')[0] });   // go が、今の版のボタンを見て知らせる
+      if (st === 'on' || st === 'busy') Y.page.off(); else blendUi();
+    }, { label: label() });
+    // URL が変わったら(ページを読み込み直さずに移るサイト)、片づけて、もう一度
+    Y.sites.watch(() => { Y.page.leave().then(() => { diag.restart(); diag.mark('url'); go(); }); }, { get: href });   // go が、今の版のボタンを見て知らせる
+  }
+
+  // どのページでも(既知でないページ): 記事と分かるまで、何も足さない・保存にさわらない
+  function web(doc, win){
+    try { if (win && win.top && win.top !== win) return; } catch (e){ return; }   // いちばん外のページだけ(Tampermonkey は @noframes。ブックマークレットの束のため)
+    const D = Y.config.page.detect, diag = Y.diag;
+    let armed = false, left = false, found = null, lastWhy = null, lastSig = '', moved = false, timers = [], offTap = null, offLoad = null;
+    const clear = () => {
+      timers.forEach(t => clearTimeout(t)); timers = [];
+      if (offTap){ offTap(); offTap = null; }
+      if (offLoad){ offLoad(); offLoad = null; }
+    };
+    // 確かめ用の版だけ(config.page.detect.log): 見分けにかかった時間を、全サイト共通の保存に新しい logMax 件だけ(工程8d が iPhone で測る。ページの名前・文章は入れない)
+    const note = (r, ms, why) => {
+      if (!D.log) return;
+      const rec = { at: Date.now(), why, ms: Math.round(ms * 10) / 10, since: Math.round(now() - T0), res: r.info ? 'ok' : r.why };
+      try {
+        Promise.resolve(Y.env.shared.get(D.logKey)).then(list => {
+          const a = Array.isArray(list) ? list.slice(-(D.logMax - 1)) : [];
+          a.push(rec);
+          return Y.env.shared.set(D.logKey, a);
+        }).catch(() => {});
+      } catch (e){}
+    };
+    // 見分けて、記事なら PageInfo。URL が変わったのに、本文が前のページと同じなら、まだ入れかわっていない(null)
+    const look = (why, loose) => {
+      const t0 = now();
+      let r;
+      try { r = Y.detect.page(location, doc, { loose: !!loose }); } catch (e){ r = { info: null, why: 'error' }; }
+      const ms = now() - t0;
+      lastWhy = r.why;
+      diag.mark('detect', why + ' ' + (r.info ? 'ok' : r.why) + ' ' + Math.round(ms));
+      note(r, ms, why);
+      if (r.info && moved && lastSig && Y.detect.sig(r.info) === lastSig){ diag.mark('detect.stale'); tap(); return null; }   // 次のタップで、もう一度見る
+      return r.info;
+    };
+    // 最初のタップかキーの tapMs あとに、1 回見る(本文が、まだ前のままだったときは、次のタップでも)
+    const tap = () => {
+      if (!win || offTap) return;
+      const onTap = () => {
+        if (offTap){ offTap(); offTap = null; }
+        timers.push(setTimeout(() => attempt('tap'), D.tapMs));
+      };
+      win.addEventListener('pointerdown', onTap, { capture: true, passive: true });
+      win.addEventListener('keydown', onTap, { capture: true, passive: true });
+      offTap = () => { win.removeEventListener('pointerdown', onTap, true); win.removeEventListener('keydown', onTap, true); };
+    };
+    // 記事と分かった: 残りの部品を動かし、印・土台・見張り(1 回だけ)→ 進行役の起動(当てはめの代わりに、見つけた本文を渡す)
+    const begin = info => {
+      found = info; lastSig = Y.detect.sig(info); moved = false;
+      clear();
+      if (!armed){
+        if (!arm(doc, win)) return Promise.resolve(null);
+        armed = true; left = true;
+      } else if (!left && win){ left = true; leaving(doc, win); }   // 知らせのためだけに土台を作っていた(下の nojp): 離れるときの控えは、記事と分かってから
+      Y.page.dismiss();                         // 「日本語の文が見つかりませんでした」が出ていたら、消す
+      return Y.page.start({ info });
+    };
+    const attempt = why => {
+      if (found) return;
+      const info = look(why);
+      if (info) begin(info);
+    };
+    // いつ見るか(§3)。first = 開いたとき(すぐ見る・load を待つ)。URL が変わったあとは、すぐには見ない(本文が、まだ前のままのことがある)
+    const schedule = first => {
+      clear();
+      if (first){
+        attempt('boot');
+        if (found) return;
+        if (win && doc.readyState !== 'complete'){
+          const f = () => { offLoad = null; attempt('load'); };
+          win.addEventListener('load', f, { once: true });
+          offLoad = () => win.removeEventListener('load', f);
+        }
+      }
+      (D.at || []).forEach(ms => timers.push(setTimeout(() => attempt('t' + ms), ms)));
+      tap();
+    };
+    // Tampermonkey のメニューの 1 行(どのページでも): 英語まじりなら日本語に戻す・記事なら、ブレンド・記事と見なかったページは、線をゆるめて見分けてから、ブレンド
+    //   日本語の文が無かったら、知らせる(工程8c-2。押したのに何も起きない、にしない)。知らせのためだけに、土台を作る(印・残りの部品・土台・見張り。
+    //   離れるときの控えは書かない=保存にさわらない)。知らせは、進行役の「動かずに知らせる」(状態は none のまま)
+    const nojp = () => {
+      diag.mark('menu', 'none');
+      if (!armed){
+        if (!arm(doc, null)) return;
+        armed = true;
+      }
+      Y.page.halt('nojp');
+    };
+    const toggle = () => {
+      const st = armed ? Y.page.state : 'none';
+      if (st === 'on' || st === 'busy'){ Y.page.off(); return; }
+      if (armed && found){ if (st === 'off') blendUi(); else diag.mark('menu', st); return; }
+      const info = look('menu', true);
+      if (!info){ if (lastWhy === 'stop') diag.mark('menu', 'stop'); else nojp(); return; }   // パスワードの欄があるページでは、知らせも出さない(何もしない=設計メモ 2-6)
+      begin(info).then(() => { if (armed && Y.page.state === 'off') blendUi(); });
+    };
+    Y.env.onToggle(toggle, { label: label() });
+    // URL が変わったら(ページを読み込み直さずに移るサイト): 片づけて、見分けを、はじめから
+    Y.sites.watch(() => {
+      found = null; moved = true;
+      clear();
+      const again = () => { diag.restart(); diag.mark('url'); schedule(false); };
+      if (armed) Y.page.leave().then(again, again); else again();
+    }, { get: href });
+    schedule(true);
+  }
+
+  Yomu.boot = function(){
+    if (typeof document === 'undefined' || !document.documentElement) return;
+    const doc = document, win = doc.defaultView;
+    if (doc.documentElement.hasAttribute(MARK)){ try { console.warn('[yomu] もう動いているので、2つ目は動かない'); } catch (e){} return; }
+    if (Y.sites.known(location)) return known(doc, win);
+    if (Y.detect && Y.detect.web(location)) return web(doc, win);
   };
 })();
 
