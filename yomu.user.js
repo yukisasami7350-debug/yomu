@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.30
+// @version      0.1.31
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -20,7 +20,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.30 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.31 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -150,7 +150,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.30',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.31',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -212,6 +212,11 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       splitMax: 3,                 // まとめ訳を分けるとき(工程T-4b。§6-4)、範囲に見るのは、同じ段落の、うしろ何文までか
       splitRatio: 3,               // 分けた英文と日本語の長さの比が、範囲全体の比から、この倍より離れていたら、分けない
       splitMin: 6,                 // 長さの比を見るのは、日本語がこの長さ以上の文だけ(短い文は、比がゆれる)
+      // 目印の照らし合わせを、ゆるめる(工程8e-2a。設計メモ 2-2・§6-4 の「ゆるめた照らし合わせ」。AI の写しまちがい「待つ → 待る」で、正しい英文を捨てないため)。0 = ゆるめない
+      endLoose: 0.6,               // 終わりの目印: 終わりの字が同じで、字の並びのこの割合以上が、その文の終わりのあたりに順に入っていれば使う(前後の送った文の方が近くないときだけ)
+      endPad: 4,                   //   その文の終わりのあたり = "e" と比べる長さ + この字数
+      headLoose: 0.7,              // 頭の目印: 番号の指す文の書き出しと、字の並びのこの割合以上が合えば使う(ページのほかのどの文より headGap 以上はっきり合うときだけ)
+      headGap: 0.15,
       realign: 3,                  // 目印の合う文が2つ以上あるとき、ずれを見込んだ位置の前後いくつまでを、候補にするか
       maxTargets: 0,               // 1回の通信で送る対象の文の上限。0 = 上限なし(まるごと1回)
       fallbackMax: 400000          // 配列の形で読めなかった返事を、終わりに読み直すために取っておく文字数の上限
@@ -3675,13 +3680,43 @@ Yomu.rest = function(){
     eiken_grade_pre1: `対象読者は大学生〜英検準1級学習者です。英検準1級レベルの【洗練された語彙・成句・文学的コロケーション】を抽出してください。`,
     standard: `対象読者は一般の小説読者・英語学習者です。英文に含まれる【句動詞・熟語・イディオム・定型表現・重要構文（2語以上からなる表現）】を最優先で抽出してください。単体の基本単語や単なる名詞・形容詞は抽出不要です。`
   };
+  // 記事の場面の文面(設計メモ 2-6。工程8e-1 で、本物の AI の返事を読んで決めた。工程8e-2a で、案のファイルから機械で写した=手で書き写していない。
+  //   tests/check_prompts.js の H が、案のファイルと1字ずつ・工程8e-1 で本物の AI に送った指示文とまるごと同じことを確かめる)
+  //   翻訳 = engine/exp_out/wb2.txt(頭の 3 行=@head・訳の出し方のルール 8 つ・通常の級の文面=@level)/ 熟語さがし = iv_w1.txt(通常の級の文面)/「AIに聞く」= dict_article.txt
+  //   級の文面を差しかえるのは、通常だけ(3級・準2級などは、記事でも小説と同じ級の文面。3級・準2級は、記事でも効くことを確かめた=工程8e-1)
+  const ARTICLE_HEAD = [
+    "あなたは英語学習者向けの、日本語の記事を英語に翻訳するアシスタントです。",
+    "下の【本文】は、日本語のWebページ（ニュース・解説・ブログなどの記事）の本文です。<t id=\"番号\">…</t> で囲んだ文が翻訳対象です。囲まれていない部分は、話題や文脈を読み取るためのものです。",
+    "本文全体を参照し、話題、書き手の立場、文章の種類（報道・解説・コラムやエッセイ・くだけたブログ など）と調子を正確に反映して、翻訳対象の各文を自然な現代英語に翻訳してください。本文が物語（小説）なら、物語として訳してください。"
+  ];
+  const ARTICLE_STYLE = [
+    "【書き手と主語】: 地の文を \"I\" \"my\" \"we\" で書くのは、書き手が自分のことを書いている文（「筆者」「私」など）だけです。「筆者」は \"I\" にしてください。読む人に話しかける文は \"you\" を使ってください。",
+    "【人の名前と肩書】: 人名は、英語の記事のふつうの書き方にしてください。初めて出てくる人は、肩書があれば肩書も名前と一緒に書き（肩書を落とさない）、2回目からは名字だけにします。肩書（社長・首相・教授 など）は、英語の記事で使う肩書にしてください。人名に付く「さん・氏・様・君・ちゃん」は英語に出さず、\"Mr.\" \"Ms.\" も付けません。\"-san\" のようなローマ字の敬称も付けないでください。",
+    "【人物の性別】: he / she を使うのは、本文から性別がはっきり分かる人だけです。分からない人は、he / she を当てずに、名字や肩書（the analyst など）で受けてください（記事の人物は実在の人なので、性別を決めつけないでください）。",
+    "【数と単位】: 数は、英語の数え方に正しく直してください（万・億・兆は thousand・million・billion・trillion に。例: 4万5000人 → 45,000 people、6億円 → 600 million yen、3兆円 → 3 trillion yen）。「割」は % にしてください（2割 → 20%）。数そのものを変えたり、丸めたりしないでください。",
+    "【2けたの年】: 「29年3月期」「29年春」のように年を2けたで書いた所は、4けたの年にしてください（29年3月期 → the fiscal year ending March 2029）。",
+    "【発言の言い方】: 「」の中の発言は、その人が実際に口にする英語にしてください。会話では I'm・don't・it's のような短縮形を使うのがふつうです。",
+    "【文の中の「」】: <t> の中に「…」（せりふ・呼び名・引用）がある場合は、その部分を英語の二重引用符で囲み、地の文と合わせて1つの英文にしてください（例: 「行こう」とケンは言った。→ \"en\": \"\\\"Let's go,\\\" Ken said.\"）。<t> が「 で始まっていても、引用符を省かないでください。JSON の文字列の中なので、英文中の \" は \\\" と書いてください。せりふだけの文（<t> の外側に「」がある文）は、引用符を付けずに、英文だけを出力してください。",
+    "【モードの指示を守る】: 冒頭の【…モード】に書かれた、使う語と文法の決まりを、最初の文から最後の文まで守ってください。"
+  ];
+  const ARTICLE_LEVEL = { standard: "【通常モード（自然な現代英語）】\n- 日本語のWeb記事です。英語圏のニュースサイト・解説記事・ブログで、書き手が実際に使う自然な英語にしてください（報道の記事なら報道の英語、コラムやエッセイなら書き手の語り口を生かした英語、読む人に話しかける記事なら、話しかける英語）。\n- 日本語の直訳構文を避けてください。主語が省かれた文は、文脈から主語（会社・団体・人物・書き手・読む人 など）を補ってください。体言止めや「〜とのこと」のような終わり方も、英語のふつうの文にしてください。\n- 原文の内容（数・名前・事実）は、省かず・足さず・変えずに伝えてください。" };
+  const ARTICLE_VOCAB = { standard: "対象読者は、ニュース・解説・コラムなどの記事を読む英語学習者です。英文に含まれる【句動詞・熟語・イディオム・定型表現・重要構文（2語以上からなる表現）】に加えて、記事でよく使う2語以上の決まった言い方（ニュースや経済・社会の記事の定型表現・用語）を最優先で抽出してください。単体の基本単語は抽出不要です。" };
+  const ARTICLE_DICT = "記事（ニュース・解説・コラム）での使われ方やニュアンス";
+
   // レベルの ID(std・a1…)→ 現行の名前。知らないレベルは、現行と同じく「通常」
   function legacyOf(levelId){
     const l = levels.has(levelId) ? levels.get(levelId) : null;
     return l && has(LEVEL, l.legacy) ? l.legacy : 'standard';
   }
-  const level = levelId => LEVEL[legacyOf(levelId)];
-  const vocabLevel = levelId => VOCAB[legacyOf(levelId)];
+  // 場面(省くと novel)→ 下の SCENE の1行。知らない場面は bad(だまって小説にしない)
+  function sceneOf(scene, who){
+    const k = scene == null ? 'novel' : scene;
+    if (typeof k !== 'string' || !has(SCENE, k)) throw util.error('bad', who + ': 知らない場面: ' + scene);
+    return SCENE[k];
+  }
+  // 級の文面。場面に、そのレベルの文面があれば、そちら(記事は、通常だけ)
+  const level = (levelId, scene) => { const l = legacyOf(levelId), sc = sceneOf(scene, 'prompts.level'); return has(sc.level, l) ? sc.level[l] : LEVEL[l]; };
+  const vocabLevel = (levelId, scene) => { const l = legacyOf(levelId), sc = sceneOf(scene, 'prompts.vocabLevel'); return has(sc.vocab, l) ? sc.vocab[l] : VOCAB[l]; };
 
   // 訳の出し方(設計メモ 2-3。現行には無い。どのレベルにも入る「共通の部分」)。本物の AI の返事を読んで決めた
   //   (v2 = 工程3c-4 の2つ・v3 = 工程E1b の4つ・v4 = 工程T-2 の案 c3 の7つ=engine/exp_out/c3.txt を機械で写した)
@@ -3701,18 +3736,35 @@ Yomu.rest = function(){
   // 終わりの目印の頼み方に添える例の文(17 文字。見本の話に出てこない名前と文。E が 17 以上なら、全文が例になる)
   const END_EG = 'ケンは駅前の広場まで一気に走った。';
 
+  // 小説の指示文の頭(はじめの空行までの 3 行。現行の冒頭を、本文を1回だけ送る形に言いかえたもの=§6-1 の表)
+  const NOVEL_HEAD = [
+    'あなたは英語学習者向けの高度な小説・文芸翻訳アシスタントです。',
+    '下の【本文】は、日本のWeb小説の1話分です。<t id="番号">…</t> で囲んだ文が翻訳対象です。囲まれていない部分は、語り手の視点や状況を読み取るための文脈です。',
+    '本文全体を参照し、物語の語り手の視点（一人称／三人称）、話者、性別、トーンを正確に反映して、翻訳対象の各文を自然な現代英語に翻訳してください。'
+  ];
+  // ---- 場面の表(設計メモ 2-6。工程8e-2a)----
+  //   場面ごとに変わるのは: 翻訳の指示文の頭(head)・訳の出し方のルール(style)・級の文面(level。無いレベルは小説と同じ)・
+  //   熟語さがしの級の文面(vocab。同じ)・「AIに聞く」の、どんなニュアンスを添えるかの言い方(dict)。ほかの所(ルール1〜4・省略の禁止・出力形式 など)は、どの場面も同じ。
+  //   場面を足すときは、ここに1行足し、文面は本物の AI で比べてから決める(設計メモ 2-6 の「考え直せるようにしておく」)。どの場面で送るかを決めるのは、呼ぶ側(1 か所)
+  const SCENE = {
+    novel: { head: NOVEL_HEAD, style: STYLE, level: {}, vocab: {}, dict: '小説や会話でのニュアンス' },
+    article: { head: ARTICLE_HEAD, style: ARTICLE_STYLE, level: ARTICLE_LEVEL, vocab: ARTICLE_VOCAB, dict: ARTICLE_DICT }
+  };
+
   // ---- 翻訳(§6-1) ----
   //   body = 送る本文(wire.build の body)/ M = 翻訳対象の文の数 / K = 目印の長さ(0 = 目印なし、-1 = 全文の復唱)/ ruby = 本文にルビの印があるか
   //   E = 終わりの目印の長さ(省く・0 = 頼まない=v4 と同じ文面。v5 = 工程T-4: "en" のあとに、その "en" が訳している文の末尾 E 文字を "e" に書かせる)
-  //   style = 訳の出し方のルールの並び(省くと STYLE。[] なら入れない)。エンジンは渡さない(比べる台本だけが使う)
+  //   style = 訳の出し方のルールの並び(省くと、その場面のルール。[] なら入れない)。エンジンは渡さない(比べる台本だけが使う)
+  //   scene = 場面(省くと novel。'article' = 記事=頭・ルール・通常の級の文面が記事向け。v7 = 工程8e-2a)
   function translate(o){
     o = o || {};
     const M = o.M, K = o.K, E = o.E == null ? 0 : o.E;
+    const sc = sceneOf(o.scene, 'prompts.translate');
     if (typeof o.body !== 'string' || !o.body) throw util.error('bad', 'prompts.translate: body が無い');
     if (!Number.isInteger(M) || M < 1) throw util.error('bad', 'prompts.translate: M がおかしい');
     if (!Number.isInteger(K) || K < -1) throw util.error('bad', 'prompts.translate: K がおかしい');
     if (!Number.isInteger(E) || E < 0) throw util.error('bad', 'prompts.translate: E がおかしい');
-    const style = o.style == null ? STYLE : o.style;
+    const style = o.style == null ? sc.style : o.style;
     if (!Array.isArray(style) || !style.every(r => typeof r === 'string' && r.trim() && r.indexOf(String.fromCharCode(10)) < 0 && r.indexOf(String.fromCharCode(13)) < 0)) throw util.error('bad', 'prompts.translate: style がおかしい');
 
     const rules = [];
@@ -3735,15 +3787,12 @@ Yomu.rest = function(){
     rules.push('Markdownコードブロックや余計な解説は一切含めず、純粋なJSON配列のみを出力してください。');
     rules.push('各英文（"en"）は必ず文頭を大文字で始め、文末に適切な句読点を配置してください。');
 
-    return [
-      'あなたは英語学習者向けの高度な小説・文芸翻訳アシスタントです。',
-      '下の【本文】は、日本のWeb小説の1話分です。<t id="番号">…</t> で囲んだ文が翻訳対象です。囲まれていない部分は、語り手の視点や状況を読み取るための文脈です。',
-      '本文全体を参照し、物語の語り手の視点（一人称／三人称）、話者、性別、トーンを正確に反映して、翻訳対象の各文を自然な現代英語に翻訳してください。',
+    return sc.head.concat([
       '',
-      level(o.level),
+      level(o.level, o.scene),
       '',
       '※HTML実体参照（&quot; や &amp; 等）は出力に含めず、純粋な記号（" や \' など）をそのまま出力してください。'
-    ].concat(o.ruby ? ['※《》は直前の語のふりがな（ルビ）です。読みや意味の手がかりとして使い、出力には含めないでください。'] : []).concat([
+    ]).concat(o.ruby ? ['※《》は直前の語のふりがな（ルビ）です。読みや意味の手がかりとして使い、出力には含めないでください。'] : []).concat([
       '',
       '【本文】（翻訳対象は ' + M + ' 文。id は 0〜' + (M - 1) + '）',
       o.body,
@@ -3755,15 +3804,17 @@ Yomu.rest = function(){
   // ---- 熟語さがし(§6-5)。現行 callGeminiExtractVocab の文面に足したもの ----
   //   IV(熟語さがしの指示文の版。翻訳の V とは別): 1 = 見出しの形 "b" だけを足した / 2 = 工程T-5b で 3 つ足した
   //     ルール6【省略の禁止】(AI が途中で「…((TRUNCATED))」と書いて終えたため)・"w" は英文の形のまま、間の語は ... でつなぐ・JSON の文字列の書き方(" を書き落としたため)
-  //   list = [{ id, en, target_jp }](id は、その通信の中の通し番号)
-  const IV = 2;
+  //     / 3 = 記事の場面の、通常の級の文面(工程8e-2a。小説の文面は 2 と同じ)
+  //   list = [{ id, en, target_jp }](id は、その通信の中の通し番号)/ scene = 場面(省くと novel。変わるのは、級の文面の段だけ)
+  const IV = 3;
   function idioms(o){
     o = o || {};
     if (!Array.isArray(o.list) || !o.list.length) throw util.error('bad', 'prompts.idioms: list が無い');
+    const vl = vocabLevel(o.level, o.scene);
     return `あなたは英語学習者向けの英和辞書・語彙解析アシスタントです。
 以下の【確定した英文リスト】を読み、英語学習者のために、各英文に含まれる重要熟語・表現を抽出してください。
 
-${vocabLevel(o.level)}
+${vl}
 
 【抽出ルール】
 1. 【テキスト実在の絶対制約（Grounding）】:
@@ -3792,27 +3843,26 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
   // ---- AI辞書(§6-6)。現行は語だけを聞いていた。新しくは、文を添えて、文脈での意味を聞く ----
   //   q = 聞く語・語句 / en = その英文 / jp = その英文の日本語原文(無ければ、その行を入れない)
-  //   scene = 読んでいるものの場面(省くと novel)。場面で変わるのは、「どんなニュアンスを添えるか」の言い方だけ
-  //   今あるのは novel だけ。ニュースやビジネスの記事などの場面は、SCENES に足す(文面は、本物の AI で比べてから決める。§6-6)
-  const SCENES = { novel: '小説や会話でのニュアンス' };
+  //   scene = 読んでいるものの場面(省くと novel)。場面で変わるのは、「どんなニュアンスを添えるか」の言い方だけ(上の SCENE の dict)
   function dict(o){
     o = o || {};
     const q = String(o.q == null ? '' : o.q).trim(), en = String(o.en == null ? '' : o.en).trim(), jp = String(o.jp == null ? '' : o.jp).trim();
     if (!q) throw util.error('bad', 'prompts.dict: q が無い');
     if (!en) throw util.error('bad', 'prompts.dict: en が無い');
-    const scene = o.scene == null ? 'novel' : o.scene;
-    if (typeof scene !== 'string' || !Object.prototype.hasOwnProperty.call(SCENES, scene)) throw util.error('bad', 'prompts.dict: 知らない場面: ' + o.scene);
+    const sc = sceneOf(o.scene, 'prompts.dict');
     return [
       'あなたは英語学習者向けの英和辞書アシスタントです。',
       '次の英文の中での「' + q + '」の意味を説明してください。',
       '英文: ' + en
     ].concat(jp ? ['この英文の日本語原文: ' + jp] : []).concat([
-      '最初に、この文の中での意味を1行で。続けて、品詞、主要な日本語の意味、' + SCENES[scene] + 'があれば簡潔に。全体で60文字〜120文字程度の簡潔な日本語で出力してください。',
+      '最初に、この文の中での意味を1行で。続けて、品詞、主要な日本語の意味、' + sc.dict + 'があれば簡潔に。全体で60文字〜120文字程度の簡潔な日本語で出力してください。',
       '※「はい」等の挨拶やマークダウン装飾記号（**や*など）は含めず、純粋な説明テキストのみを出力してください。'
     ]).join('\n');
   }
 
-  Yomu.prompts = { V: 6, IV, STYLE: STYLE.slice(), SCENES: Object.keys(SCENES), level, translate, vocabLevel, idioms, dict };
+  //   V 7 = 記事の場面の文面を足した(工程8e-2a。小説の文面は v6 と1字も変わらない)
+  //   STYLES = 場面ごとの訳の出し方のルール(写し)/ SCENES = 場面の名前の一覧(はじめが、省いたときの場面)
+  Yomu.prompts = { V: 7, IV, STYLE: STYLE.slice(), STYLES: { novel: STYLE.slice(), article: ARTICLE_STYLE.slice() }, SCENES: Object.keys(SCENE), level, translate, vocabLevel, idioms, dict };
 })();
 
 /* ---- core/wire.js ---- */
@@ -4175,6 +4225,15 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (typeof v === 'string' && /^\d{1,6}$/.test(v.trim())) v = Number(v.trim());
     return Number.isInteger(v) && v >= 0 && v < 1000000 ? v : null;
   }
+  // 字の並びの、いちばん長い共通の部分の長さ(両方に、同じ順に入っている字の数。とびとびでよい)。ゆるめた照らし合わせ(工程8e-2a)で使う
+  function lcs(a, b){
+    const A = Array.from(a), B = Array.from(b), d = new Array(B.length + 1).fill(0);
+    for (let i = 1; i <= A.length; i++){
+      let prev = 0;
+      for (let j = 1; j <= B.length; j++){ const t = d[j]; d[j] = A[i - 1] === B[j - 1] ? prev + 1 : Math.max(d[j], d[j - 1]); prev = t; }
+    }
+    return d[B.length];
+  }
   // かな・漢字の割合(空白を除いた文字のうち)
   function jaShare(s){
     let ja = 0, all = 0;
@@ -4263,7 +4322,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     o.model.sents.forEach(s => { if (!inMap.has(s.sid)){ const c = canon(normOf(s)); if (c){ unsent.push(c); if (!whole.has(c)) others.add(c); } } });
 
     const rep = { sent: M, got: 0, missing: [], realigned: 0, mismatch: 0, dup: 0, extra: 0, empty: 0, notEn: 0,
-      tooShort: 0, tooLong: 0, flagShort: 0, flagLong: 0, noKey: 0, suspect: 0, shortKey: 0, endMiss: 0, endNear: 0, noEnd: 0, split: 0, splitCut: 0, tenths: [], finish: null };
+      tooShort: 0, tooLong: 0, flagShort: 0, flagLong: 0, noKey: 0, suspect: 0, shortKey: 0, endMiss: 0, endNear: 0, noEnd: 0, split: 0, splitCut: 0,
+      headLoose: 0, endLoose: 0, jaNew: 0, tenths: [], finish: null };
     const filled = new Array(M).fill(false);       // その文に、もう訳が付いたか
     let off = 0;                                   // 番号のずれ(「文の番号 − 返ってきた id」。いちばん近くの手がかりから)
     let keyed = false;                             // この返事が、目印を返しているか
@@ -4314,7 +4374,31 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         const m = n + d;
         if (d && m >= 0 && m < M && plain[m] !== plain[n] && endsAt(m, x)) return 2;
       }
-      return 1;
+      return endLoose(n, x) ? 3 : 1;
+    }
+    // ゆるめた終わりの目印(工程8e-2a。設計メモ 2-2): AI が、終わりの目印を写すとき、言いかえる・1 字まちがえる(「待つ」→「待る」)ことがあり、
+    //   英文は正しいのに捨てていた。次の全部がそろえば使う(3 を返す。上で、近くの送った文の終わりと合ったものは、ここに来ない=いつも捨てる):
+    //   ① "e" に比べる字が 3 字以上 ② "e" の終わりの字が、その文の終わりの字と同じ
+    //   ③ "e" の終わりの字の並び(頼んだ長さ + 2 字まで)のうち、config.wire.endLoose(6 割)以上が、その文の終わりのあたり(+ endPad 字)に順に入っている
+    //   ④ 前後 realign 文(送る順)のどの文も、それより近くない(同じくらい近い文があれば、迷うので捨てる=「迷ったら未訳」)。
+    //   手本は試作 tools/end_loose_proto.js(工程8e-1。本物の返事で、捨てていた文のうち戻ったものは、部屋が全部読んで、どれも正しい文の訳だった)
+    const EL = config.wire.endLoose, EP = config.wire.endPad;
+    function endLoose(n, x){
+      if (!(EL > 0)) return false;
+      const forms = [x.c].concat(mark !== null && x.b && x.b !== x.c ? [x.b] : []);
+      return forms.some(c => {
+        if (c.length < config.wire.endMin) return false;
+        const L = Math.min(c.length, E + 2), t = c.slice(-L);
+        const near = m => lcs(t, plain[m].slice(-(L + EP))) / L;
+        if (t.slice(-1) !== plain[n].slice(-1)) return false;
+        const me = near(n);
+        if (me < EL) return false;
+        for (let d = -R; d <= R; d++){
+          const m = n + d;
+          if (d && m >= 0 && m < M && near(m) >= me) return false;
+        }
+        return true;
+      });
     }
 
     // ---- まとめ訳を分ける(§6-4。工程T-4b)----
@@ -4362,7 +4446,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       // まとめ訳を分けた範囲の文に、AI が、まとめ訳とまったく同じ英文を返してきた(同じ英文を 2 つの文に付けた形): 控え(分けた英文)を使う
       const sp = spare.get(n);
       if (sp && sp.whole.has(whole)) return;
-      const es = endState(n, it);                  // 3 のあと. 終わりの目印が、その文の終わりと合うか(工程T-4)
+      const es0 = endState(n, it);                 // 3 のあと. 終わりの目印が、その文の終わりと合うか(工程T-4)
+      const loose = es0 === 3, es = loose ? 0 : es0;   // 3 = ゆるめた照らし合わせで合った(工程8e-2a。使う)
       // 前の文(同じ段落の splitMax 文まで)に返して、終わりの目印が合わずに捨てた英文と、まったく同じ英文(同じ英文を 2 つの文に付けた形。
       //   前の文の終わりの目印には、範囲が写っていなかった): 2 つの文の間を範囲として分ける。分けられなければ、この文にも使わない(2 つとも未訳)
       if (!es && whole){
@@ -4398,7 +4483,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         });
       }
       if (moved) rep.realigned++;
-      if (accept(n, en, nk) && sd) rep.split++;
+      if (accept(n, en, nk)){
+        if (sd) rep.split++;
+        else if (loose) rep.endLoose++;
+      }
     }
     // その文より前(同じ段落の、本文の順で splitMax 文まで)の送った文に返して捨てた英文と、同じ英文か → null | { p: 範囲の始まりの位置, parts: [英文…] | null }
     function sameAs(n, whole){
@@ -4420,6 +4508,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (!w){ rep.empty++; return false; }
       // 5. 日本語のままでないか
       if (jaShare(en) > C.jaMax){ rep.notEn++; return false; }
+      // 5 の足し. 英文の中に、その文の原文に無いかな・漢字が無いか(工程8e-2a。設計メモ 2-2): AI が作り出した字は、写しまちがいか作り話なので、その文には使わない
+      //   (2026-10-17 実物のカクヨム: 「エリクは…」→ "E里克, you really …"。割合の確かめ jaMax では拾えない)。原文にある字をそのまま残した形(看板の字など)は、今までどおり使う
+      if (jaNew(en, n)){ rep.jaNew++; return false; }
       // 6・7. 短すぎないか・長すぎないか(語数と、日本語の文字数の比。短すぎは、切り捨てた数と比べる。叫び声のような文は、見ない)
       const len = lens[n];
       if (len >= C.minLen && !scream[n] && w < Math.floor(len * C.shortDrop)){ rep.tooShort++; return false; }
@@ -4435,6 +4526,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (onItem) onItem(item);
       return true;
     }
+    // 英文の中の、その文の原文に無いかな・漢字(5 の足し)。原文は、その文の字とルビの読み(全角と半角などをそろえて=NFKC)
+    const srcJa = sents.map((sn, n) => new Set(Array.from((norms[n] + (o.marked ? o.marked[n] : '')).normalize('NFKC'))));
+    const jaNew = (en, n) => Array.from(en.normalize('NFKC')).some(ch => T.hasJa(ch) && !srcJa[n].has(ch));
     // その文の書き出しか: 全文の先頭になっている、または、切れ目で文字の形が変わる所で切った形と同じ
     const own = (n, c) => plain[n].startsWith(c) || odd[n].includes(c);
     const ownM = (n, c) => mark[n].startsWith(c) || oddM[n].includes(c);
@@ -4456,6 +4550,31 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const hitShort = (n, key, raw) => !key.sym && !endsStop(raw) && hitAt(n, key, Math.min(KMIN, need[n]), mark !== null ? Math.min(KMIN, needM[n]) : 0);
     // 送っていない文の中に、書き出しの合うものがあるか
     const outside = key => key.sym || unsent.some(u => u.startsWith(key.c) || (mark !== null && key.b !== '' && u.startsWith(key.b)));
+    // ゆるめた頭の目印(工程8e-2a。設計メモ 2-2): AI が、頭の目印を写すとき、1 字まちがえる・言いかえる(「待つことが」→「待ることが」)ことがあり、
+    //   英文は正しいのに捨てていた(同じ文が、何度送っても同じまちがいで捨てられ、「続きを訳す」でも拾えなかった)。
+    //   書き出しの合う文が、どこにも無い目印(送っていない文にも)で、番号の並び(id + 今のずれ)の指す文 j の書き出し(頼んだ長さ)と、
+    //   字の並びの config.wire.headLoose(7 割)以上が合い、ページのほかのどの文(送っていない文もふくめて)より headGap(1.5 割)以上はっきり合うなら、j に決める。
+    //   比べるのは、目印の初めの「頼んだ長さ + 2 字」まで(長く写した目印のうしろは見ない)。割合は、長い方の字の数で割る。
+    //   手本は試作 tools/head_loose_proto.js(工程8e-1。本物の返事で、捨てていた文のうち戻ったものは、部屋が全部読んで、どれも正しい文の訳だった)
+    const HL = config.wire.headLoose, HG = config.wire.headGap;
+    const headOf = nm => (K > 0 ? canon(nm.slice(0, K)) : '');
+    const headC = norms.map(headOf);
+    const pageCanon = o.model.sents.map(s => ({ sid: s.sid, c: canon(normOf(s)) })).filter(x => x.c !== '');
+    //   使わないもの: 記号も数えた長さが、その文の全文より 2 字以上長い目印(うしろの文まで写した目印「歌のうまかった子だよ。覚えてる」=2 つの文をまとめた訳。
+    //   1 字だけ長いのは受ける=写しまちがいで字が 1 つ増えた「知っているんですか!?」→ 知ってるんですか!?)。
+    //   頼んだより長く写して、頼んだ長さのうしろで写しまちがえた目印(「ミオはかばんを肩にかくだ」)も、ここで受ける(今までは、目印のまるごとが書き出しと合わないので捨てていた)
+    function headLoose(j, key){
+      if (!(HL > 0) || K <= 0 || !headC[j]) return false;
+      const forms = [[key.c, key.cl]].concat(mark !== null && key.b && key.b !== key.c ? [[key.b, key.bl]] : []);
+      return forms.some(([c0, len]) => {
+        if (len > full[j] + config.wire.keySlack) return false;
+        const c = c0.slice(0, K + 2), L = Math.max(c.length, headC[j].length);
+        const like = w => { const h = w.slice(0, L); return lcs(c, h) / Math.max(c.length, h.length); };
+        const me = like(plain[j]);
+        if (me < HL) return false;
+        return pageCanon.every(x => x.sid === map[j] || like(x.c) <= me - HG);
+      });
+    }
 
     // 待たせていた文を決める(次の手がかりが来たとき・返事が終わったとき)。
     //   off = 前の手がかりでのずれ / end = 次の手がかりでのずれ
@@ -4562,6 +4681,16 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         settle(off);
         flush(wideAt);                             // AI が、この文まで進んだ: それより前の控え(まとめ訳を分けた分)を使う
         place(wideAt, it, wideAt !== id);
+        return;
+      }
+      // ゆるめた頭の目印(工程8e-2a): 書き出しの合う文がどこにも無い目印で、番号の並びの指す文と、はっきり似ている。手がかりにもする(ずれは変わらない=短い目印と同じ)
+      if (!S.length && !wide && !out && !others.has(key.c) && id + off >= 0 && id + off < M && headLoose(id + off, key)){
+        const j = id + off;
+        settle(off);
+        flush(j);
+        const before = rep.got;
+        place(j, it, j !== id);
+        if (rep.got > before) rep.headLoose++;
         return;
       }
       if (!S.length) return drop(id >= M || (out && !wide) ? 'extra' : 'mismatch');
@@ -6160,7 +6289,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const translate = { match, missing };
 
   // ---- 翻訳 ----
-  //   o = { model: 文のデータ, level, sids?, rec?, use?, page?, tr?, signal?, fix?, on?: { item(sid, en, f, nk), progress(got, total) } }
+  //   o = { model: 文のデータ, level, scene?, sids?, rec?, use?, page?, tr?, signal?, fix?, on?: { item(sid, en, f, nk), progress(got, total) } }
+  //   scene = 場面(prompts.SCENES。省くと novel。工程8e-2a)。どの場面で送るかを決めるのは、呼ぶ側
   //   fix = false なら、機械の直し(core/fix.js)を当てない(比べる台本だけが使う。エンジンは渡さない)
   //   sids を省くと: rec(保存した訳)があれば、まだ訳の無い対象の文。無ければ、対象の文の全部
   //   → { rep, run, model, think, provider, promptV, wireV, block? }(run = 通信の記録の id。残せなかったら null)
@@ -6168,6 +6298,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   translate.page = o => fields(attempt(async () => {
     o = o || {};
     if (!levels.has(o.level)) throw bad('レベルがおかしい: ' + o.level);
+    if (o.scene != null && !prompts.SCENES.includes(o.scene)) throw bad('場面がおかしい: ' + o.scene);
     const on = isPlain(o.on) ? o.on : {};
     await settings.load();                       // 別のタブで変えた設定を取り直す
     const ai = aiFor(o.level, o.use);
@@ -6188,7 +6319,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const finish = f => (fixer ? fixer.end(reader.end(f)) : reader.end(f));
     // 送る文が無ければ、通信しない
     if (!built.M) return { rep: finish('stop'), run: null, model: ai.m, think: ai.think, provider: null, promptV: prompts.V, wireV: wire.V };
-    const prompt = prompts.translate({ level: o.level, body: built.body, M: built.M, K: built.K, E: built.E, ruby: built.ruby });
+    const prompt = prompts.translate({ level: o.level, scene: o.scene, body: built.body, M: built.M, K: built.K, E: built.E, ruby: built.ruby });
     const res = await exchange({ role: 'translate', ai, prompt, signal: o.signal, push: t => reader.push(t), end: finish,
       meta: { page: pageOf(o), level: o.level, tr: o.tr, sent: { targets: built.M, chars: built.chars } } });
     return settle(res, tell);
@@ -6263,7 +6394,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     };
   }
 
-  //   o = { model: 文のデータ, rec: 保存した訳(PageRec), level, sids?, page?, tr?, signal?, on?: { item(sid, words, g) } }
+  //   o = { model: 文のデータ, rec: 保存した訳(PageRec), level, scene?, sids?, page?, tr?, signal?, on?: { item(sid, words, g) } }(scene は翻訳と同じ)
   //   送るのは、訳のある文。sids を省くと、そのうち、まだ熟語さがしをしていない文(保存の1件に w の欄が無いもの)
   //   → { rep, run, state, model, think, provider, promptV, wireV, iv }(iv = 熟語さがしの指示文の版 prompts.IV。通信の記録には x.iv で残す)
   //   state = 'done'(送った文が全部届いた)| 'partial'(届かなかった文がある)| 'failed'(1文も届かなかった)。失敗(reject)にも付く
@@ -6272,6 +6403,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   translate.idioms = o => fields(attempt(async () => {
     o = o || {};
     if (!levels.has(o.level)) throw bad('レベルがおかしい: ' + o.level);
+    if (o.scene != null && !prompts.SCENES.includes(o.scene)) throw bad('場面がおかしい: ' + o.scene);
     if (!isPlain(o.rec)) throw bad('保存した訳が無い');
     if (o.sids != null && !Array.isArray(o.sids)) throw bad('文の番号の並びがおかしい');
     const on = isPlain(o.on) ? o.on : {};
@@ -6287,7 +6419,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const reader = idiomReader(list, sids, (sid, words, g) => tell.call(on.item, [sid, words, g]));
     const stateOf = rep => (!rep.got ? 'failed' : rep.finish === 'stop' && !rep.missing.length ? 'done' : 'partial');     // 1文も届かなければ、ふつうに終わっていても failed
     if (!list.length) return { rep: reader.end('stop'), run: null, state: 'done', model: ai.m, think: ai.think, provider: null, promptV: prompts.V, wireV: wire.V, iv: prompts.IV };
-    const prompt = prompts.idioms({ level: o.level, list });
+    const prompt = prompts.idioms({ level: o.level, scene: o.scene, list });
     const res = await exchange({ role: 'idiom', ai, prompt, signal: o.signal, push: t => reader.push(t), end: f => reader.end(f), x: { iv: prompts.IV },
       meta: { page: pageOf(o), level: o.level, tr: o.tr, sent: { targets: list.length, chars: list.reduce((n, x) => n + x.en.length, 0) } } });
     return settle(res, tell, { state: stateOf(res.rep), iv: prompts.IV });
