@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.31
+// @version      0.1.32
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -20,7 +20,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.31 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.32 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -150,7 +150,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.31',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.32',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -225,6 +225,10 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       jaMax: 0.3, minLen: 20, shortDrop: 0.05, shortFlag: 0.1,
       sameMax: 6,                  // 文の中の、ちがう字の数が、これ以下なら「同じ字ばかりの文」(長い叫び声)と見て、短すぎの確かめをしない
       longFlag: [1.2, 6], longDrop: [2.5, 10]
+    },
+    scene: {                       // 場面の「おまかせ」の見分け(§6-7 の「場面を決める」。工程8e-2b。線は目分量=設計メモ 2-6)
+      novelShare: 0.15,            // 小説サイトでないページで、文のある段落のうち、せりふだけの段落(「…」『…』)が、この割合以上で
+      novelMin: 2                  //   この数以上なら小説。そうでなければ記事
     },
     idioms: {                      // 熟語さがしの結果の受け取り方(§6-5)
       max: 5,                      // 1文に付ける熟語の数の上限
@@ -1174,6 +1178,17 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'set.hide': 'ボタンを出さないサイト',
     'set.hideNone': 'なし',
     'set.hideN': '{n} 件',
+    'set.scene': '文章の種類',
+    'scene.title': '文章の種類',
+    'scene.lead': '英語にするときの書き方を、読むものに合わせます。',
+    'scene.auto': 'おまかせ',
+    'scene.autoSub': '小説のサイトは小説として。ほかのページは、せりふが多ければ小説、少なければ記事として訳します',
+    'scene.novel': '小説',
+    'scene.novelSub': 'どのページも、物語として訳します',
+    'scene.article': '記事',
+    'scene.articleSub': 'どのページも、ニュースや解説の書き方で訳します',
+    'scene.note': '変えたあとに訳すページから効きます。訳してあるページは、そのままです(メニューの「訳し直す」で変わります)。',
+    'scene.set': '文章の種類を「{name}」にしました',
     'hide.title': 'ボタンを出さないサイト',
     'hide.lead': 'ここにあるサイトでは、記事のページでも、右下のボタンを出しません。英語まじりにしたいときは、Tampermonkey のメニューの「{tm}」から。',
     'hide.none': 'まだ、ありません。記事のページで、右下のロゴを押して出るメニューから選べます。',
@@ -2246,6 +2261,7 @@ Yomu.rest = function(){
         voice: { name: '', rate: config.voice.rate },
         log: { on: true, detail: 'full' },
         hide: [],                                                              // 右下のボタンを出さないサイト(どのページでも。工程8c-2)= [{ h: ホスト名, at }]
+        scene: 'auto',                                                         // 場面の決め方(工程8e-2b)= 'auto'(おまかせ)|'novel'(小説)|'article'(記事)。§6-7 の「場面を決める」
         x: {}
       };
     },
@@ -2989,6 +3005,7 @@ Yomu.rest = function(){
   const DETAILS = ['full', 'lite'];
   const PURPOSES = [null, 'eiken', 'toeic', 'toefl', 'none'];
   const GOAL_KINDS = ['eiken', 'toeic', 'toefl', 'cefr'];
+  const SCENE_PICKS = ['auto', 'novel', 'article'];   // 場面の決め方(工程8e-2b)。'auto' のほかは prompts.SCENES と同じ名前(check_settings が見る)
   const FIXED = ['v', 'createdAt', 'updatedAt'];   // set では変えられない欄
 
   const text = v => typeof v === 'string' && v.length > 0;
@@ -3017,6 +3034,7 @@ Yomu.rest = function(){
     want('restore', bool(s.restore));
     want('provider', text(s.provider));
     want('onLimit', ON_LIMIT.includes(s.onLimit));
+    want('scene', SCENE_PICKS.includes(s.scene));
     want('profile/purpose', PURPOSES.includes(s.profile.purpose));
     want('profile/now', goal(s.profile.now));
     want('profile/goal', goal(s.profile.goal));
@@ -3134,6 +3152,7 @@ Yomu.rest = function(){
       return { m: m.m, think: config.ui.thinkPick ? m.think : 'none' };
     },
     on(fn){ subs.add(fn); return () => subs.delete(fn); },
+    scenePicks: SCENE_PICKS.slice(),
     // 右下のボタンを出さないサイト(工程8c-2。設計メモ 2-6)。host はホスト名(www. も、そのまま)
     hidden(host){ const h = String(host || '').toLowerCase(); return !!h && settings.get().hide.some(e => e.h === h); },
     hide(host){
@@ -3399,6 +3418,7 @@ Yomu.rest = function(){
     rec.role = run.role;
     ['model', 'think', 'provider', 'promptV', 'wireV', 'finish'].forEach(k => { rec[k] = text(run[k]); });
     ['page', 'level', 'tr'].forEach(k => { if (typeof run[k] === 'string') rec[k] = text(run[k]); });
+    if (Yomu.prompts && Yomu.prompts.SCENES.includes(run.scene)) rec.scene = run.scene;   // 送った指示文の場面(工程8e-2b)。決まった名前だけ残す
     if (isPlain(run.sent)) rec.sent = { targets: num(run.sent.targets), chars: num(run.sent.chars) };
     rec.rep = compact(run.rep);
     rec.ms = num(run.ms);
@@ -5685,8 +5705,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     }
   }
   // 1件残す → 残せたか。入らなければ、AI辞書の古い結果を捨ててやり直す(訳したページは捨てない)
-  async function save(a, text, model){
+  async function save(a, text, model, scene){
     const rec = { q: a.q, ctx: a.ctx, text, at: util.nowISO(), model };
+    if (scene && scene !== prompts.SCENES[0]) rec.scene = scene;   // 聞いたときの場面(工程8e-2b。小説は付けない=前の記録とそろう。鍵には入れない=§6-6)
     try {
       for (let n = 0; ; n++){
         try {
@@ -5721,7 +5742,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (!text) throw util.error('parse', '返事が空だった', { sent: true, model: r.model });
     // 途中で切れた答えは、見せるが、残さない(次に押したら、聞き直す)
     if (r.finish !== 'stop') return { text, cached: false, saved: false, partial: true };
-    return { text, cached: false, saved: await save(a, text, r.model || model), partial: false };
+    return { text, cached: false, saved: await save(a, text, r.model || model, o.scene), partial: false };
   }
 
   const aidict = {
@@ -6261,7 +6282,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       try {
         run = await runs.add({
           role: x.role, model: src.model || x.ai.m, think: x.ai.think, provider: src.provider, promptV: prompts.V, wireV: wire.V,
-          page: x.meta.page, level: x.meta.level, tr: x.meta.tr, sent: x.meta.sent, rep, finish: rep.finish,
+          page: x.meta.page, level: x.meta.level, tr: x.meta.tr, scene: x.meta.scene, sent: x.meta.sent, rep, finish: rep.finish,
           ms: src.ms, firstMs: src.firstMs, usage: src.usage, qday: src.qday,
           err: err ? { kind: err.kind, status: err.status, quotaId: err.quotaId, raw: rawOf(err) } : null,
           x: x.x                                     // 熟語さがしは { iv: 熟語さがしの指示文の版 }(工程T-5b)。翻訳は無し
@@ -6321,7 +6342,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (!built.M) return { rep: finish('stop'), run: null, model: ai.m, think: ai.think, provider: null, promptV: prompts.V, wireV: wire.V };
     const prompt = prompts.translate({ level: o.level, scene: o.scene, body: built.body, M: built.M, K: built.K, E: built.E, ruby: built.ruby });
     const res = await exchange({ role: 'translate', ai, prompt, signal: o.signal, push: t => reader.push(t), end: finish,
-      meta: { page: pageOf(o), level: o.level, tr: o.tr, sent: { targets: built.M, chars: built.chars } } });
+      meta: { page: pageOf(o), level: o.level, tr: o.tr, scene: o.scene || prompts.SCENES[0], sent: { targets: built.M, chars: built.chars } } });
     return settle(res, tell);
   }));
 
@@ -6421,7 +6442,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (!list.length) return { rep: reader.end('stop'), run: null, state: 'done', model: ai.m, think: ai.think, provider: null, promptV: prompts.V, wireV: wire.V, iv: prompts.IV };
     const prompt = prompts.idioms({ level: o.level, scene: o.scene, list });
     const res = await exchange({ role: 'idiom', ai, prompt, signal: o.signal, push: t => reader.push(t), end: f => reader.end(f), x: { iv: prompts.IV },
-      meta: { page: pageOf(o), level: o.level, tr: o.tr, sent: { targets: list.length, chars: list.reduce((n, x) => n + x.en.length, 0) } } });
+      meta: { page: pageOf(o), level: o.level, tr: o.tr, scene: o.scene || prompts.SCENES[0], sent: { targets: list.length, chars: list.reduce((n, x) => n + x.en.length, 0) } } });
     return settle(res, tell, { state: stateOf(res.rep), iv: prompts.IV });
   }), { state: 'failed', iv: prompts.IV });
 
@@ -6523,7 +6544,18 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return r;
   }
 
-  Yomu.extract = { page, textOf, range };
+  // 場面の「おまかせ」の見分け(§6-7 の「場面を決める」。工程8e-2b。設計メモ 2-6)→ { scene, share, n, of }
+  //   小説サイト(info.scene が 'novel')は、見分けずに小説。ほかは、文のある段落のうち、せりふだけの段落(前後の空白を除いて「…」か『…』)の割合と数で決める
+  const SPEECH = /^[「『][\s\S]*[」』]$/;
+  function scene(model){
+    if (model && model.info && model.info.scene === 'novel') return { scene: 'novel', share: null, n: 0, of: 0 };
+    const paras = (model && Array.isArray(model.paras) ? model.paras : []).filter(p => !p.scene && p.sents && p.sents.length);
+    const n = paras.filter(p => SPEECH.test(String(p.text).trim())).length, of = paras.length;
+    const share = of ? n / of : 0, c = config.scene;
+    return { scene: share >= c.novelShare && n >= c.novelMin ? 'novel' : 'article', share, n, of };
+  }
+
+  Yomu.extract = { page, textOf, range, scene };
 })();
 
 /* ---- page/render.js ---- */
@@ -7368,6 +7400,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   // ---- 訳す(1回)と、熟語さがし(1回) ----
+  // そのページの場面(PageRec.scene。無ければ小説=版 0.1.31 までに訳したページ。工程8e-2b)
+  const sceneOf = r => (r && prompts.SCENES.includes(r.scene) ? r.scene : prompts.SCENES[0]);
+  // 新しく訳すときの場面: 設定の決め方(おまかせなら、本文の書き方で見分ける=extract.scene)
+  const pickScene = s => (s && prompts.SCENES.includes(s.scene) ? s.scene : extract.scene(model).scene);
   const aiOf = use => (typeof use === 'string' ? { m: use, think: 'none' } : isPlain(use) && use.m ? { m: use.m, think: use.think || 'none' } : null);
   // kind = 'blend'(保存が無い・使える訳が無い)/ 'more'(続きを訳す)/ 'redo'(訳し直す)
   async function run(kind, use){
@@ -7407,7 +7443,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (kind !== 'more'){
       work = Object.assign({}, rec || {}, {
         page: info.pageKey, work: info.workKey, site: info.site, level, title: { work: info.title.work, ep: info.title.ep }, path: loc ? String(loc.pathname) : '',
-        tr: util.uid('tr'), on: true, model: ai.m, think: ai.think, provider: s.provider, promptV: prompts.V, wireV: wire.V,
+        tr: util.uid('tr'), on: true, model: ai.m, think: ai.think, provider: s.provider, promptV: prompts.V, wireV: wire.V, scene: pickScene(s),
         state: 'partial', idioms: 'none', s: [], rep: null, runs: [], keep: (rec && rec.keep) || 0, x: (rec && isPlain(rec.x)) ? rec.x : {}
       });
       delete work.at;
@@ -7422,7 +7458,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     paint();
     let out = null, err = null;
     try {
-      out = await translate.page({ model, level, rec: kind === 'more' ? work : null, use, page: info.pageKey, tr: work.tr, signal: j.ctrl.signal, on: {
+      out = await translate.page({ model, level, scene: sceneOf(work), rec: kind === 'more' ? work : null, use, page: info.pageKey, tr: work.tr, signal: j.ctrl.signal, on: {
         item(sid, en, f, nk){
           if (job !== j) return;
           if (nk){ j.held.push({ sid, en, f }); return; }   // 番号だけで決めた文: rep.suspect を見てから使う(返事の終わりにまとめて来るので、待たせても遅れない)
@@ -7522,7 +7558,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     j.model = model; j.n = 0;
     let out = null, err = null;
     try {
-      out = await translate.idioms({ model, rec: r, level: r.level, page: info.pageKey, tr: r.tr, signal: j.ctrl.signal, on: {
+      out = await translate.idioms({ model, rec: r, level: r.level, scene: sceneOf(r), page: info.pageKey, tr: r.tr, signal: j.ctrl.signal, on: {
         item(sid, words, g){
           if (ijob !== j) return;
           const e = map.get(sid);
@@ -7590,6 +7626,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     shown.forEach(sid => { if (have.has(sid)) n++; });
     return {
       state, level, ratio, style, orig, vertical, page: info ? info.pageKey : null,
+      scene: rec && have.size ? sceneOf(rec) : null,   // 今のレベルの訳の場面(工程8e-2b。訳が無ければ null)
       theme: themeSet, themeNow, font, size,       // 見た目(theme = 設定の値。themeNow = 今使っている色の組)
       n: { targets: model ? model.n.targets : 0, translated: have.size, missing: missingOf().length, shown: n },
       saved: Object.assign({}, saved),
@@ -7783,7 +7820,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     sentence(sid){
       const s = model && model.sents[Number(sid)], d = render.drawn(sid);
       if (!s || !d || !info) return null;
-      return { sid: s.sid, en: d.en, jp: s.text, words: util.clone(d.words), page: info.pageKey, work: info.workKey, title: { work: info.title.work, ep: info.title.ep } };
+      return { sid: s.sid, en: d.en, jp: s.text, words: util.clone(d.words), page: info.pageKey, work: info.workKey, title: { work: info.title.work, ep: info.title.ep }, scene: sceneOf(rec) };
     },
     on(name, fn){
       if (!subs[name] || typeof fn !== 'function') throw util.error('bad', '合図の名前がおかしい: ' + name);
@@ -9391,7 +9428,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     mine.all = false;                                            // 意味を全部ひらいていたら、たたむ(答えが、下へ押し出されて見えなくならないように)
     paint();
     if (liveEl && typeof liveEl.scrollIntoView === 'function'){ try { liveEl.parentNode.scrollIntoView({ block: 'nearest' }); } catch (e){} }
-    Promise.resolve().then(() => Y.aidict.ask({ q: r.text, en: mine.en, jp: mine.jp, signal: a.ctrl.signal, onText(t){
+    Promise.resolve().then(() => Y.aidict.ask({ q: r.text, en: mine.en, jp: mine.jp, scene: mine.scene, signal: a.ctrl.signal, onText(t){
       if (r.asking !== a) return;
       a.live += String(t == null ? '' : t);
       arm();
@@ -9781,6 +9818,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const hideRow = row('hide', ui.t('set.hide'), to('hide'));
     const nHide = Y.settings.get().hide.length;
     if (has('hide')) hideRow.val.textContent = nHide ? ui.t('set.hideN', { n: nHide }) : ui.t('set.hideNone');
+    // 文章の種類=場面の決め方(工程8e-2b)。訳に効くので、目標のすぐ下
+    const sceneRow = row('scene', ui.t('set.scene'), to('scene'));
+    if (has('scene')) sceneRow.val.textContent = ui.t('scene.' + Y.settings.get().scene);
     const more = [];
     const voiceRow = row('voice', ui.t('set.voice'), to('voice'));
     if (has('voice')) voiceRow.val.textContent = Y.settings.get().voice.name || ui.t(Y.env && Y.env.info && Y.env.info.ios ? 'set.voiceAuto' : 'set.voiceAuto.pick');   // iPhone は、端末の設定の声。ほかは、こちらが選ぶ(端末に、決める所が無い)
@@ -9790,7 +9830,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (has('models') && Y.plan.shows('model')) modelsRow.val.textContent = short(Y.settings.modelFor(ui.status().level).m);
     return shell({ name: 'top', title: ui.t('set.title'), body: [].concat(
       group(ui.t('set.groupAi'), [connect.b, Y.plan.shows('modelChoice') || Y.plan.shows('quota') ? modelsRow.b : null]),
-      group(ui.t('set.groupRead'), [goalRow.b, hideRow.b]),
+      group(ui.t('set.groupRead'), [goalRow.b, sceneRow.b, hideRow.b]),
       group(ui.t('set.groupMore'), more)
     ) });
   }
@@ -10385,7 +10425,27 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return S.shell({ name: 'hide', title: ui.t('hide.title'), back: 'top', body: [ui.el('p', { class: 'lead', text: ui.t('hide.lead', { tm: ui.t('tm.toggle') }) }), list] });
   }
 
+  // ---- 文章の種類=場面の決め方(工程8e-2b。設計メモ 2-6)。訳に効くので、選んで「これにする」(目標・上限と同じ決め方=§9-6) ----
+  //   訳してあるページは、そのまま(訳したときの場面を保存に残している)。変えたあとに新しく訳すページ・「訳し直す」から効く
+  function scene(){
+    const alive = S.alive();
+    const savedS = Y.settings.get().scene, def = Y.settings.scenePicks[0];
+    let pick = savedS;
+    const c = choice(Y.settings.scenePicks.map(id => ({ id, title: ui.t('scene.' + id), sub: ui.t('scene.' + id + 'Sub'),
+      tags: [id === def ? { text: ui.t('mod.first') } : null, id === savedS ? { text: ui.t('mod.now'), now: true } : null] })), pick, id => { pick = id; });
+    const apply = ui.el('button', { class: 'primary', 'data-act': 'apply', onclick: () => {
+      apply.disabled = true;
+      save({ scene: pick }).then(ok => {
+        if (!alive()) return;
+        apply.disabled = false;
+        if (ok){ ui.toast(ui.t('scene.set', { name: ui.t('scene.' + pick) })); S.go('top'); }
+      });
+    } }, [ui.el('span', { text: ui.t('mod.pick') })]);
+    return S.shell({ name: 'scene', title: ui.t('scene.title'), back: 'top', body: [ui.el('p', { class: 'lead', text: ui.t('scene.lead') }), c.box, ui.el('p', { class: 'hint', text: ui.t('scene.note') })], foot: [apply] });
+  }
+
   S.add('hide', hide);
+  S.add('scene', scene);
   S.add('models', models);
   S.add('model', model);
   S.add('onlimit', onLimit);
