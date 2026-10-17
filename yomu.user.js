@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.23
+// @version      0.1.24
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.23 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.24 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -142,7 +142,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.23',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.24',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -193,6 +193,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     idioms: {                      // 熟語さがしの結果の受け取り方(§6-5)
       max: 5,                      // 1文に付ける熟語の数の上限
       mMax: 80,                    // 熟語の意味の長さの上限(これより長いものは、意味として受け取らない)
+      noteShare: 0.5,              // 送った文のうち、この割合以上が届かなかったときだけ「途中までしか届きませんでした」と知らせる(目分量。2026-10-17 利用者。工程T-5b)
+      gapMax: 6,                   // 離れた熟語(handed ... back)の間に入ってよい語の数(core/tokens.js。工程T-5c。試しで 7 語の 1 個を取りこぼした。広げるほど、熟語でない所に当たりやすい)
       gMax: 20, gLen: 40           // 文法の印(g。工程G1 のあと)を、いくつまで・何文字まで受け取るか
     },
     llm: {
@@ -2750,8 +2752,11 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     ]).concat(rules.map((r, i) => (i + 1) + '. ' + r)).join('\n');
   }
 
-  // ---- 熟語さがし(§6-5)。現行 callGeminiExtractVocab の文面に、見出しの形 "b" だけを足した ----
+  // ---- 熟語さがし(§6-5)。現行 callGeminiExtractVocab の文面に足したもの ----
+  //   IV(熟語さがしの指示文の版。翻訳の V とは別): 1 = 見出しの形 "b" だけを足した / 2 = 工程T-5b で 3 つ足した
+  //     ルール6【省略の禁止】(AI が途中で「…((TRUNCATED))」と書いて終えたため)・"w" は英文の形のまま、間の語は ... でつなぐ・JSON の文字列の書き方(" を書き落としたため)
   //   list = [{ id, en, target_jp }](id は、その通信の中の通し番号)
+  const IV = 2;
   function idioms(o){
     o = o || {};
     if (!Array.isArray(o.list) || !o.list.length) throw util.error('bad', 'prompts.idioms: list が無い');
@@ -2767,7 +2772,8 @@ ${vocabLevel(o.level)}
 3. 読者が一目で意味を取りにくい「句動詞」「慣用句」「前置詞を含む定型句」を最優先で抽出してください。
 4. 平易な文や特筆すべき表現がない文は、無理に抽出せず空配列 "words": [] にしてください。
 5. 各文につき最大2〜3個程度を目安にしてください。
-6. 出力形式:
+6. 【省略の禁止】: 【確定英文リスト】のすべての id について、id の小さい順に、最後の id まで1つも飛ばさずに出力してください（熟語が無い文も "words": [] として出力します）。途中で「省略」「(TRUNCATED)」のように書いて、出力を終えないでください。
+7. 出力形式:
 [
   {
     "id": 0,
@@ -2776,8 +2782,9 @@ ${vocabLevel(o.level)}
     ]
   }
 ]
+   ※ "w" は、英文に書かれている形のまま（活用形も、one's にあたる his・her などもそのまま）出力してください。熟語の途中に、目的語などのほかの語が入っている場合は、その語を書かずに ... でつないでください（例: 英文 Ken switched the heater off. → w "switched ... off"、b "switch off"）。
    ※ "b" は "w" を辞書の見出しの形に直したものです（例: w "gave up on" → b "give up on"、w "set her mind to" → b "set one's mind to"）。
-7. Markdownコードブロック等は含めず、純粋なJSON配列のみを出力してください。
+8. Markdownコードブロック等は含めず、純粋なJSON配列のみを出力してください。JSON として正しく読める形にしてください（文字列の値は、必ず " で始めて " で閉じます。文字列の中で " を使うときは \\" と書きます）。
 
 【確定英文リスト】
 ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp })))}`;
@@ -2805,7 +2812,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     ]).join('\n');
   }
 
-  Yomu.prompts = { V: 5, STYLE: STYLE.slice(), SCENES: Object.keys(SCENES), level, translate, vocabLevel, idioms, dict };
+  Yomu.prompts = { V: 5, IV, STYLE: STYLE.slice(), SCENES: Object.keys(SCENES), level, translate, vocabLevel, idioms, dict };
 })();
 
 /* ---- core/wire.js ---- */
@@ -2967,14 +2974,20 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   // ---- 少しずつ届く JSON の配列(§6-3) ----
   //   配列の直下の { … } が閉じるたびに、onObject(中身) を呼ぶ。JSON として読めない1つは onObject(null)。
   //   読み飛ばすもの: 最初の [ より前の文字(```json など)・中身の無い配列(前置きの [0-1] など)・配列の直下の { } でないもの・余分な }。
-  //   opt.resync: 壊れた1つのあとも、次の {"id": から読み直す(英文の中の " が余っていても、残りを捨てない)。
-  //     要素の中に { … } の並びを持つ形(熟語さがし)では使わない(中の "id" と取り違えるため)
-  //   中身のある配列が閉じたあとの文字は読まない。end() → { n: 読んだ数, open: 閉じていない1つが残っていたか, closed: 中身のある配列が閉じたか }
+  //   opt.resync: 壊れた1つのあとも、次の要素の頭から読み直す(英文の中の " が余っていても、残りを捨てない)。
+  //     true = 目印は ,{"id": (翻訳)/ 'words' = 目印は ,{"id": 番号, "words": (熟語さがし。工程T-5b)
+  //     熟語さがしは、要素の中に { … } の並びを持つので、"id" だけを目印にすると、AI が中の { … } に "id" を書いたときに取り違える。"words" まで見れば取り違えない
+  //   opt.more: 中身のある配列が閉じたあとも、次の配列を読む(熟語さがし。配列が2つに分かれた返事。工程T-5b)。
+  //     頼まなければ、中身のある配列が閉じたあとの文字は読まない(翻訳)
+  //   end() → { n: 読んだ数, open: 閉じていない1つが残っていたか, closed: 中身のある配列が閉じたか }
   //   id のある1つが、1つも読めなかったときは、end() で、届いた全部を読み直す(配列でなく { … } が並んだ形)
+  const RESYNC = { id: /,\s*\{\s*"id"\s*:$/, words: /,\s*\{\s*"id"\s*:\s*"?\d+"?\s*,\s*"words"\s*:$/ };
   function array(onObject, opt){
-    const resync = !!(opt && opt.resync);
-    const RESYNC = /,\s*\{\s*"id"\s*:$/;
-    let started = false, done = false, ended = false, depth = 0, inStr = false, esc = false, cur = null, tail = '', n = 0, inThis = 0, ids = 0, all = '', over = false, result = null;
+    const resync = !opt || !opt.resync ? null : opt.resync === 'words' ? RESYNC.words : RESYNC.id;
+    const deep = resync === RESYNC.words;                 // 熟語さがしの目印: 1つの外でも探す(下の push)
+    const tailMax = deep ? 120 : 40;   // 目印を探すために取っておく、うしろの文字数(熟語さがしの目印は長い。整えて書いた返事は、字下げの空白が入る)
+    const more = !!(opt && opt.more);
+    let started = false, seen = false, done = false, shut = false, ended = false, depth = 0, inStr = false, esc = false, cur = null, tail = '', n = 0, inThis = 0, ids = 0, all = '', over = false, result = null;
     const hasId = v => util.isPlain(v) && 'id' in v;
     const parse = t => { try { return JSON.parse(t); } catch (e){ return undefined; } };
     const give = v => { n++; inThis++; if (hasId(v)) ids++; onObject(util.isPlain(v) ? v : null); };
@@ -3013,15 +3026,21 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         if (done) return;
         for (let i = 0; i < text.length; i++){
           const ch = text[i];
-          if (!started){ if (ch === '['){ started = true; depth = 1; inThis = 0; } continue; }
-          if (cur !== null){
-            cur += ch;
-            if (resync){
-              // 閉じていない1つの中に、次の {"id": が現れた = 壊れている。壊れた1つを捨てて、そこから読み直す
-              tail = (tail + ch).slice(-40);
-              if (ch === ':' && RESYNC.test(tail)){ give(null); cur = '{"id":'; tail = ''; depth = 2; inStr = false; esc = false; continue; }
+          // 読み直し: 閉じていない1つの中に、次の要素の頭(,{"id": など)が現れた = 壊れている。壊れた1つを捨てて、そこから読み直す。
+          //   熟語さがしの目印('words')では、1つの外でも探す(工程T-5b): 欄の名前の " を書き落とすと、文字列の切れ目がずれたまま、
+          //   1つが閉じた・配列が閉じたと読み違えて、次の要素の頭を見落とす。正しい返事では、要素の頭の { で1つが始まるので、ここには来ない
+          if (resync && (cur !== null || (deep && seen))){
+            tail = (tail + ch).slice(-tailMax);
+            const m = ch === ':' ? resync.exec(tail) : null;
+            if (m){
+              if (cur !== null) give(null);
+              started = true;
+              cur = m[0].slice(m[0].indexOf('{')); tail = ''; depth = 2; inStr = false; esc = false;
+              continue;
             }
           }
+          if (!started){ if (ch === '['){ started = seen = true; depth = 1; inThis = 0; } continue; }
+          if (cur !== null) cur += ch;
           if (inStr){
             if (esc) esc = false;
             else if (ch === '\\') esc = true;
@@ -3037,8 +3056,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
           if (ch === '}' || ch === ']'){
             if (depth === 1){
               if (ch === '}') continue;                      // 配列の直下の、余分な } は読み飛ばす
-              if (inThis > 0){ done = true; return; }        // 中身のある配列が閉じた
-              started = false;                               // 中身の無い配列だった。次の [ を探す
+              if (inThis > 0){                               // 中身のある配列が閉じた
+                if (!more){ done = true; return; }
+                shut = true;                                 // opt.more: 次の [ を探して、続きを読む
+              }
+              started = false;                               // (中身の無い配列だったときも)次の [ を探す
               continue;
             }
             depth--;
@@ -3052,7 +3074,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
           const open = cur !== null;
           cur = null;
           if (ids === 0 && all) fallback(all);
-          result = { n, open, closed: done };
+          result = { n, open, closed: done || shut };
         }
         return result;
       }
@@ -3818,9 +3840,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
 /* ---- core/tokens.js ---- */
 // core/tokens.js — 英文を単語と熟語に分ける(部品の約束 §7-1)。現行 buildInteractiveEnglishHtml の当て方を、データを返す形にしたもの
-//   split(en, words) → [ { t:'w'|'i'|'x', s, i? } ]   w = 単語 / i = 熟語(words の i 番目)/ x = 空白と記号。s をつなぐと、もとの英文になる
+//   split(en, words, o?) → [ { t:'w'|'i'|'x', s, i?, p?, g? } ]   w = 単語 / i = 熟語(words の i 番目)/ x = 空白と記号。s をつなぐと、もとの英文になる
 //   現行のまま: 熟語を長い順に先に取る(見つかった所は全部)/2語以上の熟語は、先頭の語の活用のゆれを吸収する(現行の表と規則)/残りを単語に分ける
 //   現行と変えた所: HTML ではなくデータを返す/曲がったアポストロフィも ' と同じ/英字は ASCII に限らない/実体参照(&quot; など)は読みかえない
+//   工程T-5c: 現行の当て方で当たらなかった熟語だけを、離れた形(handed ... back)・見出しの形(stand up → stood up)でも当てる(下の「離れた熟語」)。
+//     離れた熟語の語は t:'i' に p(何切れ目か。0 から)、間の語(と、間の語どうしの間の空白)は g(熟語の番号)。o.far === false なら、現行の当て方だけ
 (function(){
   'use strict';
   // 番号で作る字(書く道具が、番号の書き方を文字に置きかえることがある。engine/README.md の「書くときの注意」)
@@ -3883,7 +3907,176 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (last < s.length) out.push({ t: 'x', s: s.slice(last) });
   }
 
-  function split(en, words){
+  // ---- 離れた熟語・見出しの形の熟語(工程T-5c。部品の約束 §7-1。試作 tools/idiom_match_proto.js をエンジンへ移したもの)----
+  //   ① ...・…・~ と、置き字(someone・something・sb・sth・大文字の A・B)は「間に 0〜gapMax 語」
+  //   ② 語は、lemma(§7-2)の候補が重なれば同じ(stood と stand・went と go)
+  //   ③ one's・someone's は my・your・his・her・its・our・their・one's と 's で終わる語に、oneself は -self・-selves に当たる
+  //   ④ ... の無い熟語(見出しの形のまま "hold up")は、2語目からの小さな語(up・back・to など)の前に、間を許して、もう一度当てる
+  //   ⑤ 間に句読点をまたがない ⑥ いくつもの当て方があれば、間の合計がいちばん小さいもの(同じなら、前の方)
+  //   当てるのは、決まった語が2つ以上のときだけ(1語だと、ふつうの語が熟語の印になる=2026-10-17 利用者)。w で当たらなければ、見出しの形 b でも。
+  //   1つの熟語は1か所だけ。ほかの熟語と重なる所(間の語もふくむ)には当てない。間の語の無い当て方になったら、ふつうの熟語と同じ1かたまり
+  const ELL = String.fromCharCode(0x2026);
+  const GAPMARK = new RegExp('[.]{2,}|' + ELL + '|~', 'g');
+  const HARD = new RegExp('[,.;:!?"()\\[\\]' + String.fromCharCode(0x201C, 0x201D, 0x2014, 0x2013, 0x2026) + ']');   // 間にまたがない記号
+  const PIECE = new RegExp(WORD.source, 'gu');
+  const SLOT = new Set(['someone', 'somebody', 'something', 'sb', 'sth']);
+  const POSS = new Set(['my', 'your', 'his', 'her', 'its', 'our', 'their', "one's"]);
+  const PART = new Set(['up', 'down', 'out', 'off', 'on', 'in', 'into', 'over', 'back', 'away', 'around', 'round', 'about', 'through', 'along', 'across', 'aside', 'apart',
+    'together', 'forward', 'toward', 'towards', 'to', 'of', 'for', 'with', 'from', 'at', 'by', 'as', 'close', 'open', 'behind']);
+  const low = s => String(s).split(RSQ).join("'").toLowerCase();
+  const gapMax = () => { const c = Yomu.config && Yomu.config.idioms; return c && Number.isInteger(c.gapMax) && c.gapMax >= 0 ? c.gapMax : 6; };
+
+  // 熟語の字 → 切れの並び [[項…]…]。項 = { k:'w', v } | { k:'poss' } | { k:'self' }。決まった語が2つより少なければ null
+  function piecesOf(w){
+    const segs = [[]];
+    const cut = () => segs.push([]);
+    String(w).split(RSQ).join("'").replace(GAPMARK, ' ... ').split(/\s+/).forEach(tok => {
+      if (tok === '...'){ cut(); return; }
+      (tok.match(PIECE) || []).forEach(x0 => {
+        const x = x0.toLowerCase(), seg = segs[segs.length - 1];
+        if (x0 === 'A' || x0 === 'B' || SLOT.has(x)) cut();            // 大文字の A・B も置き字(compare A to B)
+        else if (x === "one's" || x === "someone's") seg.push({ k: 'poss' });
+        else if (x === 'oneself') seg.push({ k: 'self' });
+        else seg.push({ k: 'w', v: x });
+      });
+    });
+    const ps = segs.filter(x => x.length);
+    const n = ps.reduce((a, x) => a + x.length, 0);
+    return n >= 2 && ps.some(x => x.some(it => it.k === 'w')) ? ps : null;
+  }
+
+  // 英文の語の並び(現行の当て方の結果 out から。熟語のかたまりは1つの、使えない語)
+  function wordsOf(out){
+    const W = [];
+    let between = '';
+    out.forEach((t, k) => {
+      if (t.t === 'x'){ between += t.s; return; }
+      W.push({ k, lo: low(t.s), hard: HARD.test(between), free: t.t === 'w' });
+      between = '';
+    });
+    return W;
+  }
+  function lemmaSet(cache, w){
+    let s = cache.get(w);
+    if (s) return s;
+    s = new Set([w]);
+    const L = Yomu.lemma;
+    if (L && typeof L.candidates === 'function'){ try { L.candidates(w).forEach(c => s.add(c.lemma)); } catch (e){} }
+    cache.set(w, s);
+    return s;
+  }
+  function fits(it, e, cache){
+    if (it.k === 'poss') return POSS.has(e.lo) || /'s$/.test(e.lo);
+    if (it.k === 'self') return /(?:self|selves)$/.test(e.lo);
+    if (e.lo === it.v) return true;
+    const a = lemmaSet(cache, it.v), b = lemmaSet(cache, e.lo);
+    for (const l of a) if (b.has(l)) return true;
+    return false;
+  }
+  // 切れの並びを、本文の順に、間 0〜G 語(句読点をまたがない・使える語だけ)で当てる → { gap, first, parts:[[始め, 終わり]…] }(W の番号)| null
+  function place(W, segs, G, cache){
+    const n = W.length;
+    const okAt = (sg, a) => {
+      if (a + sg.length > n) return false;
+      for (let k = 0; k < sg.length; k++){ const e = W[a + k]; if (!e.free || (k > 0 && e.hard) || !fits(sg[k], e, cache)) return false; }
+      return true;
+    };
+    const tables = [];
+    let prev = null;
+    for (let j = 0; j < segs.length; j++){
+      const cur = new Map(), sg = segs[j];
+      for (let a = 0; a < n; a++){
+        if (!okAt(sg, a)) continue;
+        if (j === 0){ cur.set(a, { gap: 0, first: a, back: -1 }); continue; }
+        const L = segs[j - 1].length;
+        let best = null;
+        for (let b = Math.max(0, a - L - G); b <= a - L; b++){
+          const v = prev.get(b);
+          if (!v) continue;
+          const end = b + L - 1;
+          let bad = false;
+          for (let k = end + 1; k <= a; k++) if (W[k].hard || !W[k].free){ bad = true; break; }
+          if (bad) continue;
+          const gap = v.gap + a - end - 1;
+          if (!best || gap < best.gap || (gap === best.gap && v.first < best.first)) best = { gap, first: v.first, back: b };
+        }
+        if (best) cur.set(a, best);
+      }
+      if (!cur.size) return null;
+      tables.push(cur);
+      prev = cur;
+    }
+    let endAt = -1, top = null;
+    prev.forEach((v, a) => { if (!top || v.gap < top.gap || (v.gap === top.gap && v.first < top.first)){ top = v; endAt = a; } });
+    const parts = [];
+    for (let j = segs.length - 1, a = endAt; j >= 0; j--){
+      parts.unshift([a, a + segs[j].length - 1]);
+      a = tables[j].get(a).back;
+    }
+    return { gap: top.gap, first: top.first, parts };
+  }
+  // 1つの熟語を当てる。w → b → w(小さな語の前に間)→ b(同じ)の順
+  function locate(x, W, G, cache){
+    const tryOf = (segs, implicit) => {
+      if (!segs) return null;
+      if (!implicit) return place(W, segs, G, cache);
+      if (segs.length !== 1 || segs[0].length < 2) return null;
+      let best = null;
+      for (let c = 1; c < segs[0].length; c++){
+        const it = segs[0][c];
+        if (it.k !== 'w' || !PART.has(it.v)) continue;
+        const r = place(W, [segs[0].slice(0, c), segs[0].slice(c)], G, cache);
+        if (r && (!best || r.gap < best.gap)) best = r;
+      }
+      return best;
+    };
+    const pw = piecesOf(x.w), pb = typeof x.b === 'string' ? piecesOf(x.b) : null;
+    return tryOf(pw, false) || tryOf(pb, false) || tryOf(pw, true) || tryOf(pb, true);
+  }
+  // 現行の当て方の結果 out に、当たらなかった熟語(rest)を足す
+  function far(out, list, rest){
+    const W = wordsOf(out);
+    if (W.length < 2) return out;
+    const G = gapMax(), cache = new Map(), found = [];
+    rest.forEach(item => {
+      const r = locate(list[item.i], W, G, cache);
+      if (!r) return;
+      // 間の語の無い切れどうしは、つなぐ
+      const parts = [];
+      r.parts.forEach(pt => { const last = parts[parts.length - 1]; if (last && pt[0] === last[1] + 1) last[1] = pt[1]; else parts.push(pt.slice()); });
+      for (let k = parts[0][0]; k <= parts[parts.length - 1][1]; k++) W[k].free = false;   // 間の語もふくめて、ほかの熟語に使わせない
+      found.push({ i: item.i, parts });
+    });
+    if (!found.length) return out;
+    // out の番号で、切れと間を印す
+    const head = new Map(), skip = new Set(), gapOf = new Map();
+    found.forEach(f => {
+      f.parts.forEach((pt, p) => {
+        const ka = W[pt[0]].k, kb = W[pt[1]].k;
+        head.set(ka, { kb, i: f.i, p: f.parts.length > 1 ? p : null });
+        for (let k = ka + 1; k <= kb; k++) skip.add(k);
+        if (p + 1 < f.parts.length){
+          const ga = W[pt[1] + 1].k, gb = W[f.parts[p + 1][0] - 1].k;      // 間の、最初の語と最後の語
+          for (let k = ga; k <= gb; k++) gapOf.set(k, f.i);
+        }
+      });
+    });
+    const res = [];
+    out.forEach((t, k) => {
+      if (skip.has(k)) return;
+      const h = head.get(k);
+      if (h){
+        let s = '';
+        for (let q = k; q <= h.kb; q++) s += out[q].s;
+        res.push(h.p == null ? { t: 'i', s, i: h.i } : { t: 'i', s, i: h.i, p: h.p });
+        return;
+      }
+      res.push(gapOf.has(k) ? Object.assign({}, t, { g: gapOf.get(k) }) : t);
+    });
+    return res;
+  }
+
+  function split(en, words, o){
     en = en == null ? '' : String(en);
     const list = Array.isArray(words) ? words : [];
     const out = [];
@@ -3893,12 +4086,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       .filter(x => x.w.trim() && !PRIVATE.test(x.w))
       .sort((a, b) => b.w.length - a.w.length);
     const taken = [];   // [{ i, s }]
+    const hit = new Set();
     let processed = en;
     sorted.forEach(item => {
       if (taken.length >= PMAX) return;
       processed = processed.replace(regOf(item.w.trim()), matched => {
         if (taken.length >= PMAX) return matched;
         taken.push({ i: item.i, s: matched });
+        hit.add(item.i);
         return P0 + String.fromCharCode(PBASE + taken.length - 1) + P1;
       });
     });
@@ -3911,7 +4106,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       at = m.index + m[0].length;
     }
     plain(processed.slice(at), out);
-    return out;
+    if (o && o.far === false) return out;
+    const rest = sorted.filter(item => !hit.has(item.i));
+    return rest.length ? far(out, list, rest) : out;
   }
 
   // 「ひろげる」で選んだ範囲(from 番目 〜 to 番目の、両端をふくむ)の文字。端の空白は除き、間の空白は1つに
@@ -4902,7 +5099,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const JA_RUN = /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}]+/gu;
   const rawOf = err => (err.partial || typeof err.raw !== 'string' ? undefined : err.raw.replace(JA_RUN, '…'));
 
-  // 1回の通信と、その記録。x = { role, ai:{ m, think }, prompt, signal, push(text), end(finish) → rep, meta:{ page, level, tr, sent } }
+  // 1回の通信と、その記録。x = { role, ai:{ m, think }, prompt, signal, push(text), end(finish) → rep, meta:{ page, level, tr, sent }, x? }(x.x = 通信の記録の x の欄)
   //   記録に残すのは、送ったものだけ(戻りは全部。失敗は e.sent が true のものだけ)。記録の失敗では、訳を捨てない
   async function exchange(x){
     let r = null, err = null;
@@ -4918,7 +5115,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
           role: x.role, model: src.model || x.ai.m, think: x.ai.think, provider: src.provider, promptV: prompts.V, wireV: wire.V,
           page: x.meta.page, level: x.meta.level, tr: x.meta.tr, sent: x.meta.sent, rep, finish: rep.finish,
           ms: src.ms, firstMs: src.firstMs, usage: src.usage, qday: src.qday,
-          err: err ? { kind: err.kind, status: err.status, quotaId: err.quotaId, raw: rawOf(err) } : null
+          err: err ? { kind: err.kind, status: err.status, quotaId: err.quotaId, raw: rawOf(err) } : null,
+          x: x.x                                     // 熟語さがしは { iv: 熟語さがしの指示文の版 }(工程T-5b)。翻訳は無し
         });
       } catch (e){ run = null; }
     }
@@ -4999,6 +5197,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return out;
   }
   const GRAMMAR_ID = /^[A-Za-z0-9_.:-]+$/;
+  // 熟語さがしの返事の読み方(§6-3。工程T-5b): 書きまちがえた1つのあとも、次の {"id": 番号, "words": から読み直す・配列が2つに分かれても、続きを読む
+  //   (比べる台本 tools/exp_idioms.js も、これで読む)
+  const IDIOM_READ = translate.IDIOM_READ = Object.freeze({ resync: 'words', more: true });
   // 熟語さがしの返事を読む。list = 送った [{ id, en, target_jp }]、sids = その通し番号 → sid
   function idiomReader(list, sids, onItem){
     const N = list.length, C = config.idioms;
@@ -5030,7 +5231,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       // 文法の印(工程G1 のあと)。単元の ID の形(英数字と . _ : -)だけを受け取る(相手が返した、そのほかの欄は残さない=ページの文章を、まぎれて保存しないため)
       const g = Array.isArray(it.g) ? it.g.filter(v => typeof v === 'string' && v.length <= C.gLen && GRAMMAR_ID.test(v)).slice(0, C.gMax) : [];
       onItem(sids[id], words, g.length ? g : undefined);
-    });
+    }, IDIOM_READ);
     return {
       push(text){ arr.push(text); },
       // 1回だけ呼ぶ(通信が終わったとき)
@@ -5045,8 +5246,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
   //   o = { model: 文のデータ, rec: 保存した訳(PageRec), level, sids?, page?, tr?, signal?, on?: { item(sid, words, g) } }
   //   送るのは、訳のある文。sids を省くと、そのうち、まだ熟語さがしをしていない文(保存の1件に w の欄が無いもの)
-  //   → { rep, run, state, model, think, provider, promptV, wireV }
-  //   state = 'done'(最後まで届いた)| 'partial'(途中まで)| 'failed'(1文も届かなかった)。失敗(reject)にも付く
+  //   → { rep, run, state, model, think, provider, promptV, wireV, iv }(iv = 熟語さがしの指示文の版 prompts.IV。通信の記録には x.iv で残す)
+  //   state = 'done'(送った文が全部届いた)| 'partial'(届かなかった文がある)| 'failed'(1文も届かなかった)。失敗(reject)にも付く
+  //   工程T-5b: 返事が最後まで来ても(finish が stop)、届かなかった文があれば partial(AI が途中で「…((TRUNCATED))」と書いて終える・書きまちがえた1つを捨てた、など)。
+  //     届かなかった文は rep.missing。進行役は、そこに w を入れない(「熟語さがしをやり直す」で、その文だけを送り直せるように)
   translate.idioms = o => fields(attempt(async () => {
     o = o || {};
     if (!levels.has(o.level)) throw bad('レベルがおかしい: ' + o.level);
@@ -5063,13 +5266,13 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const ai = { m: settings.get().aux.idiom, think: 'none' };
     const tell = teller();
     const reader = idiomReader(list, sids, (sid, words, g) => tell.call(on.item, [sid, words, g]));
-    const stateOf = rep => (!rep.got ? 'failed' : rep.finish === 'stop' ? 'done' : 'partial');     // 1文も届かなければ、ふつうに終わっていても failed
-    if (!list.length) return { rep: reader.end('stop'), run: null, state: 'done', model: ai.m, think: ai.think, provider: null, promptV: prompts.V, wireV: wire.V };
+    const stateOf = rep => (!rep.got ? 'failed' : rep.finish === 'stop' && !rep.missing.length ? 'done' : 'partial');     // 1文も届かなければ、ふつうに終わっていても failed
+    if (!list.length) return { rep: reader.end('stop'), run: null, state: 'done', model: ai.m, think: ai.think, provider: null, promptV: prompts.V, wireV: wire.V, iv: prompts.IV };
     const prompt = prompts.idioms({ level: o.level, list });
-    const res = await exchange({ role: 'idiom', ai, prompt, signal: o.signal, push: t => reader.push(t), end: f => reader.end(f),
+    const res = await exchange({ role: 'idiom', ai, prompt, signal: o.signal, push: t => reader.push(t), end: f => reader.end(f), x: { iv: prompts.IV },
       meta: { page: pageOf(o), level: o.level, tr: o.tr, sent: { targets: list.length, chars: list.reduce((n, x) => n + x.en.length, 0) } } });
-    return settle(res, tell, { state: stateOf(res.rep) });
-  }), { state: 'failed' });
+    return settle(res, tell, { state: stateOf(res.rep), iv: prompts.IV });
+  }), { state: 'failed', iv: prompts.IV });
 
   Yomu.translate = translate;
 })();
@@ -5370,6 +5573,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const BASE = { sans: 0.92, serif: 1.03, site: 1 }, MUL = { s: 0.9, m: 1, l: 1.12 };
   // 「あ/A」の字の大きさと、押せる範囲(画面の物差し=§9-9。行の中に入るので、44px にはできない)。丸は 23px ほど。見えない所を上下左右に足して、押せる範囲を 30px 四方ほどに広げる
   const CHIP_RULE = Y.config.ui.chip, CHIP_PAD = CHIP_RULE.pad;
+  // 離れた熟語の間の語の破線の刻み [線, すき間](px。工程T-5a の写真で利用者が見た形に合わせた。線の太さは熟語の実線と同じ 2px)
+  const GAP_DASH = [4, 3];
   const CSS = [
     ':root { ' + theme.vars(theme.initial, PRE, theme.pageKeys()) + ' }'
   ].concat(theme.names().filter(n => n !== theme.initial).map(n => ':root[' + ATTR_THEME + '="' + n + '"] { ' + theme.vars(n, PRE, theme.pageKeys()) + ' }'), [
@@ -5392,6 +5597,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       + ' -webkit-text-emphasis: none; text-emphasis: none; word-break: normal; overflow-wrap: break-word; -webkit-hyphens: manual; hyphens: manual; }',
     R + ' .yomu-w { cursor: pointer; padding: 0.25em 0; }',
     R + ' .yomu-i { font-weight: 700; border-bottom: 2px solid ' + c('idiom') + '; padding-bottom: 0; }',
+    // 離れた熟語の間の語(handed the envelope back の the envelope。工程T-5c=案 C): 熟語と同じ色の破線・ふつうの太さ。まとまり全体に1本(語ごとに切ると、つなぎ目に継ぎ目が出る)。
+    //   熟語の実線と同じ高さ(字の下 2px)。刻みは、どのブラウザでも同じになるよう、境目の線(dashed)でなく、背景の縞で描く
+    R + ' .yomu-g { padding-bottom: 2px; background-image: repeating-linear-gradient(90deg, ' + c('idiom') + ' 0 ' + GAP_DASH[0] + 'px, transparent ' + GAP_DASH[0] + 'px ' + (GAP_DASH[0] + GAP_DASH[1]) + 'px);'
+      + ' background-size: 100% 2px; background-position: 0 100%; background-repeat: no-repeat; }',
     // 利用者が「あ」で戻した日本語
     ON + ' .yomu-s[data-yomu-st="back"] > .yomu-jp { background: ' + c('backBg') + '; border-radius: 6px; padding: 0.15em 0.3em; margin: 0 2px;'
       + ' -webkit-box-decoration-break: clone; box-decoration-break: clone; }',
@@ -5404,6 +5613,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // 書体だけ
     ':root' + Q + ' .yomu-s > .yomu-en { font-weight: 400; color: ' + c('quietInk') + '; background: transparent; border-radius: 0; padding: 0; }',
     ':root' + Q + ' .yomu-s .yomu-i { font-weight: inherit; border-bottom: 1px dotted ' + c('quietIdiom') + '; padding-bottom: 1px; }',
+    ':root' + Q + ' .yomu-s .yomu-g { background-image: none; padding-bottom: 0; }',      // 書体だけ: 間の語に線を付けない(熟語の印が、もともと細い点線のため)
     ':root' + Q + ':not([' + ATTR_ORIG + ']) .yomu-s[data-yomu-st="back"] > .yomu-jp { background: transparent; border-radius: 0; padding: 0 0 1px; border-bottom: 1px dotted ' + c('quietBack') + '; }',
     ':root' + Q + ' .yomu-s > .yomu-chip { margin: 0 3px 0 2px; border-color: ' + c('quietChipBd') + '; background: transparent; color: ' + c('quietChipInk') + '; }',
     ':root' + Q + ' .yomu-s[data-yomu-st="back"] > .yomu-chip { border-color: ' + c('quietChipBd') + '; color: ' + c('quietBack') + '; }',
@@ -5551,18 +5761,28 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   // ---- 英文の中身 ----
-  //   分けるのは、単語の部品(core/tokens.js。§7-1)
+  //   分けるのは、単語の部品(core/tokens.js。§7-1)。離れた熟語の間の語(g の付いた、ひと続きの語と空白)は、1つの span.yomu-g に入れる(破線を1本で引くため)
   function fillEn(e){
     const box = e.el;
     while (box.firstChild) box.removeChild(box.firstChild);
+    let group = null;
     Y.tokens.split(e.en, e.words || []).forEach((tk, ti) => {
+      let into = box;
+      if (Number.isInteger(tk.g)){
+        if (!group || group.getAttribute('data-yomu-g') !== String(tk.g)){
+          group = mk('span', 'yomu-g');
+          group.setAttribute('data-yomu-g', String(tk.g));
+          box.appendChild(group);
+        }
+        into = group;
+      } else group = null;
       if (tk.t === 'w' || tk.t === 'i'){
         const w = mk('span', tk.t === 'i' ? 'yomu-w yomu-i' : 'yomu-w');
         w.setAttribute('data-yomu-t', String(ti));
         if (tk.t === 'i' && Number.isInteger(tk.i)) w.setAttribute('data-yomu-i', String(tk.i));
         w.textContent = tk.s;
-        box.appendChild(w);
-      } else box.appendChild(D.text(String(tk.s)));
+        into.appendChild(w);
+      } else into.appendChild(D.text(String(tk.s)));
     });
   }
 
@@ -6289,6 +6509,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     else if (k === 'no-key') tell('no-key');
     else tell('error', { cause: k || 'error', message: String(err.message || k || '') });
   }
+  // 熟語さがしで、送った文の半分以上(config.idioms.noteShare)が届かなかったか
+  const lostMany = rep => !!(rep && rep.sent > 0 && Array.isArray(rep.missing) && rep.missing.length / rep.sent >= config.idioms.noteShare);
   // 熟語さがし。sids を省くと、訳のある文のうち、まだ熟語さがしをしていない文(§6-5)
   async function idiomsFor(r){
     if (ijob) return;
@@ -6333,12 +6555,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     drawNow();
     ijob = null;
     const st = out && typeof out.state === 'string' ? out.state : 'failed';
-    // 最後まで届いたら、返ってこなかった文にも w: [] を入れる(入れないと、次の「やり直す」で、また送られる)
-    if (!err && st === 'done' && out.rep) (out.rep.missing || []).forEach(sid => { const e = map.get(sid); if (e && e.w === undefined) e.w = []; });
+    // 届かなかった文(out.rep.missing)には、w を入れない: state は partial になり、メニューの「熟語さがしをやり直す」で、その文だけを送り直せる(工程T-5b。
+    //   それまでは、返事が最後まで来れば、届かなかった文にも w: [] を入れていた=AI が途中で終えた・書きまちがえた返事で、やり直せなかった)
     if (!(err && err.kind === 'abort' && st === 'failed')) r.idioms = st;   // 中止で1文も届かなければ、前のまま
     if (out && out.run) r.runs = (Array.isArray(r.runs) ? r.runs : []).concat([out.run]);
     later(r); flush();
     if (st === 'failed' && !(err && err.kind === 'abort') && !notice) tell('idioms-failed', { cause: err ? err.kind || 'error' : (out && out.rep && out.rep.finish === 'blocked' ? 'blocked' : 'empty') });
+    // 途中までしか届かなかった: 送った文の半分以上(config.idioms.noteShare)が届かなかったときだけ知らせる。少しなら知らせず、メニューの「熟語さがしをやり直す」だけ(2026-10-17 利用者。工程T-5b)
+    else if (st === 'partial' && !(err && err.kind === 'abort') && !notice && lostMany(out && out.rep)) tell('idioms-partial', { missing: out.rep.missing.length, sent: out.rep.sent });
     emit('state', status());
   }
 
@@ -6452,7 +6676,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // 熟語さがしのやり直し(1回分)
     async idioms(){
       if (!ready() || working() || ijob || !rec || !have.size) return status();
-      clearNotice(['idioms-failed']);
+      clearNotice(['idioms-failed', 'idioms-partial']);
       await idiomsFor(rec);
       return status();
     },
@@ -6623,6 +6847,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'note.blocked': 'この話は、AI が内容を理由に訳せませんでした(届いた分は出ています)',
     'note.idioms': '熟語さがしができませんでした(英文は読めます)',
     'note.idiomsLimit': '今日の上限のため、熟語さがしができませんでした(英文は読めます)',
+    'note.idiomsPart': '熟語さがしが、途中までしか届きませんでした(英文は読めます)',
     'note.suspect': '訳の並びがずれているおそれがあるため、{n} 文を出しませんでした',
     'note.vertical': '縦組みでは英語を出せません。横組みにすると、英語まじりで読めます',
     'note.full': '端末の保存がいっぱいで、保存できませんでした',
@@ -7218,6 +7443,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.word .sent .txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }',
       '.word .sent .e { font-family: ' + FE + '; ' + t(BODY, 400, BASE) + ' }',
       '.word .sent .e .sel { font-weight: 800; color: ' + v('accent') + '; }',
+      // 離れた熟語の間の語(工程T-5c=案 C): 強調の色の破線・ふつうの太さ。刻みと高さは、本文の印(page/render.js の .yomu-g)と同じ
+      '.word .sent .e .gap { padding-bottom: 2px; background-image: repeating-linear-gradient(90deg, ' + v('accent') + ' 0 4px, transparent 4px 7px); background-size: 100% 2px; background-position: 0 100%; background-repeat: no-repeat; }',
       '.word .sent .j { ' + t(CAP, 400, LOOSE) + ' color: ' + v('panelMuted') + '; }',
       '.word .sent .saysent { width: ' + TAP + 'px; height: ' + TAP + 'px; flex: none; border-radius: 50%; color: ' + v('panelInk') + '; display: flex; align-items: center; justify-content: center; }',
 
@@ -8152,6 +8379,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       case 'idioms-failed': return n.cause === 'limit-day'
         ? { text: ui.t('note.idiomsLimit'), acts: [] }
         : { text: ui.t('note.idioms'), acts: [{ label: ui.withCost(ui.t('act.idioms'), 1), fn: () => Y.page.idioms(), busyOff: true }] };
+      // 熟語さがしが、途中までしか届かなかった(半分以上の文が届かない。工程T-5b)。やり直すと、届かなかった文だけを送る
+      case 'idioms-partial': return { text: ui.t('note.idiomsPart'), acts: [{ label: ui.withCost(ui.t('act.idioms'), 1), fn: () => Y.page.idioms(), busyOff: true }] };
       case 'suspect': return { text: ui.t('note.suspect', { n: n.dropped }), acts: [{ label: ui.withCost(ui.t('act.redo'), 2), fn: again(n.act), busyOff: true }] };
       case 'vertical': return { text: ui.t('note.vertical'), acts: [] };
       case 'full': return { text: ui.t('note.full'), acts: [] };
@@ -8545,6 +8774,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const RSQ = String.fromCharCode(0x2019);                    // 曲がったアポストロフィ(番号で作る。engine/README.md の「書くときの注意」)
   const same = (a, b) => String(a).split(RSQ).join("'").toLowerCase() === String(b).split(RSQ).join("'").toLowerCase();
   // ページに描いてある並び(熟語は1かたまり)→ 1語ずつの並びと、熟語の範囲。s をつなぐと、どちらも同じ英文(§7-1)なので、文字の位置で突き合わせる
+  //   離れた熟語(工程T-5c。t:'i' に p)は、1つの範囲(初めの語から終わりの語まで)にまとめ、切れ parts と間の語 gaps を持つ。熟語の語のどれを押しても、熟語の板
   function layout(en, words, ti){
     const drawn = Y.tokens.split(en, words), tokens = Y.tokens.split(en, []);
     const at = [];                                            // tokens[k] の、始まりの位置
@@ -8555,7 +8785,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       tokens.forEach((t, k) => { if (isWord(t) && at[k] < b && at[k] + String(t.s).length > a){ if (from < 0) from = k; to = k; } });
       return from < 0 ? null : { from, to };
     };
-    const spans = [];
+    const spans = [], far = new Map();                        // far: 熟語の番号 → 離れた熟語の範囲
     let hit = null;
     pos = 0;
     drawn.forEach((t, k) => {
@@ -8563,11 +8793,21 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (t.t !== 'w' && t.t !== 'i') return;
       const r = range(a, b);
       if (!r) return;
-      if (t.t === 'i') spans.push({ from: r.from, to: r.to, i: t.i });
-      if (k === ti) hit = { from: r.from, to: r.to, idiom: t.t === 'i' };
+      if (t.t === 'i' && t.p != null){
+        let sp = far.get(t.i);
+        if (!sp){ sp = { from: r.from, to: r.to, i: t.i, parts: [], gaps: [] }; far.set(t.i, sp); spans.push(sp); }
+        sp.parts.push(r);
+        sp.to = r.to;
+      } else if (t.t === 'i') spans.push({ from: r.from, to: r.to, i: t.i });
+      else if (Number.isInteger(t.g) && far.has(t.g)) far.get(t.g).gaps.push(r);
+      if (k === ti) hit = t.t === 'i' && t.p != null ? { far: t.i } : { from: r.from, to: r.to, idiom: t.t === 'i' };
     });
+    if (hit && hit.far != null){ const sp = far.get(hit.far); hit = { from: sp.from, to: sp.to, idiom: true }; }
     return hit ? { tokens, spans, from: hit.from, to: hit.to, idiom: hit.idiom } : null;
   }
+  // 熟語の字の「...」「…」を、見出しの形「 … 」にそろえる(AI が b を返さなかったときの見出し・本文の形との比べ)
+  const DOTS = new RegExp('\\s*(?:[.]{2,}|' + String.fromCharCode(0x2026) + ')\\s*', 'g');
+  const dots = s => String(s).replace(DOTS, ' ' + String.fromCharCode(0x2026) + ' ').trim();
   const isOpen = () => !!cur && ui.sheetName() === NAME;
   const act = (kind, sid) => { try { if (Y.watch) Y.watch.act(kind, sid); } catch (e){} };   // 読んだ記録(数だけ。§8-8)
   // その向きの、次の語(空白と記号は飛ばす)。無ければ -1
@@ -8756,15 +8996,17 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     }
     return true;
   }
-  // 今の範囲 → { text, idiom? | hit? }
+  // 今の範囲 → { text, say, span?, idiom? | hit? }。say = 「発音を聞く」で読む文字(本文の形のまま)
+  //   離れた熟語の text は、熟語の語を「 … 」でつないだもの(handed … back)。単語帳の出会った形・AIに聞く語句も、これ。読むのは、間の語もふくめた本文の形(2026-10-17 利用者)
   function pick(){
-    const text = Y.tokens.phrase(cur.tokens, cur.from, cur.to);
+    const say = Y.tokens.phrase(cur.tokens, cur.from, cur.to);
     const span = cur.spans.find(x => x.from === cur.from && x.to === cur.to);
     if (span){
       const w = cur.words[span.i] || {};
-      return { text, idiom: { head: String(w.b || w.w || text), mean: String(w.m || '') } };
+      const text = span.parts ? span.parts.map(pt => Y.tokens.phrase(cur.tokens, pt.from, pt.to)).join(' ' + String.fromCharCode(0x2026) + ' ') : say;
+      return { text, say, span, idiom: { head: dots(w.b || w.w || text), mean: String(w.m || '') } };
     }
-    return { text, hit: Y.dict.ready() ? Y.dict.lookup(text, { first: cur.from === cur.to && atHead(cur.from) }) : null };
+    return { text: say, say, hit: Y.dict.ready() ? Y.dict.lookup(say, { first: cur.from === cur.to && atHead(cur.from) }) : null };
   }
 
   const dictErrText = () => ui.t(dictErr === 'network' ? 'word.dictNet' : 'word.dictBad');
@@ -8803,7 +9045,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   // 「easy の最上級」(原形に直して引いたとき)・「もとの形 take a deep breath」(熟語の見出しの形が、本文と違うとき)
   function viaPart(p){
     if (p.idiom){
-      if (same(p.idiom.head, p.text)) return null;
+      if (same(p.idiom.head, dots(p.text))) return null;
       return ui.el('div', { class: 'via' }, [ui.t('word.base') + ' ', ui.el('span', { class: 'en', lang: 'en', text: p.idiom.head })]);
     }
     const via = p.hit && p.hit.via;
@@ -8831,11 +9073,27 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     act('expand', cur.sid);
     paint();
   }
-  function sentPart(){
+  function sentPart(p){
     const join = (a, b) => cur.tokens.slice(a, b).map(t => String(t.s)).join('');
+    const sp = p.span;
+    let mid = [ui.el('span', { class: 'sel', text: join(cur.from, cur.to + 1) })];
+    if (sp && sp.parts && cur.from === sp.from && cur.to === sp.to){
+      // 離れた熟語: 熟語の語を強調し、間の語(ひと続き)に破線(本文の印と同じ形=案 C)
+      mid = [];
+      let k = cur.from;
+      sp.parts.forEach((pt, n) => {
+        const g = n ? sp.gaps.filter(r => r.from > sp.parts[n - 1].to && r.to < pt.from) : [];
+        if (g.length){
+          mid.push(join(k, g[0].from), ui.el('span', { class: 'gap', text: join(g[0].from, g[g.length - 1].to + 1) }));
+          k = g[g.length - 1].to + 1;
+        }
+        mid.push(join(k, pt.from), ui.el('span', { class: 'sel', text: join(pt.from, pt.to + 1) }));
+        k = pt.to + 1;
+      });
+    }
     return ui.el('div', { class: 'sent' }, [
       ui.el('div', { class: 'txt' }, [
-        ui.el('div', { class: 'e', lang: 'en' }, [join(0, cur.from), ui.el('span', { class: 'sel', text: join(cur.from, cur.to + 1) }), join(cur.to + 1)]),
+        ui.el('div', { class: 'e', lang: 'en' }, [join(0, cur.from)].concat(mid, [join(cur.to + 1)])),
         ui.el('div', { class: 'j', text: cur.jp })
       ]),
       sayBtn('sent', 'saysent', 20, cur.en)
@@ -8860,7 +9118,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         p.hit ? ui.el('span', { class: 'src', text: ui.t('word.srcDict') }) : null,
         ui.el('button', { class: 'iconbtn end', 'data-act': 'close', 'data-focus': '', 'aria-label': ui.t('note.close'), onclick: close }, [ui.icon('close', 20, 2)])
       ]),
-      ui.el('div', { class: 'headrow' }, [ui.el('div', { class: 'head' + (p.text.length > cfg.ui.headLong ? ' long' : ''), lang: 'en', text: p.text }), sayBtn('word', 'sayword', 22, p.text)]),
+      ui.el('div', { class: 'headrow' }, [ui.el('div', { class: 'head' + (p.text.length > cfg.ui.headLong ? ' long' : ''), lang: 'en', text: p.text }), sayBtn('word', 'sayword', 22, p.say)]),
       viaPart(p),
       meanPart(p),
       aiPart(),
@@ -8872,7 +9130,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         ui.el('button', { class: 'next', 'data-act': 'next', disabled: next < 0, onclick: () => grow(next) }, [ui.t('word.next'), ui.icon('chevR', 18, 2)]),
         cur.from !== cur.from0 || cur.to !== cur.to0 ? ui.el('button', { class: 'reset', 'data-act': 'reset', onclick: reset }, [ui.icon('refresh', 18, 2), ui.t('word.reset')]) : null
       ]),
-      sentPart(),
+      sentPart(p),
       actsPart(p)
     ]);
     while (body.firstChild) body.removeChild(body.firstChild);
