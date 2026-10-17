@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.25
+// @version      0.1.26
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        https://ncode.syosetu.com/*
 // @match        https://novel18.syosetu.com/*
@@ -14,6 +14,7 @@
 // @grant        GM.setValue
 // @grant        GM.deleteValue
 // @grant        GM.listValues
+// @grant        GM_registerMenuCommand
 // @run-at       document-end
 // @noframes
 // @sandbox      DOM
@@ -21,7 +22,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.25 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.26 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -133,7 +134,15 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     apiBase: null,
     dict: { load: dictLoad },
     info: { handler: String((gmInfo && gmInfo.scriptHandler) || 'userscript'), ios: /iP(hone|ad|od)/.test(ua) || (/Macintosh/.test(ua) && touch), touch },
-    onToggle(){}                                                      // Tampermonkey のメニューに、スクリプトの項目は出ない(§11-1)。入口はページの上
+    // Tampermonkey のメニューに 1 行(§2-2。v1.50 工程8c-1)。PC の Tampermonkey では、拡張機能のメニューに出る見込み。
+    //   iPhone では、工程1(2026-10-02)で、前の版が足した項目が出なかった(§11-1)。新しい Tampermonkey で出るかを、確かめ直す(工程8c-1)。
+    //   入口は、今までどおりページの上にもある(メニューに出なくても、困らない)
+    onToggle(fn, opt){
+      if (typeof fn !== 'function' || typeof GM_registerMenuCommand !== 'function') return;
+      const label = String((opt && opt.label) || '');
+      if (!label) return;
+      safe(() => GM_registerMenuCommand(label, () => { try { fn(); } catch (e){} }));
+    }
   };
 })();
 
@@ -142,7 +151,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.25',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.26',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -6906,6 +6915,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     'err.other': 'うまくいきませんでした。もう一度押してください',
     'err.detail': '{text}({detail})',
     'clip': '{text}…',
+    // Tampermonkey のメニュー(ブラウザの拡張機能のメニューの中。§2-2 の env.onToggle。v1.50 工程8c-1。文言は仮=工程8c-2 で利用者に見せて決める)
+    'tm.toggle': 'ブレンド / 日本語に戻す',
     // メニュー(キャンバス3ページ目。学習レベルは出さない=設計メモ 2-5)
     'menu.page': 'このページ',
     'menu.offline': 'オフライン保存',
@@ -10276,11 +10287,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (legacy()){ if (Y.page.status().notice?.kind !== 'conflict') conflict(); return; }
       sweep();
     }, Y.config.page.waitMs);
-    // 4. 入れ物からの「ブレンド/戻す」の合図(拡張のツールバー。無い入れ物では何もしない)
+    // 4. 入れ物からの「ブレンド/戻す」の合図(拡張のツールバー・Tampermonkey のメニュー。無い入れ物では何もしない)
     Y.env.onToggle(() => {
       const st = Y.page.state;
       if (st === 'on' || st === 'busy') Y.page.off(); else Y.page.blend();
-    });
+    }, { label: Y.msg ? Y.msg.t('tm.toggle') : '' });
     // 5. URL が変わったら(ページを読み込み直さずに移るサイト)、片づけて、もう一度。ページの中の印(#…)だけの変化は数えない
     Y.sites.watch(() => { Y.page.leave().then(() => { diag.restart(); diag.mark('url'); go(); }); }, { get: () => String(location.href).split('#')[0] });   // go が、今の版のボタンを見て知らせる
   };
