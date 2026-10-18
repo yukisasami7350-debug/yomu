@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.32
+// @version      0.1.33
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -20,7 +20,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.32 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.33 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -150,7 +150,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.32',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.33',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -265,7 +265,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     voice: { rate: 0.95, delayMs: 15 },   // 読み上げの速さの初期値(§8-3)・iPhone 以外で、鳴らし始めを遅らせる時間(止める処理とぶつからないように。§9-7)
     dict: {                        // 内蔵辞書(§7-3)
       ver: 1,                      // 辞書データの版。上げると、端末に置いた写しを取り直す
-      key: 'dict/main',            // サイトの保存に置く場所(§8-3)
+      key: 'dict/main',            // 写しを置く場所(§8-3)。全サイト共通の保存(store.common。人に属さない所)か、サイトの保存
+      commonIn: ['gm'],            // 全サイト共通の保存に写しを置く、保存の種類(Tampermonkey の保存。工程8f-1。ページの localStorage はサイトごとなので入れない)
       checkEvery: 97,              // 取ってきた辞書の形を、何行おきに見るか
       qMax: 80,                    // 引く語句の長さ(これより長いものは引かない)
       alsoMax: 3                   // いっしょに返す見出し(もとの語 など)の数
@@ -2708,11 +2709,12 @@ Yomu.rest = function(){
   }
 
   // ---- shared / site の口 ----
-  function makeArea(area){
+  //   root: true = 全サイト共通の保存の、人(p/{pid}/)に属さない所(store.common。内蔵辞書の写し=工程8f-1。書き出しには入らない=schema.parts に無い)
+  function makeArea(area, root){
     const kv = () => Y.env[area];
-    // shared の path には p/{pid}/ が前に付く(meta だけは付かない)。site には付かない
-    const pre = () => (area === 'shared' ? 'p/' + store.pid + '/' : '');
-    const raw = path => (area === 'shared' && path !== 'meta' ? pre() + path : String(path));
+    // shared の path には p/{pid}/ が前に付く(meta だけは付かない)。site と common には付かない
+    const pre = () => (area === 'shared' && !root ? 'p/' + store.pid + '/' : '');
+    const raw = path => (area === 'shared' && !root && path !== 'meta' ? pre() + path : String(path));
     // 同じ所への書き込み(update・set・del)は、呼んだ順に1つずつ
     const tails = new Map();
     function queue(key, job){
@@ -2754,6 +2756,7 @@ Yomu.rest = function(){
   }
   store.shared = makeArea('shared');
   store.site = makeArea('site');
+  store.common = makeArea('shared', true);
 
   // ---- 起動(§8-1・§8-2 の 1・2) ----
   let opening = null;
@@ -5424,7 +5427,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
 /* ---- core/dict.js ---- */
 // core/dict.js — 内蔵辞書(部品の約束 §7-3)。通信なしで単語の意味を出す。元は EJDict(CC0。tools/make_dict.js が作る)
-//   load()   初めて引くときに1回。サイトの保存に写しがあれば読み、無ければ入れ物(Yomu.env.dict.load)から取ってきて、保存に置く
+//   load()   初めて引くときに1回。保存に写しがあれば読み、無ければ入れ物(Yomu.env.dict.load)から取ってきて、保存に置く
+//            置く所は、全サイト共通の保存が Tampermonkey の保存(config.dict.commonIn)なら、そこに 1 つ(store.common)。ほかは、今までどおりサイトの保存(工程8f-1。
+//            サイトごとに約 4.5MB ずつ増え続けたため。2026-10-18 利用者と決めた)。共通に置けたら、このサイトの古い写しは消す
 //   lookup() 大きな1本の文字のまま、二分探索で引く(4.7 万語をオブジェクトにしない)。そのまま → 大文字と小文字のちがい → 原形の候補、の順
 //   辞書の形: 1行1語「見出し\t意味」・改行は LF・並びは「小文字にした見出し → もとの見出し」の、字の番号の順(make_dict.js と同じ比べ方)
 (function(){
@@ -5435,7 +5440,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const RSQ = String.fromCharCode(0x2019);   // 曲がったアポストロフィ(番号で作る。engine/README.md の「書くときの注意」)
   const fold = s => s.toLowerCase();
 
-  let text = null, count = 0, from = null, kept = false;   // 読み込んだ辞書・語の数・どこから('site'|'net')・保存に置いてあるか
+  let text = null, count = 0, from = null, kept = false;   // 読み込んだ辞書・語の数・どこから('common'|'site'|'net')・保存に置いてあるか
+  // 全サイト共通の保存に置くか(入れ物の保存の種類で決める。ページの localStorage などは、サイトごとなので置かない)
+  const toCommon = () => { const sh = Y.env && Y.env.shared; return !!sh && C.commonIn.includes(sh.backend); };
+  const fresh = rec => util.isPlain(rec) && rec.ver === C.ver && typeof rec.text === 'string';
+  // このサイトの古い写しを消す(共通に置いてあるとき。消せなくても、引くのには響かない)
+  const dropSite = () => store.site.del(C.key).catch(() => {});
   let loading = null;
 
   // ---- 辞書の形の確かめ(取ってきたものが、辞書でない何かだったときに、保存に置かない) ----
@@ -5559,16 +5569,31 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const since = a => Math.round((tick() - a) * 10) / 10;
   let stat = null;                 // { from, n, readMs, netMs?, saveMs?, saved, looks, lookMs }
   async function doLoad(opt){
-    // 1. サイトの保存に写しがあれば、それを使う
+    const common = toCommon();
     let rec;
     const t0 = tick();
+    // 1. 全サイト共通の保存に写しがあれば、それを使う(工程8f-1)
+    if (common){
+      try { rec = await store.common.get(C.key); } catch (e){ rec = undefined; }
+      if (fresh(rec)){
+        const n = inspect(rec.text);
+        if (n){ use(rec.text, n, 'common', true); stat = { from: 'common', n, readMs: since(t0), saved: true, looks: 0, lookMs: null }; dropSite(); return { n, from: 'common', saved: true }; }
+      }
+      rec = undefined;
+    }
+    // 2. サイトの保存に写しがあれば、それを使う(共通に置けるなら、共通へ移して、サイトの写しは消す)
     try { rec = await store.site.get(C.key); } catch (e){ rec = undefined; }
     const readMs = since(t0);
-    if (util.isPlain(rec) && rec.ver === C.ver && typeof rec.text === 'string'){
+    if (fresh(rec)){
       const n = inspect(rec.text);
-      if (n){ use(rec.text, n, 'site', true); stat = { from: 'site', n, readMs: since(t0), saved: true, looks: 0, lookMs: null }; return { n, from: 'site', saved: true }; }
+      if (n){
+        use(rec.text, n, 'site', true);
+        stat = { from: 'site', n, readMs: since(t0), saved: true, looks: 0, lookMs: null };
+        if (common){ try { await store.common.set(C.key, rec, { evict: false }); dropSite(); } catch (e){} }
+        return { n, from: 'site', saved: true };
+      }
     }
-    // 2. 入れ物から取ってくる(配る場所から。§2-2)
+    // 3. 入れ物から取ってくる(配る場所から。§2-2)
     const env = Y.env && Y.env.dict;
     if (!env || typeof env.load !== 'function') throw util.error('bad', '内蔵辞書を取ってくる口が無い');
     let got;
@@ -5584,12 +5609,17 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (!n) throw util.error('parse', '取ってきたものが、辞書の形でない');
     use(got, n, 'net', false);
     const t2 = tick();
-    // 3. 保存に置く(訳したページを巻き添えで捨てない。置けなくても、このページの間は引ける)
+    // 4. 保存に置く(訳したページを巻き添えで捨てない。置けなくても、このページの間は引ける)。共通に置けなければ、サイトの保存へ
     let saved = true;
     if (env.cache === false) saved = false;
     else {
-      try { await store.site.set(C.key, { ver: C.ver, n, at: util.nowISO(), text: got }, { evict: false }); }
-      catch (e){ saved = false; }
+      const rec2 = { ver: C.ver, n, at: util.nowISO(), text: got };
+      let done = false;
+      if (common){ try { await store.common.set(C.key, rec2, { evict: false }); done = true; dropSite(); } catch (e){} }
+      if (!done){
+        try { await store.site.set(C.key, rec2, { evict: false }); }
+        catch (e){ saved = false; }
+      }
     }
     kept = saved;
     stat = { from: 'net', n, readMs, netMs, saveMs: since(t2), saved, looks: 0, lookMs: null };
@@ -5611,8 +5641,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     },
     timing: () => (stat ? Object.assign({}, stat) : null),
     format,
-    // 保存に置いた写しを消す(メモリの分も)。次に引くとき、取り直す
-    async clear(){ text = null; count = 0; from = null; kept = false; await store.site.del(C.key); }
+    // 保存に置いた写しを消す(メモリの分も。共通とサイトの両方)。次に引くとき、取り直す
+    async clear(){ text = null; count = 0; from = null; kept = false; if (toCommon()) await store.common.del(C.key); await store.site.del(C.key); }
   };
 
   Yomu.dict = dict;
@@ -6374,8 +6404,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   // 熟語さがしの返事を読む。list = 送った [{ id, en, target_jp }]、sids = その通し番号 → sid
   function idiomReader(list, sids, onItem){
     const N = list.length, C = config.idioms;
-    const rep = { sent: N, got: 0, missing: [], dup: 0, extra: 0, empty: 0, ungrounded: 0, over: 0, words: 0, finish: null };
+    const rep = { sent: N, got: 0, missing: [], dup: 0, extra: 0, empty: 0, emptyW: 0, emptyM: 0, emptyLong: 0, emptyShape: 0, hollow: 0, ungrounded: 0, over: 0, words: 0, finish: null };
     const seen = new Set();
+    // 形の合わない熟語しか無く、残せた熟語が 0 の文は、終わりまで渡さずに取っておく(工程8f-1。2026-10-18 利用者と決めた):
+    //   1回の返事の全部で、残せた熟語が 0 なら、その文は届かなかったと同じに扱う(rep.missing へ。w を入れない=「熟語さがしをやり直す」で送れる)。
+    //   1つでも残せた熟語があれば、ふつうに渡す(熟語の無い文に、AI が空の熟語を書いてくることがあるので、1文ごとには見ない)
+    const held = [];
     const arr = wire.array(it => {
       const id = it ? wire.idOf(it.id) : null;
       if (id === null || id >= N || !Array.isArray(it.words)){ rep.extra++; return; }
@@ -6383,9 +6417,15 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       seen.add(id);
       // 形の合うものだけを取り出す(w と m は必ず要る)。同じ熟語の2つ目は、だまって除く
       const cand = [], had = new Set();
+      let bad = 0;
       it.words.forEach(x => {
         const w = isPlain(x) ? str(x.w) : '', m = isPlain(x) ? str(x.m) : '';
-        if (!w || !m || m.length > C.mMax){ rep.empty++; return; }      // 長すぎる意味は、熟語の意味ではない(ページの文章を返してきた など)
+        if (!w || !m || m.length > C.mMax){                              // 長すぎる意味は、熟語の意味ではない(ページの文章を返してきた など)
+          rep.empty++; bad++;
+          // わけの数(工程8f-1。返事そのものは端末に残らないので、次に起きたとき形が分かるように。数だけで、ページの文章は残さない)
+          if (!isPlain(x)) rep.emptyShape++; else if (!w) rep.emptyW++; else if (!m) rep.emptyM++; else rep.emptyLong++;
+          return;
+        }
         if (had.has(flat(w))) return;
         had.add(flat(w));
         const b = str(x.b);
@@ -6401,14 +6441,20 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       rep.words += words.length;
       // 文法の印(工程G1 のあと)。単元の ID の形(英数字と . _ : -)だけを受け取る(相手が返した、そのほかの欄は残さない=ページの文章を、まぎれて保存しないため)
       const g = Array.isArray(it.g) ? it.g.filter(v => typeof v === 'string' && v.length <= C.gLen && GRAMMAR_ID.test(v)).slice(0, C.gMax) : [];
-      onItem(sids[id], words, g.length ? g : undefined);
+      if (!words.length && bad) held.push([id, g]);
+      else onItem(sids[id], words, g.length ? g : undefined);
     }, IDIOM_READ);
     return {
       push(text){ arr.push(text); },
       // 1回だけ呼ぶ(通信が終わったとき)
       end(finish){
         arr.end();                                   // 配列の形でなかった返事は、ここで読み直される(wire.array)
-        rep.missing = sids.filter((sid, n) => !seen.has(n));
+        const hollow = new Set();
+        if (!rep.words) held.forEach(([id]) => hollow.add(id));
+        else held.forEach(([id, g]) => onItem(sids[id], [], g.length ? g : undefined));
+        rep.hollow = hollow.size;
+        rep.got -= hollow.size;                      // 届かなかったと同じ扱い。全部がそうなら failed(「熟語さがしができませんでした」とやり直す)
+        rep.missing = sids.filter((sid, n) => !seen.has(n) || hollow.has(n));
         rep.finish = finish;
         return util.clone(rep);
       }
@@ -6438,7 +6484,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const ai = { m: settings.get().aux.idiom, think: 'none' };
     const tell = teller();
     const reader = idiomReader(list, sids, (sid, words, g) => tell.call(on.item, [sid, words, g]));
-    const stateOf = rep => (!rep.got ? 'failed' : rep.finish === 'stop' && !rep.missing.length ? 'done' : 'partial');     // 1文も届かなければ、ふつうに終わっていても failed
+    // 1文も届かなければ、ふつうに終わっていても failed。残せた熟語が全部で 0 で、形の合わない熟語だけの文があったときも failed(工程8f-1。ページに熟語が 1 つも出ない=「熟語さがしができませんでした」と、やり直す)
+    const stateOf = rep => (!rep.got || (rep.hollow && !rep.words) ? 'failed' : rep.finish === 'stop' && !rep.missing.length ? 'done' : 'partial');
     if (!list.length) return { rep: reader.end('stop'), run: null, state: 'done', model: ai.m, think: ai.think, provider: null, promptV: prompts.V, wireV: wire.V, iv: prompts.IV };
     const prompt = prompts.idioms({ level: o.level, scene: o.scene, list });
     const res = await exchange({ role: 'idiom', ai, prompt, signal: o.signal, push: t => reader.push(t), end: f => reader.end(f), x: { iv: prompts.IV },
@@ -6609,10 +6656,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       + ' padding: 0.15em 0.3em; margin: 0 2px; -webkit-box-decoration-break: clone; box-decoration-break: clone; letter-spacing: normal; text-indent: 0; line-height: 1;'
       + ' -webkit-text-emphasis: none; text-emphasis: none; word-break: normal; overflow-wrap: break-word; -webkit-hyphens: manual; hyphens: manual; }',
     R + ' .yomu-w { cursor: pointer; padding: 0.25em 0; }',
-    R + ' .yomu-i { font-weight: 700; border-bottom: 2px solid ' + c('idiom') + '; padding-bottom: 0; }',
+    // 熟語の下線と、間の語の破線を、次の行の英文の地より前に描く(position: relative。工程8f-1): 行間のせまいサイト(Yahoo!ニュースのスマホ=字 16px・行の高さ 1.4)では、
+    //   次の行の地(上に 0.15em はみ出す)が、前の行の下線のあとに描かれて、下線が隠れた(見本ページで 173 本のうち 113 本に重なった)。「あ/A」と同じ書き方
+    R + ' .yomu-i { position: relative; font-weight: 700; border-bottom: 2px solid ' + c('idiom') + '; padding-bottom: 0; }',
     // 離れた熟語の間の語(handed the envelope back の the envelope。工程T-5c=案 C): 熟語と同じ色の破線・ふつうの太さ。まとまり全体に1本(語ごとに切ると、つなぎ目に継ぎ目が出る)。
     //   熟語の実線と同じ高さ(字の下 2px)。刻みは、どのブラウザでも同じになるよう、境目の線(dashed)でなく、背景の縞で描く
-    R + ' .yomu-g { padding-bottom: 2px; background-image: repeating-linear-gradient(90deg, ' + c('idiom') + ' 0 ' + GAP_DASH[0] + 'px, transparent ' + GAP_DASH[0] + 'px ' + (GAP_DASH[0] + GAP_DASH[1]) + 'px);'
+    R + ' .yomu-g { position: relative; padding-bottom: 2px; background-image: repeating-linear-gradient(90deg, ' + c('idiom') + ' 0 ' + GAP_DASH[0] + 'px, transparent ' + GAP_DASH[0] + 'px ' + (GAP_DASH[0] + GAP_DASH[1]) + 'px);'
       + ' background-size: 100% 2px; background-position: 0 100%; background-repeat: no-repeat; }',
     // 利用者が「あ」で戻した日本語
     ON + ' .yomu-s[data-yomu-st="back"] > .yomu-jp { background: ' + c('backBg') + '; border-radius: 6px; padding: 0.15em 0.3em; margin: 0 2px;'
