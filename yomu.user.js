@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.33
+// @version      0.1.34
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -20,7 +20,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.33 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.34 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -150,7 +150,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.33',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.34',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 1,                     // 保存の形の版(§8-2)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -651,7 +651,13 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 
   const BLOCK = 'p,div,section,article,main,td,th,li,dd,dt,blockquote,pre,h1,h2,h3,h4,h5,h6,header,footer,nav,aside,figure,figcaption,form,table,tr,tbody,ul,ol,dl,body,center,details,summary,fieldset,address';
   const SKIP = 'script,style,noscript,template,textarea,select,option,button,svg,math,iframe,object,label';
-  const BAD = 'nav,aside,footer,header,form,menu,dialog,[role="navigation"],[role="banner"],[role="contentinfo"],[role="complementary"],[role="search"],[role="dialog"],[hidden],[aria-hidden="true"]';
+  const BAD = 'nav,aside,footer,header,form,menu,dialog,[role="navigation"],[role="banner"],[role="contentinfo"],[role="complementary"],[role="search"],[role="dialog"],[aria-hidden="true"]';   // hidden は下の hid(たたんだ節の hidden="until-found" を除く)
+  // たたんだ節(v1.59 工程8f-2。スマホのウィキペディア): 見出しを押すと開く節の中身は、画面に出ていなくても本文として数える。
+  //   hidden="until-found"(ページの中の検索で開く)の中か、隠れ方のいちばん外の要素のすぐ前に、画面に出ている見出し(h2〜h6 か、それを持つ入れ物)がある
+  const HEAD = 'h2,h3,h4,h5,h6';
+  const untilFound = el => String(el.getAttribute('hidden') || '').toLowerCase() === 'until-found';
+  const hid = el => el.hasAttribute('hidden') && !untilFound(el);
+  const headed = el => { const p = el && el.previousElementSibling; return !!p && (p.matches(HEAD) || !!p.querySelector(HEAD)); };
   // Readability の「本文でなさそうな名前」と「本文かもしれない名前」(class か id に当たるか)
   const UNLIKELY = /-ad-|ai2html|banner|breadcrumbs|combx|comment|community|cover-wrap|disqus|extra|footer|gdpr|header|legends|menu|related|remark|replies|rss|shoutbox|sidebar|skyscraper|social|sponsor|supplemental|ad-break|agegate|pagination|pager|popup|yom-remote/i;
   const MAYBE = /and|article|body|column|content|main|mathjax|shadow/i;
@@ -752,17 +758,26 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       for (let e = el; e && e !== body && e.nodeType === 1; e = e.parentElement){
         if (cache.has(e)){ res = cache.get(e); break; }
         path.push(e);
-        if (e.matches(BAD) || (e.style && e.style.display === 'none') || unlikely(e)){ res = true; break; }
+        if (e.matches(BAD) || hid(e) || (e.style && e.style.display === 'none') || unlikely(e)){ res = true; break; }
       }
       path.forEach(e => cache.set(e, res));
       return res;
+    };
+    // 画面に出ていないまとまりが、たたんだ節の中か(上の HEAD の注)
+    const fold = new Map();
+    const folded = b => {
+      for (let a = b; a && a !== body; a = a.parentElement) if (untilFound(a)) return true;
+      let e = b;
+      while (e.parentElement && e.parentElement !== body && !shown(e.parentElement)) e = e.parentElement;
+      if (!fold.has(e)) fold.set(e, headed(e) && shown(e.previousElementSibling));
+      return fold.get(e);
     };
     let best = null, cur = null;
     const close = () => { if (cur && (!best || cur.s > best.s)) best = cur; cur = null; };
     blocks.forEach((r, b) => {
       if (!r.all) return;
       if (b.closest('figure')) return;                                              // 写真・図の中(説明の字)は、続きを切らず、数えない(v1.53 工程8d: ログインした日経は、説明の入れ物の名前に footer があり、本文がそこで切れた)
-      if (bad(b) || (vis && !shown(b))){ close(); return; }                        // 頭・足・メニュー・関連の記事・画面に出ていない所 などで切る
+      if (bad(b) || (vis && !shown(b) && !folded(b))){ close(); return; }         // 頭・足・メニュー・関連の記事・画面に出ていない所(たたんだ節を除く) などで切る
       if (r.link / r.all >= D.link && r.link >= D.linkMin){ close(); return; }     // リンクの多いまとまり(見出しのリンク・一覧)で切る
       if (!cur) cur = { s: 0, ends: 0, kana: 0, ch: 0, list: [] };
       const own = r.all - r.link;
@@ -771,13 +786,13 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     });
     close();
     if (!best) return none('short');
-    // まとまりの形: 同じ親にある字の割合(節 section はまたぐ)・箇条書きと表の中の字の割合
+    // まとまりの形: 同じ親にある字の割合(節 section はまたぐ。節の中の、見出しのすぐ後ろの中身の入れ物も=v1.59 工程8f-2)・箇条書きと表の中の字の割合
     let inList = 0;
     const byS = new Map();
     best.list.forEach(([b, own]) => {
       if (LISTY.test(b.tagName)) inList += own;
       let q = b.parentElement;
-      while (q && q.tagName === 'SECTION' && q.parentElement && q.parentElement !== body) q = q.parentElement;
+      while (q && q.parentElement && q.parentElement !== body && (q.tagName === 'SECTION' || (q.parentElement.tagName === 'SECTION' && headed(q)))) q = q.parentElement;
       byS.set(q, (byS.get(q) || 0) + own);
     });
     let top = 0;
