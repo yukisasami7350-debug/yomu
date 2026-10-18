@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-title" content="学ぶ画面">
+<title>学ぶ画面(確かめ用)</title>
+<style>
+  /* 専用のページの確かめ用(工程W1)。見た目は仮(W4 で決める)。文は全部 #app の中の囲い(Shadow DOM)に置く=Blendio の見分けは、囲いの中の字を数えない */
+  html { background: #f7f7f5; }
+  @media (prefers-color-scheme: dark) { html { background: #1c1c1e; } }
+  body { margin: 0; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<noscript>JavaScript is off.</noscript>
+<script>
+(function(){
+  'use strict';
+  // 住所の頭(このページの住所。?や#は除く)
+  var HERE = location.origin + location.pathname.replace(/index[.]html$/, '');
+  var MARK = 'data-yomu';            // Blendio が動き出すと、html に版を書く印(engine/src/shell/boot.js の MARK)
+  var CSS = [
+    ':host { all: initial; display: block; }',
+    '.w { --bg: #f7f7f5; --fg: #1d1d1f; --sub: #55555a; --line: #d9d9de; --card: #ffffff; --ok: #1b6e3a; --okbg: #e6f4ea; --warn: #8a5300; --warnbg: #fff3d6; --err: #b3261e; --errbg: #fde7e6; --acc: #2f4ea8;',
+    '  background: var(--bg); color: var(--fg); min-height: 100vh; box-sizing: border-box;',
+    '  font: 17px/1.7 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;',
+    '  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); }',
+    '@media (prefers-color-scheme: dark) { .w { --bg: #1c1c1e; --fg: #f2f2f7; --sub: #b0b0b8; --line: #3a3a3e; --card: #2c2c2e; --ok: #7fd49a; --okbg: #1f3527; --warn: #ffcf70; --warnbg: #3a2f14; --err: #ff9b93; --errbg: #3d1d1b; --acc: #9db4ff; } }',
+    '.in { max-width: 36em; margin: 0 auto; }',
+    'h1 { font-size: 22px; line-height: 1.4; margin: 8px 0 4px; }',
+    'h2 { font-size: 18px; line-height: 1.4; margin: 28px 0 8px; }',
+    'p { margin: 0 0 12px; }',
+    '.lead { color: var(--sub); font-size: 15px; }',
+    '.rows { list-style: none; margin: 16px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }',
+    '.row { display: flex; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--line); align-items: flex-start; }',
+    '.row:first-child { border-top: 0; }',
+    '.k { flex: 0 0 6.5em; color: var(--sub); font-size: 15px; padding-top: 2px; }',
+    '.v { flex: 1 1 auto; min-width: 0; }',
+    '.tag { display: inline-block; font-weight: 600; border-radius: 6px; padding: 0 6px; }',
+    '.ok .tag { color: var(--ok); background: var(--okbg); }',
+    '.warn .tag { color: var(--warn); background: var(--warnbg); }',
+    '.err .tag { color: var(--err); background: var(--errbg); }',
+    '.wait .tag { color: var(--sub); background: transparent; padding: 0; }',
+    '.note { display: block; font-size: 15px; color: var(--sub); margin-top: 2px; }',
+    'ol, ul { margin: 0 0 12px; padding-left: 1.4em; }',
+    'li { margin: 4px 0; }',
+    '.btns { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 4px; justify-content: flex-end; }',
+    'button { font: inherit; font-size: 17px; font-weight: 600; min-height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--acc); background: var(--acc); color: #fff; cursor: pointer; }',
+    '@media (prefers-color-scheme: dark) { button { color: #10172e; } }',
+    'button.sub { background: transparent; color: var(--acc); }',
+    '.msg { min-height: 1.7em; font-size: 15px; text-align: right; margin: 0; }',
+    '.msg.ok { color: var(--ok); } .msg.err { color: var(--err); font-weight: 600; }',
+    'code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; word-break: break-all; }',
+    '.box { border-left: 4px solid var(--line); padding: 2px 0 2px 12px; margin: 12px 0; }',
+    '.box.warn { border-color: var(--warn); }'
+  ].join('\n');
+  var HTML = [
+    '<div class="w"><div class="in">',
+    '<h1>学ぶ画面(確かめ用)</h1>',
+    '<p class="lead">ここに、単語帳と復習の画面を置く予定です。今は、このページで Blendio が動くかを確かめるためのページです。</p>',
+    '<ul class="rows">',
+    '  <li class="row" data-row="open"><span class="k">開き方</span><span class="v"></span></li>',
+    '  <li class="row" data-row="net"><span class="k">電波</span><span class="v"></span></li>',
+    '  <li class="row" data-row="sw"><span class="k">ページの控え</span><span class="v"></span></li>',
+    '  <li class="row" data-row="yomu"><span class="k">Blendio</span><span class="v"></span></li>',
+    '</ul>',
+    '<div class="btns"><button type="button" data-act="copy">結果をコピー</button></div>',
+    '<p class="msg" data-msg="copy" aria-live="polite"></p>',
+    '<h2>Blendio が動いているかの確かめ方</h2>',
+    '<ol>',
+    '  <li>Tampermonkey のメニューを開きます(iPhone は、Safari の住所の欄にある、拡張機能のボタン → Tampermonkey)。</li>',
+    '  <li>「このページをブレンド / 日本語に戻す」の 1 行があれば、このページで Blendio が動いています。</li>',
+    '  <li>その 1 行を押すと、Blendio が「日本語の文が、見つかりませんでした」と知らせます。このページでは、それで正しい動きです(AI との通信はしません)。押したあと、上の「Blendio」の行が「動いています」に変わります。</li>',
+    '</ol>',
+    '<h2>動いていないとき</h2>',
+    '<div class="box warn" data-box="app" hidden>',
+    '  <p><b>いまは、Safari の外の窓(Webアプリ)で開いています。</b>この窓では、Blendio が動きません。Safari で開き直してください。</p>',
+    '  <div class="btns"><button type="button" class="sub" data-act="addr">住所をコピー</button></div>',
+    '  <p class="msg" data-msg="addr" aria-live="polite"></p>',
+    '  <p>コピーした住所を、Safari の住所の欄に貼って開きます。ホーム画面のアイコンを作り直すときは、Safari で開いてから、共有のボタン →「ホーム画面に追加」で、「Webアプリとして開く」をオフにします。</p>',
+    '</div>',
+    '<p><b>Safari のタブで開いているのに、メニューに 1 行が出ないとき</b></p>',
+    '<ul>',
+    '  <li>Safari で Tampermonkey がオンになっているか(iPhone の「設定」→「アプリ」→「Safari」→「機能拡張」→ Tampermonkey)。</li>',
+    '  <li>このサイトを許可しているか(住所の欄の拡張機能のボタン → Tampermonkey で、このサイトを「許可」)。</li>',
+    '  <li>Tampermonkey の中で、Blendio がオンになっているか。</li>',
+    '  <li>PC の Edge では、拡張機能の画面の Tampermonkey の「詳細」で、「ユーザー スクリプトを許可する」がオンか。</li>',
+    '</ul>',
+    '<p class="lead">住所: <code data-addr></code></p>',
+    '</div></div>'
+  ].join('\n');
+
+  var host = document.getElementById('app');
+  var root = host.attachShadow({ mode: 'open' });
+  root.innerHTML = '<style>' + CSS + '</style>' + HTML;
+  var $ = function(s){ return root.querySelector(s); };
+  $('[data-addr]').textContent = HERE;
+
+  var state = { open: '', net: '', sw: '', yomu: '' };
+  function put(name, tone, tag, note, short){
+    var row = $('[data-row="' + name + '"]');
+    row.className = 'row ' + tone;
+    var v = row.querySelector('.v');
+    v.textContent = '';
+    var t = document.createElement('span'); t.className = 'tag'; t.textContent = tag; v.appendChild(t);
+    if (note){ var n = document.createElement('span'); n.className = 'note'; n.textContent = note; v.appendChild(n); }
+    state[name] = short || tag;
+  }
+
+  // 開き方: ホーム画面の Webアプリの窓(Safari の外)か、ブラウザのタブか
+  var standalone = navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  if (standalone){
+    put('open', 'warn', '⚠ Webアプリの窓(Safari の外)', 'この窓では Blendio が動きません(下の「動いていないとき」)', 'Webアプリの窓');
+    $('[data-box="app"]').hidden = false;
+  } else {
+    put('open', 'ok', '✓ ブラウザのタブ', '', 'ブラウザのタブ');
+  }
+
+  // 電波
+  function net(){
+    if (navigator.onLine) put('net', 'ok', '✓ つながっている', '', 'つながっている');
+    else put('net', 'warn', '⚠ つながっていない', 'このページは、ページの控えから開きました', 'つながっていない(控えから開いた)');
+  }
+  net();
+  window.addEventListener('online', net);
+  window.addEventListener('offline', net);
+
+  // ページの控え(電波の無いときも開けるように。sw.js)
+  function swFail(e){ put('sw', 'err', '✗ 作れませんでした', '電波のある所で、開き直してください(' + String(e && e.name || e) + ')', '作れなかった ' + String(e && e.name || e)); }
+  if (!('serviceWorker' in navigator)){
+    put('sw', 'err', '✗ このブラウザでは作れません', '電波の無い所では開けません', '作れない');
+  } else {
+    put('sw', 'wait', '… 用意しています', '', '用意中');
+    navigator.serviceWorker.register('sw.js').then(function(reg){
+      return navigator.serviceWorker.ready.then(function(){
+        if (navigator.serviceWorker.controller) put('sw', 'ok', '✓ 用意できた', '電波の無い所でも、このページを開けます', '用意できた');
+        else put('sw', 'ok', '✓ 用意できた', '次に開いたときから、電波の無い所でも開けます', '用意できた(次から)');
+      });
+    }).catch(swFail);
+  }
+
+  // Blendio: 動き出すと、html に印(版)を書く。ページを開いただけでは書かない(メニューの 1 行を押したときなど)
+  function yomu(){
+    var v = document.documentElement.getAttribute(MARK);
+    if (v) put('yomu', 'ok', '✓ 動いています(版 ' + v + ')', '', '動いている 版 ' + v);
+    else put('yomu', 'wait', 'まだ分かりません', 'Tampermonkey のメニューの 1 行を押すと、分かります(下の「確かめ方」)', 'まだ分からない');
+  }
+  yomu();
+  new MutationObserver(yomu).observe(document.documentElement, { attributes: true, attributeFilter: [MARK] });
+
+  // コピー
+  function copy(text, msg){
+    var m = $('[data-msg="' + msg + '"]');
+    var done = function(){ m.className = 'msg ok'; m.textContent = '✓ コピーしました'; };
+    var fail = function(){ m.className = 'msg err'; m.textContent = '✗ コピーできませんでした。この画面の写真を撮って送ってください'; };
+    var old = function(){
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+        root.appendChild(ta); ta.select(); var ok = document.execCommand('copy'); ta.remove();
+        if (ok) done(); else fail();
+      } catch (e){ fail(); }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, old);
+    else old();
+  }
+  function device(){
+    var u = navigator.userAgent, m;
+    if ((m = /iPhone OS ([0-9_]+)/.exec(u))) return 'iPhone iOS ' + m[1].replace(/_/g, '.');
+    if ((m = /Edg[/]([0-9.]+)/.exec(u))) return 'Edge ' + m[1].split('.')[0] + (/Windows/.test(u) ? '(Windows)' : '');
+    if (/Windows/.test(u)) return 'Windows';
+    return 'その他';
+  }
+  function stamp(){
+    var d = new Date(), z = function(n){ return (n < 10 ? '0' : '') + n; };
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + z(d.getHours()) + ':' + z(d.getMinutes());
+  }
+  $('[data-act="copy"]').addEventListener('click', function(){
+    copy('確かめの結果 ' + stamp() + ' / ' + device() + ' / 開き方: ' + state.open + ' / 電波: ' + state.net + ' / 控え: ' + state.sw + ' / Blendio: ' + state.yomu, 'copy');
+  });
+  $('[data-act="addr"]').addEventListener('click', function(){ copy(HERE, 'addr'); });
+})();
+</script>
+</body>
+</html>
