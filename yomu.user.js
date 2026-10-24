@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.34
+// @version      0.1.35
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -13,6 +13,7 @@
 // @grant        GM.deleteValue
 // @grant        GM.listValues
 // @grant        GM_registerMenuCommand
+// @grant        GM_openInTab
 // @run-at       document-end
 // @noframes
 // @sandbox      DOM
@@ -20,12 +21,12 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.34 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.35 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
 Yomu.t0 = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();   // 束が動き始めた時(どのページでもの見分けの時間を測る=§9-8)
-Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/dict-v1.txt","dictBytes":4510087};
+Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/dict-v1.txt","dictBytes":4510087,"siteUrl":"https://yukisasami7350-debug.github.io/yomu/"};
 
 /* ---- shell/env_userscript.js ---- */
 // shell/env_userscript.js — Tampermonkey の中で動く入れ物(部品の約束 §2-1・§2-2。iPhone の Safari と、PC の Edge)
@@ -141,6 +142,17 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       const label = String((opt && opt.label) || '');
       if (!label) return;
       safe(() => GM_registerMenuCommand(label, () => { try { fn(); } catch (e){} }));
+    },
+    // 専用のページ(学ぶ画面=§8-10 の終わり。ビルドが束に入れた住所。無ければ null)と、新しいタブで開く口(工程W4a)
+    //   Tampermonkey の GM_openInTab(読んでいたタブの右に、前に出して開く)。無い入れ物では window.open。開けたら true
+    siteUrl: (Y.build && Y.build.siteUrl) || null,
+    openTab(url){
+      if (typeof url !== 'string' || !/^https?:/.test(url)) return false;
+      if (typeof GM_openInTab === 'function'){ const ok = safe(() => { GM_openInTab(url, { active: true, insert: true, setParent: true }); return true; }); if (ok) return true; }
+      const w = safe(() => win && win.open(url, '_blank'));
+      if (!w) return false;
+      safe(() => { w.opener = null; });
+      return true;
     }
   };
 })();
@@ -150,8 +162,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.34',              // エンジンの版(@version と同じ。出すたびに上げる)
-    schema: 1,                     // 保存の形の版(§8-2)
+    version: '0.1.35',              // エンジンの版(@version と同じ。出すたびに上げる)
+    schema: 2,                     // 保存の形の版(§8-2)。2 = 端末ごとの設定 local を分けた(工程W3b-1。§8-11 の 6)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
       min: 8,                      // 地の文は、これより短ければ訳さない
@@ -284,12 +296,35 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     log: {                         // 読んだ記録(§8-8)
       idleSec: 120, settleMs: 3000, minSec: 5, seenMinDs: 10, keepDays: 400,
       flushSec: 30,                // 読んでいる間、保存に書く間隔
+      memoSec: 5,                  // 重ねずに数える覚え(§8-4 の PageCount)を、画面に出た段落が増えたときに早めに書く間隔(工程W3b-2。iPhone では、離れるときの書き込みが残らないことがあるため)
       tickMs: 1000,                // 画面に出ている段落を見る間隔(page/watch.js)
       evMax: 400,                  // 1つのひと続きに残す、操作の明細の数
       titleMax: 80,                // 題名の長さ
       xKeepDays: { idb: 400, ls: 30 }   // 詳しい分を残す日数(保存先が IndexedDB のとき/それ以外)
     },
     vocab: { exMax: 3, headMax: 80 },  // 単語帳の例文の数・見出しの長さ(§8-7)
+    learn: {                       // 学ぶ画面(§9-10。工程W3b-2〜W4c)。値は目分量(使いながら直す)
+      recent: 3,                   // ホームの「続きを読む」に出す数(新しい順)
+      doneReach: 0.9,              // 最後まで読んだ = 画面に出た所が、終わりのこの割合に入った(次の話か目次へ。§8-11 の 5)
+      waitMs: 5000,                // 専用のページが「学ぶ画面を用意しています…」を出しておく時間(Blendio が動いていないときの案内。ページの側=site/index.html に同じ値を書いてある。工程W4b-1)
+      slowMs: 500,                 // 学ぶ画面: 保存を読むのがこれより長くかかったら「読み込んでいます…」を出す(すぐ終わるときに、字をちらつかせない)
+      secPerWord: [10, 15],        // ホームの「○〜○ 分くらい」: 1 語にかかる秒の見積もり(短い方・長い方。§9-10)
+      lockMs: 500,                 // 復習: 「答えを見る」と答えのボタンは、ほぼ同じ場所に出る。出してからこの間は、次のボタンを効かせない(二度押しで、見ずに答えない。iPhone が 2 回たたいたと見なす間隔 0.3〜0.35 秒より少し長く。工程W4b-2)
+      weekDays: 7,                 // 記録の「この 7 日」(今日を含む学習日の数)
+      chartDays: 14                // 記録の、日ごとの棒グラフの日数
+    },
+    seen: { show: 2, recent: 8, keepDays1: 180 },   // 調べた回数(§8-11 の 4。工程W3b-1): 単語の板に出すのは、合わせた数がこれ以上のとき(工程W4a)・同じ文と見分ける印を、新しい方から残す数・1 回きりの語を捨てるまでの日数
+    review: {                      // 復習(§8-11 の 2・3。工程W3a)。20・10 は目分量=使いながら直す
+      size: 20,                    // 1 回に出す語の数(その回の終わりのもう一度は数えない)
+      newPerDay: 10,               // 初めて出す語は、1 学習日にこの数まで
+      again: 1,                    // 「分からなかった」語を、その回の終わりに、もう一度出す回数
+      learned: 3,                  // 「覚えた」= 学習日ごとの 1 回目の答えで、続けて「分かった」がこの数以上
+      retention: 0.9,              // FSRS の目標(思い出せる見込み)
+      maxIvl: 36500,               // いちばん長い間(日)
+      fuzz: true,                  // 次の間をゆらす(py-fsrs と同じ幅。乱数は語の id と答えの数から作る決まった値)
+      // FSRS-6 のはじめの値 21 個(py-fsrs 6.3.2 の DEFAULT_PARAMETERS。Anki の利用者 約 1 万人の中央値)。人ごとに合わせる(最適化)は、しない
+      w: [0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542]
+    },
     links: { geminiKey: 'https://aistudio.google.com/apikey' },   // 設定の「AI につなぐ」から開く、API キーを作るページ(Google AI Studio)
     plan: { kind: 'own' },         // つなぎ方(core/plan.js)。own = 各自が、自分の API キーで使う(通信の数・モデルの名前を見せる)
     ui: {                          // 操作部(§9-2・§9-3)
@@ -297,6 +332,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       modelMinVer: 3,              // 「一覧から取ってくる」で、版の数字が、これより小さい AI は、並べない(古い世代。数字の無い名前は、見ない)
       shortMax: 480,               // 画面の高さがこれ以下(iPhone の横向き)なら、下から出る板は、画面いっぱいまで・単語の板の下の行を固定しない(px)
       wideMin: 560, wideWidth: 358,   // 画面の幅がこれ以上なら、操作部を右下に寄せて、この幅にする(px)
+      learnSideMin: 840, learnSide: 232,   // 学ぶ画面: 画面の幅がこれ以上なら、下のタブと上の頭のかわりに、左に行き先の一覧(この幅)を出す(px。Material Design 3 の画面の幅の区分で「広い」= 840 から。工程W4c-2)
       wideSheet: 440,              // 広い画面での、板(単語の板・メニュー・設定)の幅(px。中の1行が、英字で 50 字ほど=読みやすい1行の長さ 45〜75 字の中。§9-9)
       offlineEntry: false,         // メニューに「オフライン保存」の入口を出すか(工程5c-3 利用者: 当面、作らない。許されるかは、最後の段階で調べて決める。あとから組み込めるように、入口の場所は残す=true にすると、「準備中」の札が出る)
       themePick: false,            // テーマを手で選ぶ所を出すか(false = いつもサイトの色に合わせる。手で選ぶと、サイトの色と合わずに浮く=設計メモ 2-5。機能は残す: サイトを足すときに確かめ直す)
@@ -330,7 +366,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       grid: 4,                     // 余白の刻み(px。細かい合わせに限り、半分の 2 も使える)
       lineMax: 40,                 // 1行の長さの上限(全角の字数)
       motion: { sheet: 220, bay: 220, tip: 150, fill: 200 },   // 動きの長さ(ms。§9-9。100〜400 の間。板が出る・操作部が隠れる出る・割合の数字・進み具合の帯)
-      chip: { font: 12, pad: 4 }   // 本文の中の「あ/A」: 字の大きさと、押せる範囲を、丸のまわりへ見えない形で広げる幅(px。行の中に入るので、tap.min は当てはめない)
+      chip: { font: 12, pad: 4, gap: 8 }   // 本文の中の「あ/A」と文の終わりの 🔊: 字の大きさと、押せる範囲を、丸のまわりへ見えない形で広げる幅(px。行の中に入るので、tap.min は当てはめない)・「あ」と 🔊 の押せる範囲の間の、どちらも受けない幅(px。工程W4a)
     }
   };
 })();
@@ -498,7 +534,11 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       const link = Array.from(doc.querySelectorAll('.c-announce a')).find(a => pathOf(a) === want);
       return { work: textOf(link), ep: h1 };
     },
-    next(doc){ return hrefOf(doc.querySelector('a.c-pager__item--next')); }
+    next(doc){ return hrefOf(doc.querySelector('a.c-pager__item--next')); },
+    // 鍵から住所に戻す(続きを読む=§8-11 の 5。工程W3b-2)。短編は話の番号が '0'(作品の住所=本文)
+    url(pg){ return 'https://' + host + '/' + pg.work + '/' + (pg.ep === '0' ? '' : pg.ep + '/'); },
+    toc(work){ return /^n\d{4}[a-z]{1,3}$/.test(work) ? 'https://' + host + '/' + work + '/' : null; },   // 作品の形(page と同じ。鍵は小文字)でなければ null
+    short(pg){ return pg.ep === '0'; }
   });
 
   // カクヨム。本文は .widget-episodeBody の中の p(前書き・後書きの入れ物は無い)。縦組みは body の writingDirection-vertical(確かめた)
@@ -512,7 +552,9 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     paras(roots){ return { main: allP(roots), notes: [] }; },
     title(doc){ return { work: textOf(doc.querySelector('#worksEpisodesEpisodeHeader h1')), ep: textOf(doc.querySelector('.widget-episodeTitle')) }; },
     next(doc){ return hrefOf(doc.getElementById('contentMain-readNextEpisode')); },
-    vertical(doc){ return !!(doc.body && doc.body.classList.contains('writingDirection-vertical')); }
+    vertical(doc){ return !!(doc.body && doc.body.classList.contains('writingDirection-vertical')); },
+    url(pg){ return 'https://kakuyomu.jp/works/' + pg.work + '/episodes/' + pg.ep; },
+    toc(work){ return /^\d+$/.test(work) ? 'https://kakuyomu.jp/works/' + work : null; }
   };
 
   // 縦組みか(当てはめが見分け方を持っていればそれ、無ければ本文の入れ物の writing-mode)
@@ -571,11 +613,51 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     if (LOCAL.indexOf(host) >= 0) return !!pick(loc);
     return adapters.some(a => a.hosts.indexOf(host) >= 0);
   }
+  // 専用のページ(学ぶ画面。§9-10 の「入れ物」。工程W4b-1)か: 住所が Yomu.env.siteUrl(dev の束=見本のサーバーの /site/・配る束=build.config.json の siteUrl)の
+  //   いちばん上か index.html。? と # は見ない。どのページでもの見分けより先に見る(shell/boot.js)
+  function learn(loc){
+    const base = Y.env && Y.env.siteUrl;
+    if (!base || !loc || typeof loc.pathname !== 'string') return false;
+    let u;
+    try { u = new URL(base); } catch (e){ return false; }
+    if (String(loc.protocol || '') !== u.protocol || String(loc.host || '').toLowerCase() !== u.host.toLowerCase()) return false;
+    return loc.pathname === u.pathname || loc.pathname === u.pathname + 'index.html';
+  }
   const WEB = {};   // どのページでも(site: 'web')の当てはめ: 縦組みは本文の入れ物の writing-mode だけで見る
+
+  // ---- 鍵から住所に戻す(§3 の「鍵」・§8-11 の 5 の続きを読む。工程W3b-2)----
+  //   pageKey = {site}:{作品}/{話}(なろう・カクヨム)・web:{ホスト}/{道}{?問い}(どのページでも)。作品の鍵 = {site}:{作品}
+  const KEY = /^([a-z][a-z0-9_-]*):([^/\s]+)(?:\/(.+))?$/;
+  const parse = key => { const m = typeof key === 'string' ? KEY.exec(key) : null; return m ? { site: m[1], work: m[2], ep: m[3] === undefined ? null : m[3] } : null; };
+  const isUrl = v => { try { return /^https?:$/.test(new URL(v).protocol); } catch (e){ return false; } };
+  // どのページでもの鍵 → 住所(https とみなす)。道が長くて縮めた鍵(頭の epHead 字+~+ハッシュ)は戻せない(null)
+  function webUrl(host, ep){
+    const W = config.page.web;
+    if (!/^[a-z0-9.-]+$/.test(host) || !ep) return null;
+    if (ep.length > W.epHead && ep.charAt(W.epHead) === '~' && /^[0-9a-z]{1,11}$/.test(ep.slice(W.epHead + 1))) return null;
+    const q = ep.indexOf('?'), path = q < 0 ? ep : ep.slice(0, q), qs = q < 0 ? '' : ep.slice(q + 1);
+    const url = 'https://' + host + '/' + (path === '_' ? '' : path) + (qs ? '?' + qs : '');
+    try { return new URL(url).hostname === host ? url : null; } catch (e){ return null; }
+  }
+  // 見本ページ(dev の束だけ。localhost の /samples/{サイト}.html・-{話}.html)。住所は、道だけ(同じ見本のサーバーの上で開く)
+  const sampleUrl = (k, a) => (Y.env && Y.env.dev && k.work === 'sample' && /^[a-z0-9_]+$/.test(k.ep) && (a.id === 'narou' || a.id === 'kakuyomu')
+    ? '/samples/' + a.id + (k.ep === '1' ? '' : '-' + k.ep) + '.html' : null);
+  // なろう・カクヨムの鍵 → 住所。作った住所を当てはめで読み直して、同じ作品と話に戻るものだけ
+  function siteUrl(k){
+    const a = adapters.find(x => x.id === k.site);
+    if (!a || !a.url || k.ep === null) return null;
+    if (k.work === 'sample') return sampleUrl(k, a);
+    let url;
+    try { url = a.url({ work: k.work, ep: k.ep }); } catch (e){ return null; }
+    let back = null;
+    try { back = a.page(new URL(url)); } catch (e){ return null; }
+    return back && back.work === k.work && back.ep === k.ep ? url : null;
+  }
 
   Yomu.sites = {
     detect,
     known,
+    learn,
     add(adapter){
       if (!adapter || typeof adapter.id !== 'string' || !Array.isArray(adapter.hosts) || typeof adapter.page !== 'function'
         || typeof adapter.roots !== 'function' || typeof adapter.paras !== 'function' || typeof adapter.title !== 'function') throw util.error('bad', '当てはめの形がおかしい');
@@ -629,6 +711,27 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
         try { fn(now); } catch (e){ /* 見張りは止めない */ }
       }, opt.every || config.page.watchMs);
       return () => clearInterval(t);
+    },
+    // ページの鍵(pageKey)→ 住所 | null(戻せない・知らないサイト)。続きを読む(§8-11 の 5)
+    url(pageKey){
+      const k = parse(pageKey);
+      if (!k) return null;
+      return k.site === 'web' ? webUrl(k.work, k.ep) : siteUrl(k);
+    },
+    // 作品の鍵(workKey)→ 作品の目次の住所 | null(なろう・カクヨムだけ。どのページでもには無い)
+    toc(workKey){
+      const k = parse(workKey);
+      const a = k && k.ep === null && k.work !== 'sample' && adapters.find(x => x.id === k.site);
+      if (!a || !a.toc) return null;
+      let url = null;
+      try { url = a.toc(k.work); } catch (e){ return null; }
+      return typeof url === 'string' && isUrl(url) ? url : null;
+    },
+    // 短編か(なろうの話の番号が '0'。最後まで読んだら、続きを読むに出さない=§8-11 の 5)
+    short(pageKey){
+      const k = parse(pageKey);
+      const a = k && k.ep !== null && adapters.find(x => x.id === k.site);
+      return !!(a && a.short && a.short({ work: k.work, ep: k.ep }));
     },
     _pick: pick   // 検査用
   };
@@ -1012,6 +1115,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'menu.look': '見た目',
     'menu.settings': '設定',
     'menu.learn': '学ぶ画面をひらく',
+    'menu.learnFail': '新しいタブを開けませんでした。Safari などで {url} を開くと、学ぶ画面が出ます',
     // 右下のボタンを出さないサイト(どのページでも。工程8c-2。設計メモ 2-6)。2回タップで決める
     'menu.hide': 'このサイトでは、右下のボタンを出さない',
     'menu.hideArmed': 'もう一度押すと、このサイトでは出しません',
@@ -1035,6 +1139,9 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'look.size.s': '小さめ',
     'look.size.m': 'サイトと同じ',
     'look.size.l': '大きめ',
+    'look.say': '文の終わりの 🔊(押すと、その文を聞く)',
+    'look.say.off': '出さない',
+    'look.say.on': '出す',
     'look.style': '英文の見せ方',
     'look.marker': 'マーカー',
     'look.quiet': '書体だけ',
@@ -1044,6 +1151,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'word.label': '単語の意味',
     'word.idiom': '熟語',
     'word.srcDict': '内蔵辞書(通信なし)',
+    'word.seen': '調べたのは {n} 回目',
     'word.base': 'もとの形',
     'word.viaTail': ' の{kind}',
     'word.kind.s': '複数形・三単現',
@@ -1342,12 +1450,14 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'data.inPicked': 'ファイルを読みました。入っているもの: {has}',
     'data.part.settings': '設定',
     'data.part.vocab': '単語帳 {n} 語',
+    'data.part.seen': '調べた回数',                          // 工程W3b-1(2026-10-18 利用者「おすすめで OK」)
+    'data.part.work': '作品ごとの、どこまで読んだか',
     'data.part.log': '読んだ記録 {n} 日分',
     'data.part.logx': '読んだ記録の詳しい分',
     'data.part.runs': '通信の記録',
     'data.part.quota': '回数の記録',
     'data.inMerge': '手元に足す',
-    'data.inMergeNote': '「手元に足す」では、手元のものは消えません。同じ単語は、新しい方を残します。設定は、入っていれば、ファイルの中身になります。',
+    'data.inMergeNote': '「手元に足す」では、手元のものは消えません。同じ単語は、新しい方を残し、復習の答えは両方を合わせます。設定は、入っていれば、ファイルの中身になります(声・英文の書体・文字の大きさは、この端末のまま)。',
     'data.inReplace': '手元を消して、置きかえる',
     'data.inReplaceArmed': 'もう一度押すと、置きかえます',
     'data.inReplaceNote': '「置きかえる」では、ファイルに入っている種類(単語帳・記録・今日つかった回数など)の、手元の分を消してから入れます。もとに戻せません。',
@@ -1406,6 +1516,129 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'diag.copy': '記録を写す',
     'diag.copied': '写しました。メッセージに貼り付けて、送ってください',
     'diag.copyFail': '自動では写せませんでした。下の字を長押しして、全部を選んで写してください',
+    // 学ぶ画面(専用のページ。ui/learn.js。§9-10。工程W4b-1)。並びと字は W2b の案のページ
+    'learn.settings': '設定',
+    'learn.tabs': '学ぶ画面の行き先',
+    'tab.home': 'ホーム',
+    'tab.vocab': '単語帳',
+    'tab.record': '記録',
+    'learn.loading': '読み込んでいます…',
+    'learn.review': '今日の復習',
+    'learn.unit': '語',
+    'learn.due': '出す日が来た語 {n}',
+    'learn.fresh': '初めての語 {n}',
+    'learn.min': '{a}〜{b} 分くらい',
+    'learn.min1': '{a} 分くらい',
+    'learn.sep': ' ・ ',
+    'learn.start': 'はじめる',
+    'learn.done': '今日の分は、おしまい',
+    'learn.next': '次は、{when} {n} 語',
+    'learn.tomorrow': 'あした',
+    'learn.date': '{m}月{d}日',
+    'learn.dateY': '{y}年{m}月{d}日',
+    'learn.empty': '読んでいて|分からない語を押し、|下の|「単語帳に追加」を|押すと、|次の日から|復習に出ます',   // 単語帳がからのとき(行き止まりにしない)。| = 折り返してよい所(句の途中では折り返さない=ui/learn.js の phrases)
+    'learn.continue': '続きを読む',
+    'learn.noRead': '読んだ小説や記事が、ここに出ます',   // 続きを読むに出すものが 1 つも無いとき(2026-10-23 利用者「おすすめで」)
+    'learn.novel': '小説',
+    'learn.article': '記事',
+    'learn.today': 'きょう',
+    'learn.yesterday': 'きのう',
+    'learn.daysAgo': '{n} 日前',
+    'learn.ep': '第{n}話',
+    'learn.reach': '{n} 割まで',
+    'learn.readTo': '{ep}まで読んだ',
+    'learn.toNext': '次の話へ',
+    'learn.toToc': '目次をひらく',
+    'learn.words': '単語帳',
+    'learn.learned': '覚えた',
+    'learn.fail': '学ぶ画面の中身を、読み込めませんでした',
+    'learn.newer': '新しい版の {app} で保存したデータがあります。{app} を新しくしてから、読み込み直してください',
+    'learn.stuck': 'この端末の保存を読むのを、待ったままになっています。単語帳と記録は、消えていません',
+    'learn.retry': '読み込み直す',
+    // 復習の流れ(ui/learn.js。§9-10 の「復習」。工程W4b-2。W2a の案のページの字)。| = 折り返してよい所(句の途中では折り返さない)
+    'rv.back': '復習をやめて、ホームへ',
+    'rv.count': '{i} / {n}',
+    'rv.again': 'もう一度',
+    'rv.word': '単語',
+    'rv.idiom': '熟語',
+    'rv.hint': '意味を思い出して、|声に出すか、|心の中で言ってから',
+    'rv.show': '答えを見る',
+    'rv.noMean': '意味は入っていません',
+    'rv.src.dict': '内蔵辞書',
+    'rv.src.ai': 'AI に聞いた意味',
+    'rv.src.idiom': '熟語さがし(AI)',
+    'rv.sent': '読んだ文',
+    'rv.wrong': '分からなかった',
+    'rv.right': '分かった',
+    'rv.note': '分からなかった語は、|この回の終わりに、|もう一度出ます',
+    'rv.noteAgain': 'ここで分からなくても、|次の日に、|また出ます',
+    'rv.saveFail': '答えを保存できませんでした。もう一度押してください',
+    'rv.stuck': 'この端末の保存に書くのを、待ったままになっています。それまでに答えた分は、消えていません',
+    'rv.end': 'この回は、おしまい',
+    'rv.f.words': '出した語',
+    'rv.f.right': '1 回目で分かった',
+    'rv.f.fixed': '終わりのもう一度で分かった',
+    'rv.f.soon': 'あしたも出る',
+    'rv.f.learned': '覚えた語(日をあけて {n} 回続けて分かった)',
+    'rv.left': '今日の分が、まだ {n} 語あります',
+    'rv.home': 'ホームへ',
+    'rv.more': 'もう {n} 語',
+    // 単語帳(ui/learn.js。§9-10 の「単語帳」。工程W4c-1)。並びと字は W2b の案のページの 2
+    'vocab.count': '{n} 語',
+    'vocab.search': '英語か意味でさがす',
+    'vocab.clear': 'さがす字を消す',
+    'vocab.sort': '並べ方',
+    'vocab.sort.new': '入れた順',
+    'vocab.sort.abc': 'ABC 順',
+    'vocab.st.new': 'まだ',
+    'vocab.st.learning': '復習中',
+    'vocab.st.learned': '覚えた',
+    'vocab.hits': '{n} 語が当たりました',          // さがしたとき(読み上げだけ)
+    'vocab.none': '「{q}」を含む語はありません',     // さがして 1 語も当たらない(行き止まりにしない=「さがす欄を空にする」)
+    'vocab.clearAll': 'さがす欄を空にする',
+    'vocab.back': '単語帳へ戻る',
+    'vocab.f.status': '様子',
+    'vocab.f.due': '次に出る日',
+    'vocab.f.seen': '調べた回数',
+    'vocab.f.at': '入れた日',
+    'vocab.status.new': 'まだ(復習に出していません)',
+    'vocab.status.learning': '復習中',
+    'vocab.status.learningK': '復習中(続けて分かった {k} 回)',
+    'vocab.status.learned': '覚えた(続けて分かった {k} 回)',
+    'vocab.due.none': 'まだ決まっていません',
+    'vocab.due.noneNote': '初めての語は、入れた順に 1 日 {n} 語ずつ出します',   // 2026-10-23 利用者「おすすめで」
+    'vocab.due.today': '今日',
+    'vocab.due.tomorrow': '{date}(あした)',
+    'vocab.due.days': '{date}(あと {n} 日)',
+    'vocab.seen': '{n} 回',
+    'vocab.remove': '単語帳から外す',
+    'vocab.removeNote': '外すと、読んだ文と復習の記録も消えます',
+    'vocab.removed': '{head} を外しました',
+    'vocab.removeFail': '外せませんでした。もう一度押してください',
+    'rec.week': 'この 7 日',
+    'rec.total': 'これまで',
+    'rec.range': '{a}〜{b}',
+    'rec.since': '{date}から',
+    'rec.en': '画面に出た英語',
+    'rec.time': '読んだ時間',
+    'rec.days': '復習した日',
+    'rec.answers': '復習で答えた',
+    'rec.words': '単語帳',
+    'rec.learned': '覚えた',
+    'rec.u.word': '語',
+    'rec.u.hour': '時間',
+    'rec.u.min': '分',
+    'rec.u.day': '日',
+    'rec.u.time': '回',
+    'rec.u.under': '分未満',
+    'rec.chart': '日ごとの、画面に出た英語',
+    'rec.pick': '{date}{sep}{n} 語',
+    'rec.pickName': '日を選ぶ',                     // 棒グラフ(左右の矢印・押す・なぞるで日を選ぶ。読み上げの名前)
+    'rec.md': '{m}/{d}',
+    'rec.noBars': 'この 14 日に、画面に出た英語はありません',
+    'rec.note': '数えているのは、英語まじりで画面に出た分と、操作が途切れていなかった時間です。同じ所を読み返した分は、重ねて数えません(割合を上げたときは、増えた英語だけを足します)。読めたかどうかは数えていません。',
+    'rec.off': '読んだ記録を残さない設定になっています。画面に出た英語と読んだ時間は、数えていません。',   // 2026-10-24 利用者「全部おすすめで」: 復習の数は出す
+    'rec.openSet': '設定をひらく',
     'soon': '準備中です'
   };
 
@@ -1511,9 +1744,9 @@ Yomu.rest = function(){
       wait: '#8FD3B6', backBg: '#ECEEFF', backBd: '#B9C1FF', backInk: '#2A38B0',
       // ページの中(見せ方が「書体だけ」のとき)
       quietInk: '#1F2A5C', quietIdiom: '#0B7A5B', quietBack: '#2F3E9E', quietChipBd: '#C9CCD6', quietChipInk: '#5B6072',
-      // 操作部・板・メニュー
+      // 操作部・板・メニュー(ground = 学ぶ画面=専用のページの地。札と行は panel。工程W4b-1。W2b の案のページの値)
       panel: '#FFFFFF', panelInk: '#14181F', panelMuted: '#5A6372',
-      well: '#F3F5F8', line: '#E3E7ED', grip: '#D5DAE2', ring: '#878D98',
+      well: '#F3F5F8', line: '#E3E7ED', grip: '#D5DAE2', ring: '#878D98', ground: '#F3F5F8',
       accent: '#0B6E49', soft: '#E8EBFF', softInk: '#2A38B0',
       go: '#0B8457', goInk: '#FFFFFF', key: '#3D4EDB', keyInk: '#FFFFFF',
       warnBg: '#FDECEA', warnInk: '#A5281B',                    // うまくいかなかったことの知らせ(板の中。答えや意味と、見分けがつくように)
@@ -1532,7 +1765,7 @@ Yomu.rest = function(){
       wait: '#A9BE86', backBg: '#E4E3F3', backBd: '#B9BCE8', backInk: '#2A38B0',
       quietInk: '#2B3470', quietIdiom: '#4E7F2E', quietBack: '#2F3E9E', quietChipBd: '#CFC6AC', quietChipInk: '#6A5D49',
       panel: '#FBF6E6', panelInk: '#2E261B', panelMuted: '#6A5D49',
-      well: '#EFE6CF', line: '#E3D9BD', grip: '#D3C7A6', ring: '#8D826F',
+      well: '#EFE6CF', line: '#E3D9BD', grip: '#D3C7A6', ring: '#8D826F', ground: '#EFE6CF',
       accent: '#3F6622', soft: '#E4E3F3', softInk: '#2A38B0',
       go: '#3F6F22', goInk: '#FFFFFF', key: '#3D4EDB', keyInk: '#FFFFFF',
       warnBg: '#F8E1D8', warnInk: '#9C2A1C',
@@ -1551,7 +1784,7 @@ Yomu.rest = function(){
       wait: '#2F6B55', backBg: '#2B3166', backBd: '#4A54A8', backInk: '#C5CBFF',
       quietInk: '#B9C3FF', quietIdiom: '#3CC28E', quietBack: '#C5CBFF', quietChipBd: '#454A55', quietChipInk: '#A3AAB7',
       panel: '#22252C', panelInk: '#ECEEF2', panelMuted: '#A3AAB7',
-      well: '#2D313A', line: '#363B45', grip: '#454A55', ring: '#757A85',
+      well: '#2D313A', line: '#363B45', grip: '#454A55', ring: '#757A85', ground: '#1A1D23',
       accent: '#7FDDB4', soft: '#2B3166', softInk: '#C5CBFF',
       go: '#0B8457', goInk: '#FFFFFF', key: '#5565EC', keyInk: '#FFFFFF',
       warnBg: '#4A1F1B', warnInk: '#FFB4A8',
@@ -1570,7 +1803,7 @@ Yomu.rest = function(){
       wait: '#7CC7A6', backBg: '#D9DBFA', backBd: '#AEB6F5', backInk: '#2A38B0',
       quietInk: '#1F2A5C', quietIdiom: '#0B7A5B', quietBack: '#2F3E9E', quietChipBd: '#B4C3CF', quietChipInk: '#52606C',
       panel: '#F4F9FC', panelInk: '#14202A', panelMuted: '#52606C',
-      well: '#E3EDF4', line: '#D3E0EA', grip: '#BCCCD8', ring: '#7E8993',
+      well: '#E3EDF4', line: '#D3E0EA', grip: '#BCCCD8', ring: '#7E8993', ground: '#E3EDF4',
       accent: '#0B6E49', soft: '#DEE3FF', softInk: '#2A38B0',
       go: '#0B8457', goInk: '#FFFFFF', key: '#3D4EDB', keyInk: '#FFFFFF',
       warnBg: '#FBE4E1', warnInk: '#A5281B',
@@ -2230,12 +2463,148 @@ Yomu.rest = function(){
   Yomu.providers.openai = { id: 'openai', ready: false, request: notYet, data: notYet, error: notYet, models: notYet, modelList: notYet };
 })();
 
+/* ---- core/fsrs.js ---- */
+// core/fsrs.js — 復習の日程の計算 FSRS-6 と、答えの記録から語の様子を計算し直す口(部品の約束 §8-11 の 1・2)
+//   式と値は、公式の実装 py-fsrs 6.3.2 の fsrs/scheduler.py を写した(MIT ライセンス。表示は下のとおり。写したものにも入れる決まり)。
+//   変えた所: 学習の段(learning_steps・relearning_steps)は使わない=py-fsrs で両方を空にした形と同じ/経過日数は学習日(午前4時が境=§1-2)の差
+//   (py-fsrs は 24 時間単位)/ゆらぎの乱数は、語の id と答えの数から作る決まった値(どの端末で計算し直しても、同じ日になる)。
+//   丸めは Python の round と同じ(ちょうど半分は偶数へ)。答え合わせの手本は tools/fsrs_ref.py が py-fsrs で作る(tests/fixtures/fsrs_py.json)。
+//
+//   py-fsrs の表示(https://github.com/open-spaced-repetition/py-fsrs):
+//   MIT License
+//   Copyright (c) 2022 Open Spaced Repetition
+//   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
+//   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
+//   and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+//   The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+//   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+//   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+//   IN THE SOFTWARE.
+(function(){
+  'use strict';
+  const util = Yomu.util, config = Yomu.config;
+  const S_MIN = 0.001, D_MIN = 1, D_MAX = 10, FUZZ_MIN = 2.5;
+  const FUZZ = [{ start: 2.5, end: 7, factor: 0.15 }, { start: 7, end: 20, factor: 0.1 }, { start: 20, end: Infinity, factor: 0.05 }];
+  const AGAIN = 1, GOOD = 3;
+  const GRADES = [AGAIN, GOOD];                  // 答えは 2 つ(分からなかった=1・分かった=3。設計メモ 12章)
+
+  const cfg = () => config.review;
+  const W = () => cfg().w;
+  const e = x => Math.pow(Math.E, x);            // py-fsrs の math.e ** x と同じ形
+  const decay = () => -W()[20];
+  const factor = () => Math.pow(0.9, 1 / decay()) - 1;
+  // Python の round(ちょうど半分は偶数へ)
+  const round = x => { const f = Math.floor(x), r = x - f; return r > 0.5 ? f + 1 : r < 0.5 ? f : (f % 2 === 0 ? f : f + 1); };
+  const clampD = d => Math.min(Math.max(d, D_MIN), D_MAX);
+  const clampS = s => Math.max(s, S_MIN);
+
+  const initS = g => clampS(W()[g - 1]);
+  const initD = (g, clamp) => { const d = W()[4] - e(W()[5] * (g - 1)) + 1; return clamp ? clampD(d) : d; };
+  // 思い出せる見込み R(最後に答えてから days 日)
+  const retrievability = (s, days) => Math.pow(1 + factor() * Math.max(0, days) / s, decay());
+  function nextD(d, g){
+    const w = W();
+    const delta = -(w[6] * (g - 3));
+    const damped = d + (10 - d) * delta / 9;
+    return clampD(w[7] * initD(4, false) + (1 - w[7]) * damped);
+  }
+  function shortS(s, g){
+    const w = W();
+    let inc = e(w[17] * (g - 3 + w[18])) * Math.pow(s, -w[19]);
+    if (g !== AGAIN) inc = Math.max(inc, 1);
+    return clampS(s * inc);
+  }
+  function forgetS(d, s, r){
+    const w = W();
+    const long = w[11] * Math.pow(d, -w[12]) * (Math.pow(s + 1, w[13]) - 1) * e((1 - r) * w[14]);
+    const short = s / e(w[17] * w[18]);
+    return Math.min(long, short);
+  }
+  // hard と easy は使わない(答えは 2 つ)ので、その割り増し・割り引きは 1 のまま
+  const recallS = (d, s, r) => { const w = W(); return s * (1 + e(w[8]) * (11 - d) * Math.pow(s, -w[9]) * (e((1 - r) * w[10]) - 1)); };
+  const nextS = (d, s, r, g) => clampS(g === AGAIN ? forgetS(d, s, r) : recallS(d, s, r));
+  // 次の間(日)。目標の見込み review.retention で、1 日以上・review.maxIvl まで
+  function interval(s){
+    const ivl = round((s / factor()) * (Math.pow(cfg().retention, 1 / decay()) - 1));
+    return Math.min(Math.max(ivl, 1), cfg().maxIvl);
+  }
+  // ゆらぎ: u は 0 以上 1 未満の値(py-fsrs の random() の所)。間が 2.5 日より短ければ、ゆらさない
+  function fuzz(ivl, u){
+    if (ivl < FUZZ_MIN) return ivl;
+    let delta = 1;
+    FUZZ.forEach(f => { delta += f.factor * Math.max(Math.min(ivl, f.end) - f.start, 0); });
+    let lo = round(ivl - delta), hi = round(ivl + delta);
+    lo = Math.max(2, lo); hi = Math.min(hi, cfg().maxIvl); lo = Math.min(lo, hi);
+    return Math.min(round(u * (hi - lo + 1) + lo), cfg().maxIvl);
+  }
+  // 語の id と、その語の n 回目の答え → 0 以上 1 未満の決まった値(util.hash53 の 53bit を 2^53 で割る)
+  const rand = (id, n) => parseInt(util.hash53(String(id) + '#' + n), 36) / 9007199254740992;
+
+  // 答え 1 つ: 前の様子(初めてなら null)・答え g・前の答えからの日数 → { s, d, ivl }(ivl はゆらぎの前)
+  function step(prev, g, days){
+    let s, d;
+    if (!prev){ s = initS(g); d = initD(g, true); }
+    else if (days < 1){ s = shortS(prev.s, g); d = nextD(prev.d, g); }            // 同じ学習日の 2 回目から(その回の終わりのもう一度)
+    else { s = nextS(prev.d, prev.s, retrievability(prev.s, days), g); d = nextD(prev.d, g); }
+    return { s, d, ivl: interval(s) };
+  }
+
+  // 答えの記録 [t, g, dev](t = UNIX の秒)のうち、形の合うものを、時刻の古い順に(同じ時刻なら端末の番号の順)
+  //   時刻は 1970〜2999 年の間だけ(工程W3b-1: 読み込んだファイルの、日付にならないほど大きい時刻で、計算が止まっていた。それより外は、こわれた記録として落とす)
+  const T_MAX = 32503680000;                     // 3000-01-01T00:00:00Z(秒)
+  const okRec = a => Array.isArray(a) && Number.isFinite(a[0]) && a[0] >= 0 && a[0] < T_MAX && GRADES.includes(a[1]) && typeof a[2] === 'string';
+  const cmp = (a, b) => a[0] - b[0] || (a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0) || a[1] - b[1];
+  const sorted = h => (Array.isArray(h) ? h.filter(okRec).map(a => [a[0], a[1], a[2]]).sort(cmp) : []);
+  const dayOf = t => util.dayOf(t * 1000);
+
+  // 答えの記録から様子を計算し直す → { s, d, last, due, k, lapses }(記録が無ければ null)
+  //   opts.id = 語の id(ゆらぎの乱数のもと)/ opts.fuzz = ゆらすか(省くと review.fuzz)/ opts.rand(id, n) = 乱数を差しかえる(検査用)
+  function replay(h, opts){
+    opts = opts || {};
+    const list = sorted(h);
+    if (!list.length) return null;
+    const doFuzz = opts.fuzz ?? cfg().fuzz;
+    const rnd = opts.rand || rand;
+    let st = null, last = null, due = null, k = 0, lapses = 0;
+    list.forEach((a, i) => {
+      const day = dayOf(a[0]), g = a[1];
+      const first = last !== day;                  // その学習日の 1 回目の答え(「覚えた」と、忘れた日は、これだけで数える)
+      const nx = step(st, g, st ? util.diffDays(last, day) : 0);
+      const ivl = doFuzz && nx.ivl >= FUZZ_MIN ? fuzz(nx.ivl, rnd(opts.id, i + 1)) : nx.ivl;   // 乱数は、ゆらすときだけ作る(py-fsrs と同じ)
+      st = nx; due = util.addDays(day, ivl);
+      if (first){ if (g === GOOD) k++; else { k = 0; lapses++; } }
+      last = day;
+    });
+    return { s: st.s, d: st.d, last, due, k, lapses };
+  }
+  // 記録から VocabItem.rv を作る(記録が無ければ undefined)
+  function rv(h, id){
+    const list = sorted(h);
+    const st = replay(list, { id });
+    return st ? { r: Object.assign({ h: list }, st) } : undefined;
+  }
+  // 2 つの rv の記録を合わせて計算し直す(§8-11 の 7)。同じ t と dev は 1 つ。since(ISO の時刻)より前の答えは捨てる(外して入れ直す前の答え)
+  function merge(a, b, opts){
+    opts = opts || {};
+    const since = opts.since ? Math.floor(Date.parse(opts.since) / 1000) : -Infinity;
+    const seen = new Set(), all = [];
+    [a, b].forEach(x => sorted(x?.r?.h).forEach(rec => {
+      const key = rec[0] + '|' + rec[2];
+      if (rec[0] >= since && !seen.has(key)){ seen.add(key); all.push(rec); }
+    }));
+    return rv(all, opts.id);
+  }
+
+  Yomu.fsrs = { AGAIN, GOOD, grades: GRADES, round, retrievability, interval, fuzz, rand, step, replay, rv, merge, answers: sorted };   // answers(h) = 形の合う答えを古い順に(合流の新しさ=core/schema.js も使う)
+})();
+
 /* ---- core/schema.js ---- */
 // core/schema.js — 保存の形の版・空の記録・欠けた欄の足し方・合流の決まり(部品の約束 §8-2・§8-3・§8-9)
 //   保存にはさわらない(読み書きは core/store.js)。ここは、形と計算だけ
 (function(){
   'use strict';
-  const util = Yomu.util, config = Yomu.config, levels = Yomu.levels;
+  const util = Yomu.util, config = Yomu.config, levels = Yomu.levels, fsrs = Yomu.fsrs;
   const isPlain = util.isPlain;
   const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
@@ -2244,9 +2613,13 @@ Yomu.rest = function(){
     get current(){ return config.schema; },
     // 記録の種類ごとの、形の版(§8-2 の 4)。上げるときは config.schema も上げる
     V: { meta: 1, siteMeta: 1, settings: 1, secrets: 1, pgi: 1, page: 1, quota: 1, runs: 1, vocab: 1, log: 1, logx: 1, ai: 1,
-      run: 1, vitem: 1, stretch: 1, detail: 1 },   // 下の4つは、かたまりの中の1件ごとの形
+      local: 1, seen: 1, work: 1,                   // 端末ごとの設定・調べた回数・作品ごとの記録(§8-11 の 4〜6。工程W3b-1)
+      pgc: 1,                                       // 段落ごとの、もう数えた英語の量(§8-4。工程W3b-2)
+      run: 1, vitem: 1, sitem: 1, stretch: 1, detail: 1 },   // 下の5つは、かたまりの中の1件ごとの形
     // 読んだ記録の、操作の種類(§8-8 の Stretch.n)。足すときは、後ろに足す
-    acts: ['tap', 'idiom', 'dict', 'ai', 'toJp', 'toEn', 'say', 'star', 'expand']
+    acts: ['tap', 'idiom', 'dict', 'ai', 'toJp', 'toEn', 'say', 'star', 'expand'],
+    // 端末ごとの設定の欄(§8-11 の 6。工程W3b-1): 声・英文の書体・文字の大きさ。設定(Settings)にも同じ名前の欄は残るが、使うのは local の方
+    localKeys: ['voice', 'enFont', 'enSize']
   };
   // 回数の、空の数字(§8-5)。hitDay(上限に当たった時刻)は、当たったときにだけ付く
   schema.counts = () => ({ sent: 0, ok: 0, lim: 0, net: 0, err: 0, tin: 0, tout: 0, tthink: 0 });
@@ -2267,6 +2640,7 @@ Yomu.rest = function(){
         ratio: config.ratio.initial,
         style: 'marker',
         theme: 'auto', enFont: 'sans', enSize: 'm',                            // 見た目(§8-3。theme は 'auto' か、色の組の名前)
+        sentSay: false,                                                        // 文の終わりに 🔊 を出すか(メニューの「見た目」。工程W4a。同期する設定)
         restore: true,
         provider: d.provider,
         modelsV: levels.modelsV,                                                // 翻訳のモデルの初期値の版(levels.modelsV。前の初期値のままの所を移すため=core/settings.js)
@@ -2282,7 +2656,14 @@ Yomu.rest = function(){
       };
     },
     secrets(){ return { v: schema.V.secrets, providers: { gemini: { apiKey: '' } }, x: {} }; },
+    // 端末ごとの設定(§8-11 の 6)。書き出さない・読み込みで上書きしない・同期しない
+    local(){ return { v: schema.V.local, voice: { name: '', rate: config.voice.rate }, enFont: 'sans', enSize: 'm', x: {} }; },
+    seenChunk(){ return { v: schema.V.seen, items: {}, x: {} }; },
+    // 作品ごとの記録(§8-11 の 5)。鍵は p/{pid}/work/{workKey}(1 作品が 1 つの鍵)
+    work(){ return { v: schema.V.work, work: null, site: null, title: { work: '', ep: '' }, page: null, at: null, reach: 0, ratio: 0, level: null, next: null, x: {} }; },
     pgi(){ return { v: schema.V.pgi, items: {}, x: {} }; },
+    // 段落ごとの、もう数えた英語の量(§8-4 の PageCount。工程W3b-2)。p = { [段落の番号]: [英語の文の数, 語数, 英語にした文のもとの文字数] }(いちばん大きい値)
+    pgc(){ return { v: schema.V.pgc, p: {}, at: null, x: {} }; },
     quotaMonth(dev){ return { v: schema.V.quota, dev: dev || null, days: {}, others: {}, x: {} }; },
     runsMonth(){ return { v: schema.V.runs, items: [], x: {} }; },
     vocabChunk(){ return { v: schema.V.vocab, items: {}, x: {} }; },
@@ -2300,6 +2681,8 @@ Yomu.rest = function(){
     vocabItem(){
       return { v: schema.V.vitem, id: null, head: '', kind: 'word', mean: '', meanSrc: null, forms: [], ex: [], at: null, upd: null, del: null, x: {} };
     },
+    // 調べた回数の 1 語(§8-11 の 4): id = 単語帳と同じ形の見出し・n = 端末の番号ごとの回数・s = この端末で数えた、最近の文の印・at = 最後に数えた時刻
+    seenItem(){ return { v: schema.V.sitem, id: null, kind: 'word', n: {}, s: [], at: null, x: {} }; },
     stretch(){
       const n = {};
       schema.acts.forEach(k => { n[k] = 0; });
@@ -2309,6 +2692,7 @@ Yomu.rest = function(){
         ratio: 0, orig: 0, style: null, vis: 0, act: 0,
         all: { paras: 0, sents: 0, targets: 0, jpChars: 0, enSents: 0, enWords: 0, enJpChars: 0 },
         seen: { paras: 0, sents: 0, jpChars: 0, enSents: 0, enWords: 0, enJpChars: 0 },
+        fresh: { paras: 0, sents: 0, jpChars: 0, enSents: 0, enWords: 0, enJpChars: 0 },   // seen のうち、同じページ(同じレベル)で前に数えていない分(§8-8 の「重ねずに数える」。工程W3b-2)
         reach: 0, n, x: {}
       };
     },
@@ -2339,15 +2723,45 @@ Yomu.rest = function(){
     return schema.fill(rec, make());
   };
 
+  // 設定(Settings)から、端末ごとの設定(Local)を作る(§8-11 の 6)。形の合わない欄は初期値(値の確かめは core/settings.js が読むときに行う)
+  schema.localOf = function(s){
+    const l = schema.make.local();
+    if (!isPlain(s)) return l;
+    if (isPlain(s.voice)) l.voice = Object.assign(l.voice, util.clone(s.voice));
+    if (typeof s.enFont === 'string') l.enFont = s.enFont;
+    if (typeof s.enSize === 'string') l.enSize = s.enSize;
+    return l;
+  };
+
   // ---- 移行(§8-2 の 1)。足すだけ。すでにある関数は変えない ----
   //   { [版]: { shared?(kv) → Promise, site?(kv) → Promise } }。kv は Yomu.env の KV(前に何も付かない鍵)
-  schema.migrations = {};
+  const SETTINGS_KEY = /^p\/([^/]+)\/settings$/;
+  schema.migrations = {
+    // 版 2(工程W3b-1。§8-11 の 6): 人ごとに、設定の声・英文の書体・文字の大きさを、端末ごとの設定 p/{pid}/local に写す。
+    //   設定の欄は消さない(決まり 3)。local がもうある人には、さわらない(途中で止まって、もう一度行っても、同じ結果)
+    2: {
+      async shared(kv){
+        for (const key of await kv.keys('p/')){
+          const m = SETTINGS_KEY.exec(key);
+          if (!m) continue;
+          const to = 'p/' + m[1] + '/local';
+          if ((await kv.get(to)) !== undefined) continue;
+          const st = await kv.get(key);
+          if (isPlain(st)) await kv.set(to, schema.localOf(st));
+        }
+      }
+    }
+  };
 
   // ---- 書き出しの区画(§8-9)。API キー(secrets)と、訳したページ(pg)は、ここに無い=書き出さない ----
   const MONTH = /^\d{4}-\d{2}$/, DAY = /^\d{4}-\d{2}-\d{2}$/, INITIAL = /^[a-z_]$/;
+  const WORK = /^[a-z][a-z0-9_-]*:[^/\s]{1,200}$/;   // 作品の鍵 {site}:{作品}(§1-3。どのページでもは web:{ホスト名})
   schema.parts = {
-    settings: { area: 'shared', path: 'settings', kind: 'settings' },
+    // omit = 書き出さない・読み込みで変えない欄(端末ごとの設定=§8-11 の 6。前の版の書き出しに入っていても使わない)
+    settings: { area: 'shared', path: 'settings', kind: 'settings', omit: schema.localKeys },
     vocab:    { area: 'shared', prefix: 'vocab/', kind: 'vocab', name: INITIAL, merge: 'newer' },
+    seen:     { area: 'shared', prefix: 'seen/',  kind: 'seen',  name: INITIAL, merge: 'seen' },   // 調べた回数(§8-11 の 4・7)
+    work:     { area: 'shared', prefix: 'work/',  kind: 'work',  name: WORK,    merge: 'at' },     // 作品ごとの記録(§8-11 の 5・7)。かたまり=1 作品の記録
     quota:    { area: 'shared', prefix: 'quota/', kind: 'quota', name: MONTH,   merge: 'quota' },
     runs:     { area: 'shared', prefix: 'runs/',  kind: 'runs',  name: MONTH,   merge: 'union', sort: 'at' },
     log:      { area: 'shared', prefix: 'log/',   kind: 'log',   name: DAY,     merge: 'union', sort: 't0', prefer: 't1' },
@@ -2359,8 +2773,25 @@ Yomu.rest = function(){
   //   手元のかたまりに重ねる(手元にある知らない欄は消さない)。読み込んだ方は書き換えない
   const count = items => (Array.isArray(items) ? items.length : isPlain(items) ? Object.keys(items).length : 0);
   const byField = f => (a, b) => { const x = String(a[f] || ''), y = String(b[f] || ''); return x < y ? -1 : x > y ? 1 : 0; };
-  // いちばん新しい「変えた時刻」(ISO の文字なので、文字として比べられる)
-  const stamp = it => [it.upd, it.del, it.at].reduce((m, t) => (typeof t === 'string' && t > m ? t : m), '');
+  // いちばん新しい「変えた時刻」(ISO の文字なので、文字として比べられる)。復習の答えの最後の時刻(rv.r.h の t=UNIX の秒)も入れる(§8-11 の 7)
+  //   答えは、計算に使うものだけ(形の合う答え=fsrs.answers。こわれた時刻は入れない)
+  const lastAnswer = it => {
+    const list = fsrs.answers(isPlain(it.rv) && isPlain(it.rv.r) ? it.rv.r.h : null);
+    return list.length ? new Date(list[list.length - 1][0] * 1000).toISOString() : '';
+  };
+  const stamp = it => [it.upd, it.del, it.at, lastAnswer(it)].reduce((m, t) => (typeof t === 'string' && t > m ? t : m), '');
+  const hasRv = it => isPlain(it) && isPlain(it.rv);
+  // 採った語の復習の記録を、両方の答えの和集合から計算し直す(§8-11 の 7)。採った語の at より前の答えは捨てる(外して入れ直す前の答え)。
+  //   外した語(del がある)には rv を持たせない。rv の知らない欄(r のほか)は、採った語の方を残す
+  function joinRv(keep, other, id){
+    if (keep.del != null){ delete keep.rv; return; }
+    const got = fsrs.merge(hasRv(keep) ? keep.rv : undefined, hasRv(other) ? other.rv : undefined, { id: String(keep.id || id), since: typeof keep.at === 'string' ? keep.at : null });
+    const rest = hasRv(keep) ? Object.assign({}, keep.rv) : {};
+    delete rest.r;
+    if (got) keep.rv = Object.assign(rest, { r: Object.assign({}, hasRv(keep) && isPlain(keep.rv.r) ? keep.rv.r : {}, got.r) });
+    else if (Object.keys(rest).length) keep.rv = rest;
+    else delete keep.rv;
+  }
 
   schema.merge = {
     // id の和集合(同じ id は手元を残す)。items は、配列([{ id, … }])か、入れ物({ [id]: … })
@@ -2389,7 +2820,8 @@ Yomu.rest = function(){
       }
       return { rec: mine, added, changed };
     },
-    // 単語帳: 無い語は足す。両方にある語は、変えた時刻の新しい方(同じなら手元)
+    // 単語帳: 無い語は足す。両方にある語は、変えた時刻の新しい方(同じなら手元)。
+    //   採った語が入っている語なら、復習の記録は両方の和集合から計算し直す(§8-11 の 7。工程W3b-1)
     newer(mine, theirs){
       if (!isPlain(mine)) return { rec: util.clone(theirs), added: count(theirs.items), changed: 0 };
       let added = 0, changed = 0;
@@ -2397,10 +2829,47 @@ Yomu.rest = function(){
       Object.keys(isPlain(theirs.items) ? theirs.items : {}).forEach(k => {
         const t = theirs.items[k];
         if (!util.safeKey(k) || !isPlain(t)) return;
-        if (!has(mine.items, k)){ mine.items[k] = util.clone(t); added++; }
-        else if (stamp(t) > stamp(isPlain(mine.items[k]) ? mine.items[k] : {})){ mine.items[k] = util.clone(t); changed++; }
+        if (!has(mine.items, k)){ mine.items[k] = util.clone(t); added++; return; }
+        const m = isPlain(mine.items[k]) ? mine.items[k] : {};
+        const take = stamp(t) > stamp(m);
+        if (!hasRv(t) && !hasRv(m)){ if (take){ mine.items[k] = util.clone(t); changed++; } return; }
+        const keep = take ? util.clone(t) : m, other = take ? m : t;
+        const before = take ? null : JSON.stringify(m.rv);
+        joinRv(keep, other, k);
+        mine.items[k] = keep;
+        if (take || JSON.stringify(keep.rv) !== before) changed++;
       });
       return { rec: mine, added, changed };
+    },
+    // 調べた回数(§8-11 の 4・7): 無い語は足す。両方にある語は、端末ごとの回数の大きい方(同じファイルを 2 回読み込んでも、二重に数えない)。
+    //   s(この端末で数えた文の印)は手元のまま・at は新しい方。手元の知らない欄は消さない
+    seen(mine, theirs){
+      if (!isPlain(mine)) return { rec: util.clone(theirs), added: count(theirs.items), changed: 0 };
+      let added = 0, changed = 0;
+      if (!isPlain(mine.items)) mine.items = {};
+      Object.keys(isPlain(theirs.items) ? theirs.items : {}).forEach(k => {
+        const t = theirs.items[k];
+        if (!util.safeKey(k) || !isPlain(t)) return;
+        if (!has(mine.items, k) || !isPlain(mine.items[k])){ mine.items[k] = util.clone(t); added++; return; }
+        const m = mine.items[k];
+        let touched = false;
+        if (!isPlain(m.n)) m.n = {};
+        Object.keys(isPlain(t.n) ? t.n : {}).forEach(dev => {
+          const b = t.n[dev];
+          if (!util.safeKey(dev) || typeof b !== 'number' || !isFinite(b)) return;
+          if (typeof m.n[dev] !== 'number' || b > m.n[dev]){ m.n[dev] = b; touched = true; }
+        });
+        if (typeof t.at === 'string' && t.at > String(m.at || '')){ m.at = t.at; touched = true; }
+        if (m.kind == null && t.kind != null){ m.kind = t.kind; touched = true; }
+        if (touched) changed++;
+      });
+      return { rec: mine, added, changed };
+    },
+    // 作品ごとの記録(§8-11 の 5・7): かたまり=1 作品の記録。at の新しい方(同じなら手元)。手元の知らない欄は消さない
+    at(mine, theirs){
+      if (!isPlain(mine)) return { rec: util.clone(theirs), added: 1, changed: 0 };
+      if (!(typeof theirs.at === 'string' && theirs.at > String(mine.at || ''))) return { rec: mine, added: 0, changed: 0 };
+      return { rec: Object.assign(mine, util.clone(theirs)), added: 0, changed: 1 };
     },
     // 回数: 端末ごとに分けて持ち、同じ端末・同じ日・同じモデルの数字は大きい方(回数は増えるだけ)
     //   opt.dev = この端末の番号。戻りは、いつも「この端末から見た形」
@@ -2639,6 +3108,7 @@ Yomu.rest = function(){
   // ---- 保存がいっぱいのとき(§8-1): 作り直せるもの(site)を古い順に捨てて、やり直す ----
   const siteKV = () => Y.env.site;
   const PG = 'pg/', PGI = 'pgi', LOGX = 'logx/';
+  const PGC = 'pgc/';   // 段落ごとの、もう数えた英語の量(§8-4 の PageCount。工程W3b-2)。鍵は pg/ と同じ {pageKey}/{level}。訳したページを消すときに、一緒に消す
   const openIndex = v => schema.open('pgi', v, schema.make.pgi);
   const sizeOf = v => (v === undefined ? 0 : JSON.stringify(v).length);
 
@@ -2666,7 +3136,7 @@ Yomu.rest = function(){
   async function dropOldest(items, n, exceptKey){
     const ids = oldestFirst(items, exceptKey).slice(0, Math.max(0, n));
     let bytes = 0;
-    for (const id of ids){ await siteKV().del(PG + id); bytes += items[id].b || 0; delete items[id]; }
+    for (const id of ids){ await siteKV().del(PG + id); await siteKV().del(PGC + id); bytes += items[id].b || 0; delete items[id]; }
     return { n: ids.length, bytes };
   }
   // 訳したページを、ひとかたまり捨てる。順番待ち(下の queue)の外で動く。索引が書けなくても、次に合わせ直すので害は無い
@@ -2881,6 +3351,7 @@ Yomu.rest = function(){
         return !lv.includes('/') && (level === undefined || lv === level);
       });
       for (const k of keys) await store.site.del(k);
+      for (const k of await countKeys(page, level)) await store.site.del(k);   // 覚えも消す(訳の保存が消えたら、そのページは、また数える=設計メモ 12章)
       if (keys.length) await withIndex(items => { keys.forEach(k => { delete items[k.slice(PG.length)]; }); return true; });
       return keys.length;
     },
@@ -2902,12 +3373,60 @@ Yomu.rest = function(){
     async clear(){
       const keys = await store.site.keys(PG);
       for (const k of keys) await store.site.del(k);
+      for (const k of await store.site.keys(PGC)) await store.site.del(k);
       await withIndex(items => { Object.keys(items).forEach(id => { delete items[id]; }); return true; });
       return keys.length;
+    },
+    // 段落ごとの、もう数えた英語の量(§8-4 の PageCount・§8-8 の fresh。工程W3b-2)。書き出さない・同期しない。新しい版の形なら undefined(使わない)
+    counted(page, level){
+      return attempt(() => store.site.get(PGC + pageId(page, level))).then(rec => (isPlain(rec) && !schema.newer('pgc', rec) ? cleanCount(rec) : undefined));
+    },
+    // 段落ごとに、大きい方を重ねて書く(ほかのタブが書いた分も消さない)→ 書いたあとの PageCount。
+    //   訳したページを巻き添えにしない書き方(いっぱいなら書かずに失敗=呼んだ側が決める。読んだ記録の詳しい分と同じ)
+    addCounted(page, level, p){
+      return attempt(() => pageId(page, level)).then(id => store.site.update(PGC + id, cur => {
+        const rec = cleanCount(schema.open('pgc', cur, schema.make.pgc));
+        const add = cleanCount({ p }).p;
+        let changed = false;
+        Object.keys(add).forEach(k => {
+          const a = rec.p[k], b = add[k];
+          if (!a){ rec.p[k] = b.slice(); changed = true; return; }
+          for (let i = 0; i < 3; i++) if (b[i] > a[i]){ a[i] = b[i]; changed = true; }
+        });
+        if (!changed) return undefined;
+        rec.at = util.nowISO();
+        return rec;
+      }, { evict: false })).then(v => (isPlain(v) ? cleanCount(v) : undefined));
     }
   };
+  // 覚えの形をそろえる: 段落の番号(0 以上の整数)ごとに、0 以上の数 3 つ。合わないものは落とす(知らない欄は残す)
+  function cleanCount(rec){
+    const out = Object.assign({}, rec, { p: {} });
+    const src = isPlain(rec.p) ? rec.p : {};
+    Object.keys(src).forEach(k => {
+      const v = src[k];
+      if (!/^(0|[1-9]\d{0,6})$/.test(k) || !Array.isArray(v) || v.length < 3) return;
+      const n = v.slice(0, 3).map(x => (typeof x === 'number' && isFinite(x) && x > 0 ? x : 0));
+      out.p[k] = n;
+    });
+    if (!isPlain(out.x)) out.x = {};
+    return out;
+  }
+  // そのページの覚えの鍵(level を省くと、全部のレベル)
+  async function countKeys(page, level){
+    return (await store.site.keys(PGC + page + '/')).filter(k => {
+      const lv = k.slice(PGC.length + page.length + 1);
+      return !lv.includes('/') && (level === undefined || lv === level);
+    });
+  }
 
   // ---- 書き出しと読み込み(§8-9)。API キーと、訳したページは入らない(schema.parts に無い) ----
+  // 書き出さない・読み込みで使わない欄(schema.parts の omit。端末ごとの設定=§8-11 の 6)を除いた写し
+  const omitted = (v, p) => {
+    const c = util.clone(v);
+    if (isPlain(c)) (p.omit || []).forEach(k => { delete c[k]; });
+    return c;
+  };
   store.export = async function(opt){
     await store.init();
     const names = (opt && opt.parts) || Object.keys(schema.parts);
@@ -2918,7 +3437,7 @@ Yomu.rest = function(){
       const area = store[p.area];
       if (p.path){
         const v = await area.get(p.path);
-        if (v !== undefined) out.parts[name] = v;
+        if (v !== undefined) out.parts[name] = omitted(v, p);
         continue;
       }
       const box = {};
@@ -2966,7 +3485,12 @@ Yomu.rest = function(){
         const p = job.p, area = store[p.area];
         const r = result.parts[job.name] = { keys: 0, added: 0, changed: 0 };
         if (job.single){
-          await area.set(p.path, util.clone(job.single));
+          // 端末ごとの欄(p.omit=§8-11 の 6)は、ファイルに入っていても使わず、手元の値のまま
+          await area.update(p.path, cur => {
+            const v = omitted(job.single, p);
+            (p.omit || []).forEach(k => { if (isPlain(cur) && Object.prototype.hasOwnProperty.call(cur, k)) v[k] = util.clone(cur[k]); });
+            return v;
+          });
           r.keys = 1; r.changed = 1;
           continue;
         }
@@ -3010,13 +3534,15 @@ Yomu.rest = function(){
 })();
 
 /* ---- core/settings.js ---- */
-// core/settings.js — 設定と API キー(部品の約束 §8-3)
+// core/settings.js — 設定と API キー(部品の約束 §8-3)・端末ごとの設定(§8-11 の 6。工程W3b-1)
 //   設定は shared の p/{pid}/settings、API キーは別の区画 p/{pid}/secrets(書き出しにも、合図にも入れない)
+//   声・英文の書体・文字の大きさは、端末ごとの設定 p/{pid}/local(書き出さない・読み込みで上書きしない)。get は、それを設定に重ねて返す(呼ぶ側は変えない)
 (function(){
   'use strict';
   const util = Yomu.util, schema = Yomu.schema, store = Yomu.store, levels = Yomu.levels, config = Yomu.config, theme = Yomu.theme;
   const isPlain = util.isPlain;
-  const PATH = 'settings', SECRETS = 'secrets';
+  const PATH = 'settings', SECRETS = 'secrets', LOCAL = 'local';
+  const LOCAL_KEYS = schema.localKeys;   // 端末ごとの欄(voice・enFont・enSize)
 
   const STYLES = ['marker', 'quiet'];
   const ON_LIMIT = ['ask', 'lite'];
@@ -3031,14 +3557,16 @@ Yomu.rest = function(){
   const num = v => typeof v === 'number' && isFinite(v);
   const goal = v => v === null || (isPlain(v) && GOAL_KINDS.includes(v.kind));
 
-  // 知っている欄の値を確かめる。strict = おかしければ断る(set)/そうでなければ、その欄だけ初期値に戻す(読んだとき)
+  // 欄を確かめる関数を作る。strict = おかしければ断る(set)/そうでなければ、その欄だけ初期値に戻す(読んだとき)
+  const wanter = (rec, base, strict) => (path, ok) => {
+    if (ok) return;
+    if (strict) throw util.error('bad', '設定の値がおかしい: ' + path);
+    util.setIn(rec, path, util.clone(util.getIn(base, path)));
+  };
+  // 知っている欄の値を確かめる
   function check(s, strict){
     const base = schema.make.settings();
-    const want = (path, ok) => {
-      if (ok) return;
-      if (strict) throw util.error('bad', '設定の値がおかしい: ' + path);
-      util.setIn(s, path, util.clone(util.getIn(base, path)));
-    };
+    const want = wanter(s, base, strict);
     ['profile', 'models', 'aux', 'limits', 'voice', 'log', 'x'].forEach(k => want(k, isPlain(s[k])));
     levels.ids.forEach(id => want('models/' + id, isPlain(s.models[id])));
     want('level', levels.has(s.level));
@@ -3049,6 +3577,7 @@ Yomu.rest = function(){
     want('theme', theme.choice(s.theme));
     want('enFont', theme.fonts().includes(s.enFont));
     want('enSize', theme.sizes().includes(s.enSize));
+    want('sentSay', bool(s.sentSay));
     want('restore', bool(s.restore));
     want('provider', text(s.provider));
     want('onLimit', ON_LIMIT.includes(s.onLimit));
@@ -3081,8 +3610,22 @@ Yomu.rest = function(){
     });
     return s;
   }
+  // 端末ごとの設定(§8-11 の 6)の値を確かめる。確かめ方は、設定の同じ欄と同じ
+  function checkLocal(l, strict){
+    const want = wanter(l, schema.make.local(), strict);
+    ['voice', 'x'].forEach(k => want(k, isPlain(l[k])));
+    want('enFont', theme.fonts().includes(l.enFont));
+    want('enSize', theme.sizes().includes(l.enSize));
+    want('voice/name', typeof l.voice.name === 'string');
+    want('voice/rate', num(l.voice.rate) && l.voice.rate > 0);
+    return l;
+  }
   // 保存から読んだものを、使える形にする(欠けた欄を足す。おかしい値は、その欄だけ初期値。形の版が新しければ失敗)
   const open = stored => check(schema.open('settings', renamed(stored), schema.make.settings), false);
+  // 端末ごとの設定を、使える形にする。保存に無ければ、設定 s の値から作る(形の版 2 の移しと同じ=schema.localOf)
+  const openLocal = (stored, s) => checkLocal(schema.open('local', stored, () => schema.localOf(s)), false);
+  // 設定に、端末ごとの欄を重ねたもの(get が返す形)
+  const join = (s, l) => { const out = util.clone(s); LOCAL_KEYS.forEach(k => { out[k] = util.clone(l[k]); }); return out; };
   // Google が、ほかの名前へ回している AI の名前を、新しい名前に読みかえる(levels.moved。読むときだけ。次に設定を変えたとき、保存にも入る)。
   //   1日の目安は、新しい名前の欄が無いときだけ、古い名前の数を移す。欠けた欄を足す(schema.open)より前に、保存の写しの上で行う(初期値の目安が、先に入らないように)
   function renamed(stored){
@@ -3144,23 +3687,36 @@ Yomu.rest = function(){
       await store.init();
       let stored = await store.shared.get(PATH);
       if (stored === undefined) stored = await store.shared.update(PATH, now => (now === undefined ? schema.make.settings() : undefined));
-      swap(open(stored));
+      const s = open(stored);
+      let loc = await store.shared.get(LOCAL);   // 端末ごとの設定。無ければ、設定の値から作って書く(初めての端末・版 2 の移しのあとに設定を作った人)
+      if (loc === undefined) loc = await store.shared.update(LOCAL, now => (now === undefined ? schema.localOf(s) : undefined));
+      swap(join(s, openLocal(loc, s)));
       return settings.get();
     },
     get(){ return util.clone(cur || schema.make.settings()); },
-    // 深く重ねて保存する。保存にある今の値に重ねる(手元の写しが古くても、別のタブで変えた欄を消さない)
+    // 深く重ねて保存する。保存にある今の値に重ねる(手元の写しが古くても、別のタブで変えた欄を消さない)。
+    //   端末ごとの欄(voice・enFont・enSize)は、端末ごとの設定に書く(設定の変えた時刻は進めない=ほかの端末へ送るものが変わらない)
     set(patch){
       if (!isPlain(patch)) return Promise.reject(util.error('bad', '設定の変え方がおかしい'));
-      let next = null;
+      const sp = {}, lp = {};
+      Object.keys(patch).forEach(k => { (LOCAL_KEYS.includes(k) ? lp : sp)[k] = patch[k]; });
+      try { checkLocal(overlay(schema.make.local(), lp, true), true); } catch (e){ return Promise.reject(e); }   // 先に確かめる(おかしければ、どちらも書かない)
+      let next = null, nextL = null;
       return store.shared.update(PATH, stored => {
         const s = open(stored);
         const before = view(s);
-        check(overlay(s, patch, true), true);
+        check(overlay(s, sp, true), true);
         next = s;
         if (stored !== undefined && view(s) === before) return undefined;   // 変わらないなら書かない
         if (stored !== undefined) s.updatedAt = util.nowISO();
         return s;
-      }).then(() => { swap(next); return settings.get(); });
+      }).then(() => store.shared.update(LOCAL, stored => {
+        const l = openLocal(stored, next);
+        const before = JSON.stringify(l);
+        checkLocal(overlay(l, lp, true), true);
+        nextL = l;
+        return stored !== undefined && JSON.stringify(l) === before ? undefined : l;
+      })).then(() => { swap(join(next, nextL)); return settings.get(); });
     },
     // そのレベルの、翻訳のモデルと思考。考える深さを選ぶ所を出していない間(config.ui.thinkPick が false)は、いつも思考なし
     //   (保存にある思考の選び方は、消さずに残す。工程T-2c: 「軽く考える」は、訳では効き目が見えなかった=設計メモ 2-3)
@@ -5821,12 +6377,13 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 })();
 
 /* ---- core/vocab.js ---- */
-// core/vocab.js — 単語帳(部品の約束 §8-7)。フェーズ1 は保存だけ(復習はフェーズ2 が x に足す)
+// core/vocab.js — 単語帳(部品の約束 §8-7)と、復習の答えの記録(§8-11 の 1。工程W3a)
 //   shared の p/{pid}/vocab/{頭文字}(a〜z、それ以外は '_')。入るのは、利用者が「単語帳に追加」を押したときだけ
-//   外した語は、意味・出会った形・例文を消して、外した印(del)だけを残す(別の端末から読み込んだときに、戻ってこないように)
+//   外した語は、意味・出会った形・例文・復習の記録を消して、外した印(del)だけを残す(別の端末から読み込んだときに、戻ってこないように)
+//   復習の答えは rv.r.h に足していくだけ。様子(s・d・last・due・k・lapses)は、そのたびに記録から計算し直す(core/fsrs.js)
 (function(){
   'use strict';
-  const util = Yomu.util, config = Yomu.config, schema = Yomu.schema, store = Yomu.store;
+  const util = Yomu.util, config = Yomu.config, schema = Yomu.schema, store = Yomu.store, fsrs = Yomu.fsrs;
   const isPlain = util.isPlain;
   const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const KINDS = ['word', 'idiom'];
@@ -5867,6 +6424,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
   const vocab = {
     id: idOf,
+    // その語を置くかたまり(頭文字)と、かたまりの中の鍵(調べた回数=core/seen.js も、同じ決まりで置く)
+    place: id => ({ chunk: initialOf(id), key: keyOf(id) }),
     // 入れる。もう入っている語なら、出会った形と例文を足し、意味を新しいものにする。外した語なら、入れ直す
     add: item => attempt(async () => {
       if (!isPlain(item)) throw bad('単語帳に入れるものがおかしい');
@@ -5891,7 +6450,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         it = chunk.items[key] = schema.fill(it || {}, schema.make.vocabItem());
         if (!Array.isArray(it.forms)) it.forms = [];
         if (!Array.isArray(it.ex)) it.ex = [];
-        if (fresh) Object.assign(it, { head, kind, mean: '', meanSrc: null, forms: [], ex: [], at: now, del: null });
+        if (fresh){ Object.assign(it, { head, kind, mean: '', meanSrc: null, forms: [], ex: [], at: now, del: null }); delete it.rv; }   // 入れ直したら、新しい語として始まる
         it.id = id;
         if (!it.head) it.head = head;
         if (item.mean){ it.mean = item.mean; it.meanSrc = src; }
@@ -5904,7 +6463,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       });
       return out;
     }),
-    // 外す: 意味・出会った形・例文を消して、外した印だけを残す → 入っていたものを外したら true
+    // 外す: 意味・出会った形・例文・復習の記録を消して、外した印だけを残す → 入っていたものを外したら true
     remove: head => attempt(async () => {
       const id = checkId(idOf(head));
       await store.init();
@@ -5917,10 +6476,39 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         if (schema.newer('vitem', it)) throw tooNew(id);
         const now = util.nowISO();
         Object.assign(it, { mean: '', meanSrc: null, forms: [], ex: [], upd: now, del: now });
+        delete it.rv;
         removed = true;
         return chunk;
       });
       return removed;
+    }),
+    // 復習の答え(§8-11 の 1): g = 1(分からなかった)か 3(分かった)。答えの記録 [t, g, dev] を足し、様子を計算し直し、upd を進める
+    //   → 答えたあとの語(単語帳に無い・外した語なら null。何も書かない)
+    answer: (head, g) => attempt(async () => {
+      const id = checkId(idOf(head));
+      if (!fsrs.grades.includes(g)) throw bad('答えがおかしい: ' + g);
+      await store.init();
+      const dev = String(store.deviceId || '');
+      let out = null;
+      await store.shared.update(PRE + initialOf(id), cur => {
+        const chunk = schema.open('vocab', cur, schema.make.vocabChunk);
+        const key = keyOf(id);
+        const it = has(chunk.items, key) ? chunk.items[key] : null;
+        if (!live(it)) return undefined;
+        if (schema.newer('vitem', it)) throw tooNew(id);
+        const now = util.nowISO();
+        const h = Array.isArray(it.rv?.r?.h) ? it.rv.r.h.slice() : [];
+        let t = Math.floor(Date.parse(now) / 1000);
+        while (h.some(a => Array.isArray(a) && a[0] === t && a[2] === dev)) t++;   // 同じ端末・同じ秒の答えは重ならないように(t と dev の組が印)
+        h.push([t, g, dev]);
+        const rv = fsrs.rv(h, id);
+        const r = Object.assign({}, isPlain(it.rv?.r) ? it.rv.r : {}, rv.r);           // 知らない欄は消さない
+        it.rv = Object.assign({}, isPlain(it.rv) ? it.rv : {}, { r });
+        it.upd = now;
+        out = util.clone(it);
+        return chunk;
+      });
+      return out;
     }),
     has: head => attempt(() => find(checkId(idOf(head)))).then(live),
     // 外した語も返す(del に、外した時刻が入っている)
@@ -5944,15 +6532,254 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   Yomu.vocab = vocab;
 })();
 
+/* ---- core/seen.js ---- */
+// core/seen.js — 調べた回数(部品の約束 §8-11 の 4。工程W3b-1)
+//   shared の p/{pid}/seen/{頭文字}(頭文字・id・かたまりの中の鍵は、単語帳と同じ決まり=core/vocab.js)
+//   数えるのは、単語の板(ui/word.js)を開いて、見出しが決まったとき(板を開いた 1 回に 1 つ)。数えないのは、同じ文で開き直したときだけ
+//   (文の印 s に、英文の util.hash53 を、新しい方から seen.recent 個まで残す。文そのものは残さない)。単語帳に入っている語も数える。
+//   回数は端末ごと(n の鍵は端末の番号)。合わせた数が「調べたのは ○ 回目」(板に出すのは工程W4a)。FSRS の日程には混ぜない。
+//   読んだ記録を「残さない」にしている(settings.log.on が false)ときは、数えない。
+//   捨てる: 合わせた数が 1 で、at から seen.keepDays1 日たった語。数えて書くときに、同じかたまりの分を見る(ほかに読み書きを増やさない)
+(function(){
+  'use strict';
+  const util = Yomu.util, config = Yomu.config, schema = Yomu.schema, store = Yomu.store, settings = Yomu.settings, vocab = Yomu.vocab;
+  const isPlain = util.isPlain;
+  const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  const KINDS = ['word', 'idiom'];
+  const PRE = 'seen/';
+  const INITIAL = /^[a-z_]$/;
+  const DAY_MS = 86400000;
+
+  const bad = msg => util.error('bad', msg);
+  const attempt = fn => Promise.resolve().then(fn);
+  const tooNew = what => util.error('newer', '新しい版のデータなので、書き換えない: ' + what);
+  const idOf = head => {
+    const id = vocab.id(head);
+    if (!id) throw bad('見出しが空');
+    if (id.length > config.vocab.headMax) throw bad('見出しが長すぎる: ' + id.length + ' 文字');
+    return id;
+  };
+  // 合わせた数(n の、数になっている値の合計)
+  const total = it => {
+    const n = isPlain(it) && isPlain(it.n) ? it.n : {};
+    return Object.keys(n).reduce((a, k) => a + (typeof n[k] === 'number' && isFinite(n[k]) && n[k] > 0 ? n[k] : 0), 0);
+  };
+  // 捨ててよい語(合わせた数が 1 以下で、最後に数えてから keepDays1 日たった)
+  const stale = (it, now) => {
+    if (!isPlain(it) || total(it) > 1) return false;
+    const at = Date.parse(it.at);
+    return !isFinite(at) || now - at >= config.seen.keepDays1 * DAY_MS;
+  };
+  const view = (id, it) => (isPlain(it) ? Object.assign(util.clone(it), { id, total: total(it) }) : undefined);
+
+  async function chunkOf(initial){
+    await store.init();
+    const chunk = await store.shared.get(PRE + initial);
+    if (schema.newer('seen', chunk)) throw tooNew(PRE + initial);
+    return isPlain(chunk) && isPlain(chunk.items) ? chunk.items : {};
+  }
+
+  const seen = {
+    // 数える → { id, kind, n, s, at, total, counted }(counted = この回を数えたか。同じ文の開き直し・記録を残さない設定なら false)
+    //   head = 見出し(単語帳に入れるときと同じ形)/ opt = { kind: 'word'|'idiom', en: 英文 }
+    note: (head, opt) => attempt(async () => {
+      const id = idOf(head);
+      opt = opt || {};
+      const kind = opt.kind === undefined ? 'word' : opt.kind;
+      if (!KINDS.includes(kind)) throw bad('語の種類がおかしい: ' + opt.kind);
+      if (typeof opt.en !== 'string' || !opt.en) throw bad('英文が無い');
+      const log = settings ? settings.get().log : null, off = !!(log && log.on === false);
+      const place = vocab.place(id), mark = util.hash53(opt.en);
+      await store.init();
+      const dev = String(store.deviceId || '_');
+      if (off){ const items = await chunkOf(place.chunk); return Object.assign(view(id, has(items, place.key) ? items[place.key] : undefined) || { id, kind, n: {}, s: [], at: null, total: 0 }, { counted: false }); }
+      let out = null;
+      await store.shared.update(PRE + place.chunk, cur => {
+        const chunk = schema.open('seen', cur, schema.make.seenChunk);
+        let it = has(chunk.items, place.key) && isPlain(chunk.items[place.key]) ? chunk.items[place.key] : null;
+        if (it && schema.newer('sitem', it)) throw tooNew(id);
+        it = schema.fill(it || {}, schema.make.seenItem());
+        it.id = id;
+        if (!Array.isArray(it.s)) it.s = [];
+        if (it.s.includes(mark)){ out = Object.assign(view(id, it), { counted: false }); return undefined; }   // 同じ文で開き直した: 数えない・書かない
+        const now = util.nowISO(), nowMs = Date.parse(now);
+        Object.keys(chunk.items).forEach(k => { if (k !== place.key && stale(chunk.items[k], nowMs)) delete chunk.items[k]; });
+        it.n[dev] = (typeof it.n[dev] === 'number' && isFinite(it.n[dev]) && it.n[dev] > 0 ? it.n[dev] : 0) + 1;
+        it.s = it.s.filter(x => x !== mark).concat([mark]).slice(-config.seen.recent);
+        it.kind = kind;
+        it.at = now;
+        chunk.items[place.key] = it;
+        out = Object.assign(view(id, it), { counted: true });
+        return chunk;
+      });
+      return out;
+    }),
+    // 1 語(無ければ undefined)。total = 合わせた数
+    get: head => attempt(async () => {
+      const id = idOf(head), place = vocab.place(id);
+      const items = await chunkOf(place.chunk);
+      return view(id, has(items, place.key) ? items[place.key] : undefined);
+    }),
+    // 合わせた数(無ければ 0)
+    count: head => seen.get(head).then(it => (it ? it.total : 0)),
+    // 全部の語 { [id]: 合わせた数 }(学ぶ画面の単語帳の一覧が、語ごとに引く=工程W3b-2・W4c)
+    totals: () => attempt(async () => {
+      await store.init();
+      const out = {};
+      for (const k of await store.shared.keys(PRE)){
+        const initial = k.slice(PRE.length);
+        if (!INITIAL.test(initial)) continue;
+        const items = await chunkOf(initial);
+        Object.keys(items).forEach(key => { const it = items[key]; if (isPlain(it) && typeof it.id === 'string' && it.id) out[it.id] = total(it); });
+      }
+      return out;
+    }),
+    total
+  };
+
+  Yomu.seen = seen;
+})();
+
+/* ---- core/review.js ---- */
+// core/review.js — 1 回に出す語の選び方・1 回の流れ・ホームに出す数(部品の約束 §8-11 の 3・§9-10 の「ホーム」。工程W3a)
+//   画面は持たない(学ぶ画面=工程W4b が呼ぶ)。答えは Yomu.vocab.answer に渡す。日付はみな学習日(午前4時が境=§1-2)
+(function(){
+  'use strict';
+  const util = Yomu.util, config = Yomu.config, vocab = Yomu.vocab, fsrs = Yomu.fsrs;
+  const cfg = () => config.review;
+  const isPlain = util.isPlain;
+  const live = it => isPlain(it) && it.del == null;
+  const stateOf = it => (isPlain(it?.rv?.r) && Array.isArray(it.rv.r.h) && it.rv.r.h.length ? it.rv.r : null);   // 答えの記録がある語の様子
+  const firstDay = r => r.h.reduce((m, a) => (Array.isArray(a) && Number.isFinite(a[0]) && a[0] < m ? a[0] : m), Infinity);
+  const str = v => String(v || '');
+  const byStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  const todayOf = now => util.today(now || util.nowISO());   // 時計は util.nowISO(答えの時刻と同じ時計)
+
+  // 様子: new(まだ出していない)/learning(復習中)/learned(覚えた=k が review.learned 以上)
+  const status = it => { const r = stateOf(it); return !r ? 'new' : (r.k >= cfg().learned ? 'learned' : 'learning'); };
+  const learned = items => (items || []).filter(it => live(it) && status(it) === 'learned').length;
+
+  // 1 回に出す語(items = 単語帳の語の全部。外した語は除く)→ { list: [語…], due, fresh, left }
+  //   期日の来た語(期日の古い順・同じなら R の低い順)→ 新しい語(入れた次の学習日から・入れた時刻の古い順・今日すでに初めて出した数と合わせて newPerDay まで)
+  //   全部で size まで。left = この回に入りきらず残った、出せる語の数(「もう 20 語」はこれが 1 以上のときだけ)。期日の前の語は、前倒しで出さない
+  function plan(items, opts){
+    opts = opts || {};
+    const today = opts.today || todayOf();
+    const size = opts.size ?? cfg().size, perDay = opts.newPerDay ?? cfg().newPerDay;
+    const due = [], fresh = [];
+    let started = 0;                               // 今日、初めて答えた語の数
+    (items || []).filter(live).forEach(it => {
+      const r = stateOf(it);
+      if (r){
+        if (util.dayOf(firstDay(r) * 1000) === today) started++;
+        if (typeof r.due === 'string' && r.due <= today){
+          const R = fsrs.retrievability(r.s, util.diffDays(r.last, today));
+          due.push({ it, due: r.due, R: Number.isFinite(R) ? R : 0 });   // 様子が壊れていたら、いちばん先に(並べ方がくずれないように)
+        }
+      } else if (it.at && util.dayOf(it.at) < today) fresh.push(it);
+    });
+    due.sort((a, b) => byStr(a.due, b.due) || a.R - b.R || byStr(str(a.it.id), str(b.it.id)));
+    fresh.sort((a, b) => byStr(str(a.at), str(b.at)) || byStr(str(a.id), str(b.id)));
+    const allowNew = Math.max(0, perDay - started);
+    const a = due.slice(0, size).map(x => x.it);
+    const b = fresh.slice(0, Math.min(allowNew, size - a.length));
+    return { list: a.concat(b), due: a.length, fresh: b.length, left: (due.length - a.length) + (Math.min(allowNew, fresh.length) - b.length) };
+  }
+
+  // 次に出す語がある学習日(today より後でいちばん近い日)と、その日の 1 回の語数 → { day, n } | null
+  //   期日が今日までで、今日やらなかった語と、まだ出していない語は、明日も出せる
+  function next(items, today){
+    const list = (items || []).filter(live);
+    const tomorrow = util.addDays(today, 1);
+    let day = null;
+    list.forEach(it => {
+      const r = stateOf(it);
+      const d = r ? (typeof r.due === 'string' ? (r.due < tomorrow ? tomorrow : r.due) : null) : (it.at ? tomorrow : null);
+      if (d && (!day || d < day)) day = d;
+    });
+    if (!day) return null;
+    const n = plan(list, { today: day }).list.length;
+    return n ? { day, n } : null;
+  }
+
+  // ホームに出す数(§9-10)→ { size, due, fresh, left, next: { day, n } | null, words, learned }
+  //   size = この回の語数・due = そのうち出す日が来た語・fresh = 初めての語・next = 次に出る日と語数(今日の分が無いときに出す)
+  async function home(opts){
+    opts = opts || {};
+    const today = todayOf(opts.now);
+    const items = await vocab.all();
+    const p = plan(items, { today });
+    return { size: p.list.length, due: p.due, fresh: p.fresh, left: p.left, next: next(items, today), words: items.length, learned: learned(items) };
+  }
+
+  // 1 回の流れ: 選んだ語を順に出し、そのあと「分からなかった」語を review.again 回まで、もう一度(この分は size に数えない)。答えの確かめは vocab.answer(1 と 3 でなければ kind:bad)
+  //   s.current() = 今の語(終われば null)/ s.answer(g) = 今の語に答える(vocab.answer に書いて、次へ)/ s.phase = 'main' | 'again' | 'done'
+  //   s.summary() = { words, right, wrong, answers, fixed, soon }(words = この回に出した語の数・right / wrong = 1 回目の答え・answers = もう一度も含めた答えの数・
+  //     fixed = 1 回目は「分からなかった」で、その回の終わりのもう一度で「分かった」語の数・soon = 答えたあとの次に出る日が、あしたの学習日までの語の数=回のおわりの「あしたも出る」。工程W4b-2)
+  //   s.queued = もう一度の分も入れた、この回の並びの長さ(もう一度の何語目かを出すため。工程W4b-2)
+  async function start(opts){
+    opts = opts || {};
+    const items = await vocab.all();
+    const p = plan(items, { today: todayOf(opts.now) });
+    const queue = p.list.map(it => ({ it, again: false }));
+    const shown = new Map();                      // id → もう一度出した回数
+    const first = new Map();                      // id → 1 回目の答え
+    const last = new Map();                       // id → いちばんあとの答え [g, 次に出る日]
+    let pos = 0, answers = 0, busy = false;
+    const cur = () => queue[pos] || null;
+    const s = {
+      due: p.due, fresh: p.fresh, left: p.left,
+      get phase(){ const c = cur(); return !c ? 'done' : c.again ? 'again' : 'main'; },
+      get total(){ return p.list.length; },
+      get pos(){ return pos; },
+      get queued(){ return queue.length; },
+      current: () => { const c = cur(); return c ? util.clone(c.it) : null; },
+      answer: async g => {
+        const c = cur();
+        if (!c) throw util.error('bad', 'この回は終わっている');
+        if (busy) throw util.error('bad', '前の答えを書いている');
+        busy = true;
+        try {
+          const out = await vocab.answer(c.it.id, g);       // 外した語なら null(書かずに次へ)
+          answers += out ? 1 : 0;
+          if (out){
+            if (!c.again) first.set(out.id, g);
+            last.set(out.id, [g, out.rv?.r?.due]);
+            const n = shown.get(out.id) || 0;
+            if (g === fsrs.AGAIN && n < cfg().again){ shown.set(out.id, n + 1); queue.push({ it: out, again: true }); }
+          }
+          pos++;
+          return out;
+        } finally { busy = false; }
+      },
+      summary: () => {
+        const g = Array.from(first.values());
+        const tomorrow = util.addDays(todayOf(opts.now), 1);
+        let fixed = 0, soon = 0;
+        last.forEach(([g2, due], id) => {
+          if (first.get(id) === fsrs.AGAIN && g2 === fsrs.GOOD) fixed++;
+          if (typeof due !== 'string' || due <= tomorrow) soon++;      // 様子が読めない語も、早めに出る側に数える
+        });
+        return { words: first.size, right: g.filter(x => x === fsrs.GOOD).length, wrong: g.filter(x => x === fsrs.AGAIN).length, answers, fixed, soon };
+      }
+    };
+    return s;
+  }
+
+  Yomu.review = { plan, next, home, start, status, learned };
+})();
+
 /* ---- core/log.js ---- */
 // core/log.js — 読んだ記録(部品の約束 §8-8)。事実をそのまま残す(判定はしない)
 //   まとめ: shared の p/{pid}/log/{学習日}(ひと続きごとの数字。長く残す)/詳しい分: site の logx/{学習日}(段落ごとの時間と操作の明細。消えることがある)
 //   画面を見張って1秒ごとに数えるのは page/watch.js。ここは、渡された数字を、ひと続きに区切って保存するだけ(DOM もタイマーも使わない)
+//   重ねずに数える(fresh=§8-8): 段落ごとの、もう数えた英語の量(覚え)と比べる。覚えの読み書きは、ページの側が渡す口(open の opt.memo)。ここは鍵の名前を知らない
+//   作品ごとの記録(§8-11 の 5。工程W3b-2): まとめを書くときに、同じく直す(続きを読む)
 (function(){
   'use strict';
   const util = Yomu.util, config = Yomu.config, schema = Yomu.schema, store = Yomu.store, settings = Yomu.settings;
   const isPlain = util.isPlain;
-  const LOG = 'log/', LOGX = 'logx/';
+  const LOG = 'log/', LOGX = 'logx/', WORK = 'work/';
   const DAY = /^\d{4}-\d{2}-\d{2}$/;
   const ROW = ['jc', 'sn', 'tg', 'se', 'ew', 'je'];   // 段落ごとの数(§8-8 の Row。p のほか)
 
@@ -5965,6 +6792,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const isoOf = ms => new Date(ms).toISOString();
   const tooNew = what => util.error('newer', '新しい版のデータなので、読まない: ' + what);
   const byT0 = (a, b) => { const x = String((a && a.t0) || ''), y = String((b && b.t0) || ''); return x < y ? -1 : x > y ? 1 : 0; };
+  const urlOf = v => (typeof v === 'string' && /^https?:\/\//i.test(v) && v.length <= 2000 ? v : null);   // 次の話の住所(PageInfo.next)
+  const EN = ['se', 'ew', 'je'];   // 覚えに持つ数(英語の文の数・語数・英語にした文のもとの文字数)
 
   // ---- 設定(読んだ記録を残すか・詳しい分を残すか)。open のときと、書くたびに見直す。変えた合図でも直す ----
   let conf = null, onAt = 0;   // onAt = 「残さない」から「残す」に変わった時刻
@@ -6014,7 +6843,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       st.vis += e.sec;
       if (e.act){
         st.act += e.sec;
-        e.list.forEach(([p, share]) => { st.ds.set(p, (st.ds.get(p) || 0) + share * e.sec * 10); });   // このページに無い段落の分は、保存する形にするときに落ちる
+        e.list.forEach(([p, share]) => {
+          const was = st.ds.get(p) || 0, now = was + share * e.sec * 10;
+          st.ds.set(p, now);                                  // このページに無い段落の分は、保存する形にするときに落ちる
+          if (was < config.log.seenMinDs && now >= config.log.seenMinDs) st.grew = true;   // 「画面に出た段落」が増えた(覚えを早めに書く=下の memo)
+        });
       }
     } else {
       st.n[e.kind]++;
@@ -6028,6 +6861,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   function shapeOf(st, base, visit){
     const s = st.state;
     const rec = schema.make.stretch(), detail = schema.make.detail();
+    const rows = [];                                   // 画面に出た段落(重ねずに数えるとき、覚えと比べる)
     Object.assign(rec, base, { id: st.id, visit, t0: isoOf(st.t0), t1: isoOf(st.t1), level: s.level, tr: s.tr, ratio: s.ratio, orig: s.orig, style: s.style,
       vis: Math.round(st.vis), act: Math.round(st.act), n: Object.assign({}, st.n) });
     let last = -1;
@@ -6037,12 +6871,40 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (ds >= 1) detail.paras.push([r.p, ds, r.jc, r.sn, r.se, r.ew, r.je]);
       if (ds < config.log.seenMinDs) return;          // 「画面に出た段落」= 出ていた時間が seenMinDs 以上
       rec.seen.paras++; rec.seen.sents += r.sn; rec.seen.jpChars += r.jc; rec.seen.enSents += r.se; rec.seen.enWords += r.ew; rec.seen.enJpChars += r.je;
+      rows.push(r);
       last = i;
     });
+    // rec.fresh は、覚えと比べてから入れる(countJobs。ここでは空の数のまま)
     rec.reach = last < 0 ? 0 : Math.round((last + 1) / s.rows.length * 1000) / 1000;
     Object.assign(detail, { t1: rec.t1, model: s.model, promptV: s.promptV });
     detail.ev = st.ev.map(e => { const row = [Math.max(0, Math.round((e.t - st.t0) / 100)), e.kind, e.sid]; if (e.extra !== undefined) row.push(e.extra); return row; });
-    return { rec, detail };
+    return { rec, detail, rows };
+  }
+  // 画面に出た段落(出ていた時間が seenMinDs 以上)だけ
+  const seenRows = st => st.state.rows.filter(r => Math.round(st.ds.get(r.p) || 0) >= config.log.seenMinDs);
+
+  // ---- 重ねずに数える(§8-8 の fresh・§8-4 の PageCount)----
+  //   覚え = 段落ごとの、もう数えた英語の量のいちばん大きい値(レベルごと)。ひと続きの「始まりの覚え」(base)は、そのひと続きを初めて数えたときに決め、変えない
+  //   (30 秒ごとに書き直しても、比べる相手は同じ=0 に戻らない)。覚えには、数えるたびに、段落ごとの大きい方を重ねる
+  function freshOf(base, rows){
+    const f = { paras: 0, sents: 0, jpChars: 0, enSents: 0, enWords: 0, enJpChars: 0 };
+    rows.forEach(r => {
+      const b = base.get(r.p);
+      if (!b){ f.paras++; f.sents += r.sn; f.jpChars += r.jc; f.enSents += r.se; f.enWords += r.ew; f.enJpChars += r.je; return; }
+      f.enSents += Math.max(0, r.se - b[0]); f.enWords += Math.max(0, r.ew - b[1]); f.enJpChars += Math.max(0, r.je - b[2]);   // 割合を上げた分だけ。減った分は引かない
+    });
+    return f;
+  }
+  // 読み込んだ覚え({ [段落の番号]: [se, ew, je] })を重ねる
+  function mergeLoaded(e, p){
+    if (!isPlain(p)) return;
+    Object.keys(p).forEach(k => {
+      const v = p[k], i = Number(k);
+      if (!Number.isInteger(i) || i < 0 || !Array.isArray(v)) return;
+      const a = e.m.get(i) || [0, 0, 0];
+      for (let j = 0; j < 3; j++) a[j] = Math.max(a[j], num(v[j]));
+      e.m.set(i, a);
+    });
   }
 
   // ---- 保存に書く ----
@@ -6080,7 +6942,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
   let pruned = false;   // 古い日を捨てるのは、ページを開いてから最初に書いたあとの1回
   // jobs = [{ st, day, rec, detail, full }] → 全部書けたら true
-  async function persist(jobs, done){
+  async function persist(jobs, done, base){
     if (!jobs.length) return true;
     try {
       await store.init();
@@ -6097,17 +6959,35 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       jobs.forEach(j => { j.st.dirty = true; if (j.st.finished && !done.includes(j.st)) done.push(j.st); });
       return false;
     }
+    await putWork(base, jobs).catch(() => null);      // 作品ごとの記録は、書けなくても失敗にしない(次に書くときに直る)
     if (!pruned){ pruned = true; await log.prune().catch(() => null); }
     return true;
+  }
+  // 作品ごとの記録(§8-11 の 5): 最後に英語まじりで読んだページ。同じページなら、どこまで読んだか(reach)は大きい方。ページが変わったら、新しいページの値
+  async function putWork(base, jobs){
+    if (!base || !base.work) return;
+    const last = jobs.reduce((m, j) => (!m || String(j.rec.t1) > String(m.rec.t1) ? j : m), null);
+    const reach = jobs.reduce((m, j) => Math.max(m, num(j.rec.reach)), 0);
+    await store.shared.update(WORK + base.work, cur => {
+      const w = schema.open('work', cur, schema.make.work);
+      const same = w.page === base.page, at = last.rec.t1;
+      if (!same && typeof w.at === 'string' && w.at > at) return undefined;   // ほかのタブで、あとから別のページを読んだ: そちらを残す
+      return Object.assign(w, { work: base.work, site: base.site, title: { work: base.title.work, ep: base.title.ep }, page: base.page,
+        at: same && typeof w.at === 'string' && w.at > at ? w.at : at, reach: same ? Math.max(num(w.reach), reach) : reach,
+        ratio: last.rec.ratio, level: last.rec.level, next: base.next });
+    });
   }
 
   const log = { kinds: schema.acts.slice() };
 
   // ページを英語まじりで出したとき(page/watch.js が呼ぶ)→ handle
-  log.open = function(ctx){
+  //   opt.memo = { load(level) → Promise<{ [段落の番号]: [se, ew, je] } | null>, save(level, p) → Promise }(覚えの読み書き。ページの側。省くと、この visit の中だけで重ねずに数える)
+  log.open = function(ctx, opt){
     if (!isPlain(ctx) || typeof ctx.page !== 'string' || !ctx.page) throw bad('読んだ記録を始められない(page が無い)');
     const title = isPlain(ctx.title) ? ctx.title : {};
     const base = { page: ctx.page, work: str(ctx.work), site: str(ctx.site), title: { work: cut(title.work), ep: cut(title.ep) } };
+    const where = Object.assign({}, base, { next: urlOf(ctx.next) });   // 作品ごとの記録に書くもの(まとめには、next を入れない)
+    const memo = isPlain(opt) && opt.memo && typeof opt.memo.load === 'function' && typeof opt.memo.save === 'function' ? opt.memo : null;
     const visit = util.uid('v');
     readConf();
     let want = stateOf(null, ctx);           // いまの表示
@@ -6115,7 +6995,58 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     let changedAt = null;                    // 表示が変わって、落ち着くのを待っているとき: 最後に変わった時刻
     let buf = [];                            // 待つ間の出来事(落ち着いた先のひと続きに入れる)
     const done = [];                         // 区切りがついて、まだ書いていないひと続き
-    let closed = false, paused = false, lastFlush = nowMs(), chain = Promise.resolve(true);
+    let closed = false, paused = false, lastFlush = nowMs(), lastMemo = nowMs(), chain = Promise.resolve(true);
+
+    // 覚え(レベルごと): m = 段落の番号 → [se, ew, je]・ver = 重ねた回数・saved = 書いたときの ver・ready = 読み込み(1 回だけ。読めなければ空から)
+    const mems = new Map();
+    function memOf(level){
+      const key = level || '';
+      let e = mems.get(key);
+      if (e) return e;
+      e = { level, m: new Map(), ver: 0, saved: 0, ready: Promise.resolve() };
+      if (memo && level) e.ready = Promise.resolve().then(() => memo.load(level)).then(p => mergeLoaded(e, p), () => null);
+      mems.set(key, e);
+      return e;
+    }
+    // ひと続きを数える: 始まりの覚えと比べた fresh を返し、覚えに重ねる。rows = そのときの画面に出た段落
+    async function account(st, rows){
+      const e = memOf(st.state.level);
+      await e.ready;
+      if (!st.base) st.base = new Map(Array.from(e.m, ([p, v]) => [p, v.slice()]));
+      const f = freshOf(st.base, rows);
+      rows.forEach(r => {
+        const a = e.m.get(r.p);
+        if (!a){ e.m.set(r.p, EN.map(k => r[k])); e.ver++; return; }
+        EN.forEach((k, i) => { if (r[k] > a[i]){ a[i] = r[k]; e.ver++; } });
+      });
+      return f;
+    }
+    // 増えた覚えを書く(書けなくても失敗にしない。次に書くときに、また重ねる)
+    async function saveMems(){
+      if (!memo) return;
+      for (const e of mems.values()){
+        if (!e.level || e.ver === e.saved) continue;
+        const ver = e.ver, p = {};
+        e.m.forEach((v, k) => { p[k] = v.slice(); });
+        try { await memo.save(e.level, p); e.saved = Math.max(e.saved, ver); } catch (err){}
+      }
+    }
+    async function countJobs(jobs){
+      for (const j of jobs){
+        try { j.rec.fresh = await account(j.st, j.rows); } catch (e){ delete j.rec.fresh; }   // 数えられなければ fresh を付けない(読む側は seen を使う=前の版の記録と同じ)
+      }
+      await saveMems();
+    }
+    // 覚えだけを早めに書く(画面に出た段落が増えたとき。memoSec ごとまで): iPhone では、ページを離れるときに始めた IndexedDB への書き込みが残らないので(§8-8)、
+    //   「次へ」で離れる前の分が、開き直したときに重ならないように。数えるのは、まとめと同じく、残すひと続き(minSec 以上)だけ
+    function memoSoon(now){
+      if (!memo || closed || paused || now - lastMemo < config.log.memoSec * 1000) return;
+      const list = done.concat(keepable(cur) ? [cur] : []);
+      if (!list.some(st => st.grew)) return;
+      lastMemo = now;
+      const jobs = list.map(st => { st.grew = false; return { st, rows: seenRows(st) }; });
+      chain = chain.then(async () => { for (const j of jobs) await account(j.st, j.rows); await saveMems(); }).then(() => true, () => true);
+    }
 
     const drain = () => { buf.forEach(e => apply(cur, e)); buf = []; };
     // 落ち着いたかを確かめる。落ち着いていたら、最後に変わった時刻で区切る
@@ -6151,11 +7082,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (final) drain();                    // 落ち着く前にページを離れた: 待っていた分は、前のひと続きに入れる
       const list = done.splice(0);
       if (keepable(cur) && cur.dirty) list.push(cur);
-      return list.map(st => { st.dirty = false; return Object.assign({ st, day: st.day, full: conf.detail === 'full' }, shapeOf(st, base, visit)); });
+      lastMemo = now;
+      return list.map(st => { st.dirty = false; st.grew = false; return Object.assign({ st, day: st.day, full: conf.detail === 'full' }, shapeOf(st, base, visit)); });
     }
     function flush(final){
       const jobs = snapshot(final);
-      chain = chain.then(() => persist(jobs, done)).then(ok => ok, () => false);
+      chain = chain.then(() => countJobs(jobs)).then(() => persist(jobs, done, where)).then(ok => ok, () => false);
       return chain;
     }
 
@@ -6198,6 +7130,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         const pairs = (Array.isArray(list) ? list : []).filter(r => Array.isArray(r) && typeof r[0] === 'number' && num(r[1]) > 0);
         const total = pairs.reduce((s, r) => s + r[1], 0);
         push({ type: 'dwell', t: now, sec, act: !(opt && opt.act === false), list: pairs.map(r => [r[0], r[1] / total]) });
+        if (now < lastMemo) lastMemo = now;                      // 端末の時計が戻された
+        memoSoon(now);
       },
       flush(){ return closed ? chain : flush(false); },
       close(){
@@ -6252,6 +7186,124 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   };
 
   Yomu.log = log;
+})();
+
+/* ---- core/learn.js ---- */
+// core/learn.js — 学ぶ画面が読む口(部品の約束 §9-10・§8-11 の 5。工程W3b-2)。画面は持たない(学ぶ画面=工程W4b・W4c が呼ぶ)
+//   続きを読む(作品ごとの記録と行き先)・記録の数(この 7 日・日ごとの 14 日・これまで)・単語帳の一覧(様子・次に出る日・調べた回数)
+//   保存は読むだけ(書かない)。見るのは shared だけ(§8-10 の決まり 2)。日付はみな学習日(午前4時が境=§1-2)
+(function(){
+  'use strict';
+  const util = Yomu.util, config = Yomu.config, schema = Yomu.schema, store = Yomu.store, settings = Yomu.settings;
+  const vocab = Yomu.vocab, seen = Yomu.seen, review = Yomu.review, fsrs = Yomu.fsrs, log = Yomu.log;
+  const isPlain = util.isPlain;
+  const cfg = () => config.learn;
+  const WORK = 'work/';
+  const num = v => (typeof v === 'number' && isFinite(v) && v > 0 ? v : 0);
+  const isUrl = v => { try { return typeof v === 'string' && /^https?:$/.test(new URL(v).protocol); } catch (e){ return false; } };
+  const todayOf = now => util.today(now || util.nowISO());   // 時計は util.nowISO(答えの時刻と同じ時計)
+  const Y = Yomu;
+  const sites = () => Y.sites;                               // page/sites.js(読み込みの順は、あと=検査が部品をしぼって読むとき。呼ばれたときに見る。読み込んだときの Yomu のもの)
+  const siteOf = w => (typeof w.site === 'string' && w.site ? w.site : String(w.work || '').split(':')[0]);
+
+  // ---- 続きを読む(§8-11 の 5・§9-10 の「ホーム」)----
+  //   途中まで(reach が doneReach より小さい)→ そのページ。最後まで → 次の話(読んだときに「次へ」があれば)か、作品の目次。
+  //   記事(どのページでも)と、なろうの短編は、最後まで読んだら出さない。住所に戻せないページ(縮めた鍵)も出さない(2026-10-18 利用者「おすすめで」)
+  function dest(w){
+    if (!isPlain(w) || typeof w.page !== 'string' || !w.page) return null;
+    const S = sites();
+    if (!S) return null;
+    if (num(w.reach) < cfg().doneReach){ const url = S.url(w.page); return url ? { kind: 'page', url } : null; }
+    if (siteOf(w) === 'web' || S.short(w.page)) return null;
+    if (isUrl(w.next)) return { kind: 'next', url: w.next };
+    const toc = S.toc(w.work);
+    return toc ? { kind: 'toc', url: toc } : null;
+  }
+  // 作品ごとの記録の全部(形の版が新しいもの・こわれたものは飛ばす)。at の新しい順
+  async function works(){
+    await store.init();
+    const out = [];
+    for (const k of await store.shared.keys(WORK)){
+      const w = await store.shared.get(k);
+      if (!isPlain(w) || schema.newer('work', w) || typeof w.page !== 'string') continue;
+      out.push(schema.fill(util.clone(w), schema.make.work()));
+    }
+    const at = w => String(w.at || '');
+    return out.sort((a, b) => (at(a) < at(b) ? 1 : at(a) > at(b) ? -1 : String(a.work) < String(b.work) ? -1 : 1));
+  }
+  // ホームの「続きを読む」: 行き先のあるものを、新しい順に n(learn.recent)まで
+  //   → [{ work, site, scene: 'novel'|'article', title, page, at, reach, ratio, level, kind: 'page'|'next'|'toc', url }]
+  async function recent(opts){
+    const n = (opts && opts.n) ?? cfg().recent;
+    const out = [];
+    for (const w of await works()){
+      if (out.length >= n) break;
+      const d = dest(w);
+      if (!d) continue;
+      const site = siteOf(w);
+      out.push({ work: w.work, site, scene: site === 'web' ? 'article' : 'novel', title: { work: String(w.title.work || ''), ep: String(w.title.ep || '') },
+        page: w.page, at: w.at, reach: num(w.reach), ratio: num(w.ratio), level: w.level, kind: d.kind, url: d.url });
+    }
+    return out;
+  }
+
+  // ---- 記録(§9-10 の「記録」)----
+  //   画面に出た英語 = 重ねずに数えた語数(fresh.enWords。fresh の無い記録=工程W3b-2 より前の版は seen.enWords)・読んだ時間 = 操作が途切れていなかった秒(act)
+  const enWordsOf = s => (isPlain(s.fresh) ? num(s.fresh.enWords) : isPlain(s.seen) ? num(s.seen.enWords) : 0);
+  const answerDay = t => util.today(new Date(t * 1000));
+  // → { on, today, week: { from, to, enWords, actSec, reviewDays, answers }, days: [{ day, enWords }…](古い順), total: { from, enWords, actSec, words, learned } }
+  //   on = 読んだ記録を残しているか(false なら、画面は、そう出して設定への行き先)。復習した日・答えた回数は、単語帳の語の答えの記録から(外した語の答えは消えている=§8-11 の 1)
+  async function record(opts){
+    opts = opts || {};
+    const today = todayOf(opts.now);
+    const week = { from: util.addDays(today, -(cfg().weekDays - 1)), to: today, enWords: 0, actSec: 0, reviewDays: 0, answers: 0 };
+    const chartFrom = util.addDays(today, -(cfg().chartDays - 1));
+    const byDay = new Map();
+    for (let d = chartFrom; d <= today; d = util.addDays(d, 1)) byDay.set(d, 0);
+    const total = { from: null, enWords: 0, actSec: 0, words: 0, learned: 0 };
+    for (const { day, items } of await log.days()){
+      if (day > today) continue;                             // 時計が戻された端末の、先の日の記録は数えない
+      let en = 0, act = 0;
+      items.forEach(s => { en += enWordsOf(s); act += num(s.act); });
+      if (!total.from) total.from = day;
+      total.enWords += en; total.actSec += act;
+      if (day >= week.from){ week.enWords += en; week.actSec += act; }
+      if (byDay.has(day)) byDay.set(day, byDay.get(day) + en);
+    }
+    const items = await vocab.all();
+    const days = new Set();
+    items.forEach(it => {
+      fsrs.answers(isPlain(it.rv) && isPlain(it.rv.r) ? it.rv.r.h : null).forEach(a => {
+        const d = answerDay(a[0]);
+        if (d < week.from || d > today) return;
+        week.answers++; days.add(d);
+      });
+    });
+    week.reviewDays = days.size;
+    total.words = items.length; total.learned = review.learned(items);
+    const s = settings.get();
+    return { on: !(isPlain(s.log) && s.log.on === false), today, week, days: Array.from(byDay, ([day, enWords]) => ({ day, enWords })), total };
+  }
+
+  // ---- 単語帳の一覧(§9-10 の「単語帳」)----
+  //   opts.q = さがす字(英語か意味の、どこかに含む。大文字と小文字・全角と半角は見ない)/ opts.sort = 'new'(入れた順=新しい順。はじめ)| 'abc'(見出しの ABC 順)
+  //   → [{ item, status: 'new'|'learning'|'learned', due, k, seen }](due = 次に出る学習日・k = 続けて分かった数・seen = 調べた回数)
+  const norm = v => String(v || '').normalize('NFKC').toLowerCase().trim();
+  async function words(opts){
+    opts = opts || {};
+    const [items, counts] = await Promise.all([vocab.all(), seen.totals().catch(() => ({}))]);
+    const q = norm(opts.q);
+    let list = q ? items.filter(it => norm(it.head).includes(q) || norm(it.mean).includes(q)) : items;
+    if (opts.sort === 'abc'){
+      list = list.slice().sort((a, b) => String(a.head).localeCompare(String(b.head), 'en', { sensitivity: 'base' }) || (a.head < b.head ? -1 : a.head > b.head ? 1 : String(a.id) < String(b.id) ? -1 : 1));
+    }
+    return list.map(it => {
+      const r = isPlain(it.rv) && isPlain(it.rv.r) ? it.rv.r : null;
+      return { item: it, status: review.status(it), due: r && typeof r.due === 'string' ? r.due : null, k: r ? num(r.k) : 0, seen: num(counts[it.id]) };
+    });
+  }
+
+  Yomu.learn = { dest, works, recent, record, words };
 })();
 
 /* ---- core/translate.js ---- */
@@ -6513,12 +7565,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
 /* ---- page/extract.js ---- */
 // page/extract.js — 段落を文のデータに直す(部品の約束 §4-2)
-//   段落の文字は、Text ノードを文書の順につないだもの。ルビの読み(rt・rp)と、エンジンが足した要素(.yomu-en・.yomu-chip)は除き、<br> は改行にする。
+//   段落の文字は、Text ノードを文書の順につないだもの。ルビの読み(rt・rp)と、エンジンが足した要素(.yomu-en・.yomu-chip・.yomu-say)は除き、<br> は改行にする。
 //   innerText は使わない(ルビの読みが混ざるため)。英文を描き込んだあとでも、同じ文字が得られる(包みの .yomu-s・.yomu-jp は素通りする)。
 (function(){
   'use strict';
   const T = Yomu.text, config = Yomu.config, util = Yomu.util;
-  const ENGINE = '.yomu-en,.yomu-chip';                 // エンジンが足した要素(文字として数えない)
+  const ENGINE = '.yomu-en,.yomu-chip,.yomu-say';       // エンジンが足した要素(文字として数えない。.yomu-say = 文の終わりの 🔊=工程W4a)
   const ALWAYS = 'script,style,template,noscript';      // 段落の中にあっても、文字ではないもの
   const selOf = skip => [skip, ENGINE, ALWAYS].filter(Boolean).join(',');
 
@@ -6630,12 +7682,15 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const Y = Yomu;
   const extract = Yomu.extract, util = Yomu.util, theme = Yomu.theme;
 
-  const ATTR_ORIG = 'data-yomu-orig', ATTR_STYLE = 'data-yomu-style', ATTR_THEME = 'data-yomu-theme', ATTR_FONT = 'data-yomu-font', ATTR_SIZE = 'data-yomu-size';
+  const ATTR_ORIG = 'data-yomu-orig', ATTR_STYLE = 'data-yomu-style', ATTR_THEME = 'data-yomu-theme', ATTR_FONT = 'data-yomu-font', ATTR_SIZE = 'data-yomu-size', ATTR_SAY = 'data-yomu-say';
   const CSS_ID = 'yomu-page-css';
   const STYLES = ['marker', 'quiet'];
   const PRE = '--yomu-';                                   // ページの側に置く CSS の変数の頭(サイトの変数とぶつからないように)
   const c = key => 'var(' + theme.varName(key, PRE) + ')';
   const CHIP = { en: ['あ', 'この文を日本語に戻す'], back: ['A', 'この文を英語に戻す'] };
+  const SAY_NAME = 'この文を聞く';
+  // 文の終わりの 🔊 の絵(ui/root.js の speaker・stop と同じ形。鳴っている間は、止める形)
+  const SAY_ICONS = { speaker: ['M4 10v4h3l4 3V7l-4 3H4z', 'M15 9.5a3.5 3.5 0 0 1 0 5', 'M17.5 7a7 7 0 0 1 0 10'], stop: ['M7 7h10v10H7z'] };
 
   // ページに足す CSS。サイトの CSS に負けないよう、:root から書いて詳しさを上げる。大きさはキャンバスの2ページ目(design/round2/gen.js)
   //   色は、色の組(core/theme.js)の名前を CSS の変数で読む(色の値を、ここに直接書かない)。組は <html> の印 data-yomu-theme で切り替える(印が無ければ、初めの組)
@@ -6648,6 +7703,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const BASE = { sans: 0.92, serif: 1.03, site: 1 }, MUL = { s: 0.9, m: 1, l: 1.12 };
   // 「あ/A」の字の大きさと、押せる範囲(画面の物差し=§9-9。行の中に入るので、44px にはできない)。丸は 23px ほど。見えない所を上下左右に足して、押せる範囲を 30px 四方ほどに広げる
   const CHIP_RULE = Y.config.ui.chip, CHIP_PAD = CHIP_RULE.pad;
+  // 文の終わりの 🔊(工程W4a): 「あ」と同じ大きさの丸。「あ」の右の余白(3px)と合わせて、2 つの押せる範囲の間に、どちらも受けない幅 chip.gap をあける
+  const CHIP_RIGHT = 3, SAY_LEFT = CHIP_RULE.gap + 2 * CHIP_PAD - CHIP_RIGHT;
   // 離れた熟語の間の語の破線の刻み [線, すき間](px。工程T-5a の写真で利用者が見た形に合わせた。線の太さは熟語の実線と同じ 2px)
   const GAP_DASH = [4, 3];
   const CSS = [
@@ -6657,10 +7714,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     ':root[' + ATTR_FONT + '="site"] { --yomu-en-base: ' + BASE.site + '; }',
     ':root[' + ATTR_SIZE + '="s"] { --yomu-en-mul: ' + MUL.s + '; }',
     ':root[' + ATTR_SIZE + '="l"] { --yomu-en-mul: ' + MUL.l + '; }',
-    R + ' > .yomu-en, ' + R + ' > .yomu-chip { display: none; }',
+    R + ' > .yomu-en, ' + R + ' > .yomu-chip, ' + R + ' > .yomu-say { display: none; }',
     ON + ' .yomu-s[data-yomu-st="en"] > .yomu-jp { display: none; }',
     ON + ' .yomu-s[data-yomu-st="en"] > .yomu-en { display: inline; }',
     ON + ' .yomu-s[data-yomu-st="en"] > .yomu-chip, ' + ON + ' .yomu-s[data-yomu-st="back"] > .yomu-chip { display: inline; }',
+    // 文の終わりの 🔊: 設定で「出す」にしたとき(<html> の印 data-yomu-say)の、英語で出ている文だけ(日本語に戻した文には出さない)
+    ':root[' + ATTR_SAY + ']:not([' + ATTR_ORIG + ']) .yomu-s[data-yomu-st="en"] > .yomu-say { display: inline; }',
     // 「あ/A」を、前の語から離して次の行の頭に置かない: 前の文字の後ろに、改行させない印(語をつなぐ見えない文字 U+2060)を置く。
     //   「あ/A」を箱(inline-flex)にすると、その前はいつでも改行できてしまうので、ふつうの文字の並び(inline)にして丸く見せる(工程4a-1 が Chromium で確かめた)
     R + ' > .yomu-en::after, ' + R + '[data-yomu-st="back"] > .yomu-jp::after { content: "\\2060"; }',
@@ -6687,6 +7746,13 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       + ' cursor: pointer; white-space: nowrap; -webkit-user-select: none; user-select: none; -webkit-text-emphasis: none; text-emphasis: none; }',
     R + ' > .yomu-chip::after { content: ""; position: absolute; left: -' + CHIP_PAD + 'px; right: -' + CHIP_PAD + 'px; top: -' + CHIP_PAD + 'px; bottom: -' + CHIP_PAD + 'px; }',
     R + '[data-yomu-st="back"] > .yomu-chip { border-color: ' + c('backBd') + '; color: ' + c('backInk') + '; font-family: ' + FE + '; font-weight: 800; }',
+    // 文の終わりの 🔊(「あ」と同じ大きさの丸・同じ色。絵の線は 24 四方の真ん中の 6 割ほどなので、絵の箱は 1.4em にして、左右の余白を細くする=丸の幅は「あ」とそろう)。頭に、語をつなぐ見えない文字(U+2060)を入れて、「あ」と 🔊 の間で改行させない
+    R + ' > .yomu-say { position: relative; top: -2px; margin: 0 3px 0 ' + SAY_LEFT + 'px; padding: 0.2em 2px; border: 1px solid ' + c('chipBd') + '; border-radius: 50%; background: ' + c('chipBg') + '; color: ' + c('chipInk') + ';'
+      + ' font-size: ' + CHIP_RULE.font + 'px; font-style: normal; line-height: 1; text-indent: 0; letter-spacing: normal; cursor: pointer; white-space: nowrap; -webkit-user-select: none; user-select: none; }',
+    R + ' > .yomu-say::after { content: ""; position: absolute; left: -' + CHIP_PAD + 'px; right: -' + CHIP_PAD + 'px; top: -' + CHIP_PAD + 'px; bottom: -' + CHIP_PAD + 'px; }',
+    R + ' > .yomu-say > svg { display: inline; width: 1.4em; height: 1.4em; vertical-align: -0.38em; overflow: visible; }',
+    R + ' > .yomu-say > svg.yomu-stop, ' + R + ' > .yomu-say[aria-pressed="true"] > svg.yomu-speaker { display: none; }',
+    R + ' > .yomu-say[aria-pressed="true"] > svg.yomu-stop { display: inline; }',
     // 書体だけ
     ':root' + Q + ' .yomu-s > .yomu-en { font-weight: 400; color: ' + c('quietInk') + '; background: transparent; border-radius: 0; padding: 0; }',
     ':root' + Q + ' .yomu-s .yomu-i { font-weight: inherit; border-bottom: 1px dotted ' + c('quietIdiom') + '; padding-bottom: 1px; }',
@@ -6694,6 +7760,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     ':root' + Q + ':not([' + ATTR_ORIG + ']) .yomu-s[data-yomu-st="back"] > .yomu-jp { background: transparent; border-radius: 0; padding: 0 0 1px; border-bottom: 1px dotted ' + c('quietBack') + '; }',
     ':root' + Q + ' .yomu-s > .yomu-chip { margin: 0 3px 0 2px; border-color: ' + c('quietChipBd') + '; background: transparent; color: ' + c('quietChipInk') + '; }',
     ':root' + Q + ' .yomu-s[data-yomu-st="back"] > .yomu-chip { border-color: ' + c('quietChipBd') + '; color: ' + c('quietBack') + '; }',
+    ':root' + Q + ' .yomu-s > .yomu-say { border-color: ' + c('quietChipBd') + '; background: transparent; color: ' + c('quietChipInk') + '; }',
     // 英文の書体(初めは、ゴシック体=上の FE)。「サイトと同じ」は、太さもサイトのまま
     ':root[' + ATTR_FONT + '="serif"] .yomu-s > .yomu-en { font-family: ' + FS + '; }',
     ':root[' + ATTR_FONT + '="site"] .yomu-s > .yomu-en { font-family: inherit; font-weight: inherit; }'
@@ -6701,7 +7768,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
   // ---- 状態 ----
   let doc = null, model = null;
-  let entries = new Map();      // sid → { sid, pieces:[span…], main: span, en: string|null, words, el: span.yomu-en|null, chip: span|null, st }
+  let entries = new Map();      // sid → { sid, pieces:[span…], main: span, en: string|null, words, el: span.yomu-en|null, chip: span|null, say: span|null, st }
   let splits = [];              // 割った Text ノードの組 [前, 後](detach で、逆の順につなぎ直す)
   let backups = [];             // [{ el, html, text }] 段落ごとの控え(最後の守り)
   let shown = new Set(), waiting = false;
@@ -6710,6 +7777,22 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   // ページの document の道具は、包むときに1回だけ受けておく(jsdom では、document の欄を読むたびに、ページ全体を数え直すため。ブラウザでは変わらない)
   let D = null;                 // { view, el(tag), text(s) }
   const mk = (tag, cls) => { const e = D.el(tag); if (cls) e.className = cls; return e; };
+  // 文の終わりの 🔊(役は押せるボタン・名前は「この文を聞く」。出すかどうかは CSS=<html> の印)
+  function sayEl(){
+    const s = mk('span', 'yomu-say');
+    s.setAttribute('role', 'button');
+    s.setAttribute('tabindex', '0');
+    s.setAttribute('aria-label', SAY_NAME);
+    s.setAttribute('aria-pressed', 'false');
+    s.appendChild(D.text(String.fromCharCode(0x2060)));
+    Object.keys(SAY_ICONS).forEach(name => {
+      const svg = D.svg('svg');
+      [['viewBox', '0 0 24 24'], ['fill', 'none'], ['stroke', 'currentColor'], ['stroke-width', '2.2'], ['stroke-linecap', 'round'], ['stroke-linejoin', 'round'], ['aria-hidden', 'true'], ['class', 'yomu-' + name]].forEach(([k, v]) => svg.setAttribute(k, v));
+      SAY_ICONS[name].forEach(d => { const p = D.svg('path'); p.setAttribute('d', d); svg.appendChild(p); });
+      s.appendChild(svg);
+    });
+    return s;
+  }
 
   // ---- 文の範囲を包む ----
   // 文書の順の比べ: a が b より前なら負
@@ -6780,7 +7863,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     let main = pieces[0];
     pieces.forEach(p => { if (depthIn(p, para) < depthIn(main, para)) main = p; });
     pieces.forEach(p => { if (p !== main) p.classList.add('yomu-part'); });
-    entries.set(sid, { sid, pieces, main, en: null, words: null, el: null, chip: null, st: 'jp' });
+    entries.set(sid, { sid, pieces, main, en: null, words: null, el: null, chip: null, say: null, st: 'jp' });
     return true;
   }
 
@@ -6887,7 +7970,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     });
     const css = doc.getElementById(CSS_ID);
     if (css) css.parentNode.removeChild(css);
-    [ATTR_ORIG, ATTR_STYLE, ATTR_THEME, ATTR_FONT, ATTR_SIZE].forEach(a => doc.documentElement.removeAttribute(a));
+    [ATTR_ORIG, ATTR_STYLE, ATTR_THEME, ATTR_FONT, ATTR_SIZE, ATTR_SAY].forEach(a => doc.documentElement.removeAttribute(a));
     doc = null; D = null; model = null; entries = new Map(); splits = []; backups = []; shown = new Set(); waiting = false; flipped.clear();
   }
 
@@ -6898,7 +7981,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const first = m.paras.find(p => p.el);
     if (!first) return { wrapped: 0, missed: m.targets.length };
     doc = first.el.ownerDocument;
-    D = { view: doc.defaultView, el: doc.createElement.bind(doc), text: doc.createTextNode.bind(doc) };
+    D = { view: doc.defaultView, el: doc.createElement.bind(doc), text: doc.createTextNode.bind(doc), svg: tag => doc.createElementNS('http://www.w3.org/2000/svg', tag) };
     model = m;
     m.paras.forEach(p => { if (p.el) backups.push({ el: p.el, html: p.el.innerHTML, text: p.text }); });
     if (!doc.getElementById(CSS_ID)){
@@ -6930,6 +8013,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         e.chip.setAttribute('tabindex', '0');
         e.main.appendChild(e.el);
         e.main.appendChild(e.chip);   // 「あ/A」の文字は、状態が en・back に変わるときに入る(paint)
+        e.say = sayEl();
+        e.main.appendChild(e.say);
       }
       fillEn(e);
       paint(e);
@@ -6986,7 +8071,16 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (!doc || theme.sizes().indexOf(name) < 0) return;
       keep(() => { if (name === 'm') doc.documentElement.removeAttribute(ATTR_SIZE); else doc.documentElement.setAttribute(ATTR_SIZE, name); });
     },
-    // タップされた要素が、どの文のどの語か → { sid, ti } / 「あ/A」なら { sid, chip: true } / どれでもなければ null
+    // 文の終わりの 🔊 を出すか(<html> の印。出さない端末・設定では false)。英文の後ろが伸び縮みするので、読んでいる場所を保つ
+    say(on){
+      if (!doc) return;
+      keep(() => { if (on) doc.documentElement.setAttribute(ATTR_SAY, '1'); else doc.documentElement.removeAttribute(ATTR_SAY); });
+    },
+    // 鳴っている文の 🔊 を、止める形の絵にする(sid = 鳴っている文。null = どれも鳴っていない)
+    saying(sid){
+      entries.forEach(e => { if (e.say) e.say.setAttribute('aria-pressed', sid != null && e.sid === Number(sid) ? 'true' : 'false'); });
+    },
+    // タップされた要素が、どの文のどの語か → { sid, ti } / 「あ/A」なら { sid, chip: true } / 文の終わりの 🔊 なら { sid, say: true } / どれでもなければ null
     hit(node){
       let el = node && node.nodeType === 3 ? node.parentNode : node;
       if (!el || !el.closest) return null;
@@ -6994,6 +8088,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (!s || !entries.has(Number(s.getAttribute('data-yomu-sid')))) return null;
       const sid = Number(s.getAttribute('data-yomu-sid'));
       if (el.closest('.yomu-chip')) return { sid, chip: true };
+      if (el.closest('.yomu-say')) return { sid, say: true };
       const w = el.closest('.yomu-w');
       return w ? { sid, ti: Number(w.getAttribute('data-yomu-t')) } : null;
     },
@@ -7067,12 +8162,17 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
   function onHide(){ if (h) h.flush(); }
 
+  // 重ねずに数える覚え(§8-4 の PageCount・§8-8 の fresh)の読み書き。そのページの訳の保存の横(サイトごとの保存。同期しない)
+  const memoOf = page => ({
+    load: level => Y.store.pages.counted(page, level).then(rec => (rec ? rec.p : null)),
+    save: (level, p) => Y.store.pages.addCounted(page, level, p)
+  });
   // 記録を始める。訳している最中(busy)は始めない(訳が出そろってから=利用者と決めた。2026-10-04)
   function begin(){
     if (h || !want || !Y.page || Y.page.status().state !== 'on') return;
     const r = Y.page.reading();
     if (!r) return;
-    try { h = Y.log.open(r.ctx); } catch (e){ h = null; return; }   // 記録の失敗で、読むのを止めない
+    try { h = Y.log.open(r.ctx, { memo: memoOf(r.ctx.page) }); } catch (e){ h = null; return; }   // 記録の失敗で、読むのを止めない
     els = r.els;
     touch();
     const on = (target, name, fn, opt) => { target.addEventListener(name, fn, opt); unhook.push(() => target.removeEventListener(name, fn, opt)); };
@@ -7169,6 +8269,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   let level = levels.initial, ratio = config.ratio.initial, style = 'marker', orig = false;
   let themeSet = theme.AUTO, themeNow = theme.initial;   // 見た目: 設定の値('auto' か、色の組の名前)と、今使っている色の組
   let font = theme.fonts()[0], size = 'm';               // 英文の書体と文字の大きさ
+  let sentSay = false;                                   // 文の終わりの 🔊(設定の値。読み上げの無い端末では、出さない=sayOn)
+  const sayOn = () => sentSay && !!(Y.speech && Y.speech.can());
   let rec = null;               // 今のレベルの保存(PageRec)。訳している間は、書いている最中のもの
   let have = new Map();         // sid → rec.s の1件(今のページの文に付く訳)
   let view = false;             // 英語まじりで出したいか(ブレンド・自動で戻す のあと true)。縦組みの間は、出したくても描かない
@@ -7278,7 +8380,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (fresh){
         have.forEach((e, sid) => render.setEn(sid, e.en, e.w));
         render.style(style);
-        render.theme(themeNow); render.font(font); render.size(size);
+        render.theme(themeNow); render.font(font); render.size(size); render.say(sayOn());
         render.orig(orig);
       }
       render.apply({ shown: shownSet(), wait: state === 'busy' || !!job });
@@ -7382,7 +8484,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (!m.targets.length) return status();  // 対象の文が無い: 操作部を出さない
     info = found; model = m;
     level = s.level; ratio = s.ratio; style = s.style; orig = false;
-    themeSet = s.theme; font = s.enFont; size = s.enSize;
+    themeSet = s.theme; font = s.enFont; size = s.enSize; sentSay = s.sentSay === true;
     themeNow = themeOf();
     ranks = order.rank(model, { shortFirst: levels.shortFirst(level) });
     vertical = sites.vertical(info, doc);
@@ -7692,6 +8794,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       state, level, ratio, style, orig, vertical, page: info ? info.pageKey : null,
       scene: rec && have.size ? sceneOf(rec) : null,   // 今のレベルの訳の場面(工程8e-2b。訳が無ければ null)
       theme: themeSet, themeNow, font, size,       // 見た目(theme = 設定の値。themeNow = 今使っている色の組)
+      sentSay, sayShown: sayOn(),                  // 文の終わりの 🔊(sentSay = 設定の値。sayShown = 今、出しているか=読み上げのある端末だけ)
       n: { targets: model ? model.n.targets : 0, translated: have.size, missing: missingOf().length, shown: n },
       saved: Object.assign({}, saved),
       idioms: ijob ? 'busy' : rec ? rec.idioms || 'none' : 'none',
@@ -7719,6 +8822,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     });
     return {
       ctx: { page: info.pageKey, work: info.workKey, site: info.site, level, tr: rec.tr || null, title: { work: info.title.work, ep: info.title.ep },
+        next: info.next || null,                     // 次の話の住所(作品ごとの記録=§8-11 の 5。工程W3b-2)
         ratio, orig, style, model: rec.model || null, promptV: rec.promptV == null ? null : rec.promptV, paras },
       els
     };
@@ -7861,6 +8965,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       quiet(settings.set({ enSize: name }));
       emit('state', status());
     },
+    // 文の終わりの 🔊(工程W4a。§9-10 の「読む画面の足し」)。出す/出さない
+    setSentSay(on){
+      if (typeof on !== 'boolean') throw util.error('bad', '文の終わりの音の印の値がおかしい: ' + on);
+      sentSay = on;
+      if (render.attached()) render.say(sayOn());
+      quiet(settings.set({ sentSay: on }));
+      emit('state', status());
+    },
     // 「原文」(全部を一時的に日本語に。設定には残さない)
     setOrig(on){
       orig = !!on;
@@ -7971,6 +9083,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '@keyframes y-up { from { transform: translateY(100%); } to { transform: none; } }',
       '@media (min-width: ' + u.wideMin + 'px) { .sheet { left: auto; right: 16px; bottom: 16px; width: ' + u.wideSheet + 'px; max-width: calc(100% - 32px); border-radius: 28px; padding-bottom: 20px; } }',
       '@media (min-width: ' + u.wideMin + 'px) { .toast { left: auto; right: ' + (16 + u.wideSheet / 2) + 'px; transform: translateX(50%); max-width: ' + u.wideSheet + 'px; } }',
+      '@media (min-width: ' + u.wideMin + 'px) { :host([data-mode="learn"]) .toast { left: 50%; right: auto; transform: translateX(-50%); } }',   // 学ぶ画面は、まん中の 1 列の下(工程W4c-1)
+      '@media (min-width: ' + u.learnSideMin + 'px) { :host([data-mode="learn"]) .toast { left: calc(50% + ' + (u.learnSide / 2) + 'px); } }',   // 左の行き先の一覧を出したら、中身の列のまん中(工程W4c-2)
       // 板の中の、よく使う形
       '.top { display: flex; align-items: center; justify-content: space-between; gap: 4px; }',
       '.brand { display: flex; align-items: center; gap: 8px; font-family: ' + FS + '; ' + t(TITLE, 500, TIGHT) + ' }',
@@ -8031,10 +9145,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.seg .f-serif { font-family: ' + FS + '; font-size: ' + BODY + 'px; }',
 
       // 単語の板(キャンバス 4・4b・3ページ目の「単語の板 — もとの語」)
-      '.word .tags { display: flex; align-items: center; gap: 8px; min-height: ' + TAP + 'px; }',
+      // 札の行: 左に札の入れ物(折り返す)・右はしに「とじる」。幅 320 では、「調べたのは ○ 回目」と出どころで 2 行になることがある(受け入れる=§9-10)。
+      //   そのときも「とじる」は右上のまま(工程W4a の写真: 札の行ごと折り返すと、「とじる」が 2 行目の左はしに落ちた)。札は上下に余白を取って 1 行目を「とじる」と同じ高さにし、2 行目は出どころだけ
+      '.word .tags { display: flex; align-items: flex-start; gap: 8px; min-height: ' + TAP + 'px; }',
+      '.word .tags .chips { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; align-content: center; column-gap: 8px; min-height: ' + TAP + 'px; }',
       '.word .tags .iconbtn { margin-left: auto; }',
-      '.word .tags .src + .iconbtn { margin-left: 0; }',
+      '.word .tags .tag, .word .tags .seen { margin: ' + (TAP - 28) / 2 + 'px 0; }',
       '.word .tag { min-height: 28px; border-radius: ' + PILL + '; background: ' + v('soft') + '; color: ' + v('softInk') + '; ' + t(CAP, 700, TIGHT) + ' display: flex; align-items: center; padding: 0 12px; }',
+      '.word .seen { min-height: 28px; border-radius: ' + PILL + '; background: ' + v('well') + '; color: ' + v('panelMuted') + '; ' + t(CAP, 600, TIGHT) + ' display: flex; align-items: center; padding: 0 12px; }',   // 調べた回数(灰色の面・灰色の字・枠なし=押せない事実。熟語の札の藍の面と見分ける)
       '.word .src { margin-left: auto; ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; }',
       '.word .headrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: ' + BTN + 'px; }',
       '.word .head { font-family: ' + FE + '; ' + t(HEAD, 800, TIGHT) + ' letter-spacing: -0.01em; overflow-wrap: anywhere; }',
@@ -8227,6 +9345,195 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.full .how .dot { position: absolute; left: 12px; top: -4px; width: 16px; height: 16px; border-radius: 50%; background: ' + v('knob') + '; box-shadow: ' + v('knobShadow') + '; }',
       '.full .how .chip { width: 28px; height: 28px; border-radius: 50%; border: 1px solid ' + v('chipBd') + '; background: ' + v('chipBg') + '; color: ' + v('chipInk') + '; ' + t(CAP, 700, TIGHT) + ' display: flex; align-items: center; justify-content: center; }',
 
+      // 学ぶ画面(専用のページ。ui/learn.js。§9-10。工程W4b-1)。並びと字は W2b の案のページ。画面いっぱいの置き場 .view の中を送り、下のタブは画面の下に残す。
+      //   広い画面(PC)では、まん中に 1 列。ui.learnSideMin 以上は、頭と下のタブを左の行き先の一覧にまとめる(下の @media。工程W4c-2)
+      '.view { position: fixed; left: 0; top: 0; right: 0; bottom: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; background: ' + v('ground') + '; color: ' + v('panelInk') + '; }',
+      '.learn { min-height: 100%; display: flex; flex-direction: column; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); }',
+      '.learn .ltop, .learn .lbody { width: 100%; max-width: ' + u.wideMin + 'px; margin: 0 auto; }',
+      '.learn .ltop { flex: none; min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 16px 0 20px; }',
+      // 右上の設定(丸いボタン。地は札と同じ・細い輪=入口のロゴの丸と同じ考え方)
+      '.learn .lgear { width: ' + TAP + 'px; height: ' + TAP + 'px; flex: none; border-radius: 50%; background: ' + v('panel') + '; color: ' + v('panelInk') + '; box-shadow: inset 0 0 0 1px ' + v('ring') + '; display: flex; align-items: center; justify-content: center; }',
+      '.learn .lglabel { display: none; }',
+      '.learn .lbody { flex: 1 0 auto; display: flex; flex-direction: column; gap: 20px; padding: 4px 16px calc(112px + env(safe-area-inset-bottom, 0px)); }',
+      '.learn h2, .learn p { margin: 0; }',
+      // 今日の復習(大きく出す数は、この回の語数だけ=W2a)
+      '.learn .lcard { background: ' + v('panel') + '; border-radius: 24px; padding: 20px; display: flex; flex-direction: column; gap: 4px; }',
+      '.learn .lcap { ' + t(CAP, 700, TIGHT) + ' color: ' + v('panelMuted') + '; }',
+      '.learn .lbig { display: flex; align-items: baseline; gap: 4px; }',
+      '.learn .lbig b { font-family: ' + FE + '; ' + t(HEAD, 800, TIGHT) + ' font-variant-numeric: tabular-nums; }',
+      '.learn .lbig span { ' + t(BODY, 700, TIGHT) + ' }',
+      '.learn .lsub { ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
+      '.learn .lhint { ' + t(BODY, 400, BASE) + ' text-wrap: pretty; }',   // 最後の行に 1 字だけ残さない(使えない端末では、ふつうの折り返し)
+      '.learn .nowrap { white-space: nowrap; }',
+      '.learn .lgo { margin-top: 12px; width: 100%; min-height: ' + BIG + 'px; border-radius: 28px; background: ' + v('key') + '; color: ' + v('keyInk') + '; ' + t(BODY, 700, TIGHT) + ' display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 20px; }',
+      '.learn .ldone { display: flex; align-items: center; gap: 8px; ' + t(LEAD, 700, BASE) + ' }',
+      '.learn .ldone svg { color: ' + v('accent') + '; }',
+      // 続きを読む(行の形。なろうの長い題名も 2 行まで出る=W2b)
+      '.learn .lgroup { display: flex; flex-direction: column; gap: 8px; }',
+      '.learn .lgroup h2 { padding: 0 4px; ' + t(BODY, 700, TIGHT) + ' }',
+      '.learn .llist { background: ' + v('panel') + '; border-radius: 20px; display: flex; flex-direction: column; overflow: hidden; }',
+      '.learn .lrow { min-height: 64px; display: flex; align-items: center; gap: 12px; padding: 8px 12px 8px 16px; color: inherit; text-decoration: none; -webkit-tap-highlight-color: transparent; }',
+      '.learn .lrow + .lrow { border-top: 1px solid ' + v('line') + '; }',
+      '.learn .lrow:focus-visible { outline: 2px solid ' + v('key') + '; outline-offset: -2px; }',
+      '.learn .lrow .t { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }',
+      '.learn .lrow .k { ' + t(CAP, 700, TIGHT) + ' color: ' + v('panelMuted') + '; }',
+      '.learn .lrow .n { ' + t(BODY, 700, TIGHT) + ' overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }',
+      '.learn .lrow .d { ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; overflow-wrap: anywhere; }',
+      '.learn .lrow .chev { flex: none; color: ' + v('panelMuted') + '; }',
+      '.learn .lempty { padding: 16px; ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
+      // 単語帳の語数と「覚えた」の数
+      '.learn .ltiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }',
+      '.learn .ltile { background: ' + v('panel') + '; border-radius: 20px; padding: 12px 16px; display: flex; flex-direction: column; gap: 4px; }',
+      '.learn .ltile b { font-family: ' + FE + '; ' + t(TITLE, 800, TIGHT) + ' font-variant-numeric: tabular-nums; }',
+      '.learn .ltile b span { font-family: ' + FJ + '; ' + t(CAP, 700, TIGHT) + ' margin-left: 2px; }',
+      '.learn .lstate { padding: 16px 4px; ' + t(BODY, 500, BASE) + ' color: ' + v('panelMuted') + '; }',
+      // 記録(ui/learn.js。§9-10 の「記録」。工程W4c-2)。並びは W2b の案のページの 3: 「この 7 日」と「これまで」の札(数は 2 列)・日ごとの棒グラフ・数え方の注
+      '.learn .rsec { gap: 16px; }',
+      '.learn .rhd { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }',
+      '.learn .rhd h3 { margin: 0; ' + t(BODY, 700, TIGHT) + ' }',
+      '.learn .rgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }',
+      '.learn .rnum { min-width: 0; display: flex; flex-direction: column; gap: 4px; }',
+      '.learn .rnum b { font-family: ' + FE + '; ' + t(TITLE, 800, TIGHT) + ' font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }',
+      '.learn .rnum b span { font-family: ' + FJ + '; ' + t(CAP, 700, TIGHT) + ' margin: 0 4px 0 2px; }',
+      '.learn .rnum b span:last-child { margin-right: 0; }',
+      // 棒グラフ(データの絵の指針: 1 色・棒は 24px より細く・データの端は 4px の丸み・地の線は 1px で控えめ・目盛りの線は 1 本・押せる所は箱の全体=棒より大きく)。
+      //   高さ 120px の箱に、日の列。左の 48px は目盛りの数の場所。選んだ列は、地の色と、下の線の下の印(色のほかに形でも=§9-9)。なぞってもページは縦に送れる(pan-y)
+      '.learn .rchart { display: flex; flex-direction: column; gap: 8px; }',
+      '.learn .rpick { ' + t(BODY, 700, TIGHT) + ' font-variant-numeric: tabular-nums; }',
+      '.learn .rplot { position: relative; height: 120px; margin-bottom: 12px; border-bottom: 1px solid ' + v('ring') + '; touch-action: pan-y; cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }',
+      '.learn .rplot:focus-visible { outline: 2px solid ' + v('key') + '; outline-offset: 4px; border-radius: 4px; }',
+      '.learn .rtick { position: absolute; left: 48px; right: 0; height: 0; border-top: 1px solid ' + v('line') + '; }',
+      '.learn .rtick b { position: absolute; right: calc(100% + 8px); top: 0; transform: translateY(-50%); font-family: ' + FE + '; ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; white-space: nowrap; font-variant-numeric: tabular-nums; }',
+      '.learn .rcols { position: absolute; left: 48px; right: 0; top: 0; bottom: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }',
+      '.learn .rcol { position: relative; display: flex; align-items: flex-end; justify-content: center; border-radius: 4px 4px 0 0; }',
+      '.learn .rcol[data-on] { background: ' + v('well') + '; }',
+      '.learn .rcol[data-on]::after { content: ""; position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%); width: 12px; height: 4px; border-radius: 2px; background: ' + v('panelInk') + '; }',
+      '.learn .rbar { display: block; width: 60%; max-width: 20px; min-height: 4px; border-radius: 4px 4px 0 0; background: ' + v('go') + '; }',
+      '.learn .rcol[data-on] .rbar { background: ' + v('accent') + '; }',
+      '.learn .rnobar { position: absolute; left: 48px; right: 0; top: 50%; transform: translateY(-50%); text-align: center; ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
+      '.learn .rxs { display: flex; justify-content: space-between; padding-left: 48px; font-family: ' + FE + '; ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; font-variant-numeric: tabular-nums; }',
+      '.learn .rnote2 { padding: 0 4px; ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
+      '.learn .roff { gap: 12px; }',
+      '.learn .roff .vline { align-self: flex-start; }',
+      // 読み込めなかった(失敗の色と印=§9-5。どうすればよいかのボタンを添える)
+      '.learn .lfail { border-radius: 16px; background: ' + v('warnBg') + '; color: ' + v('warnInk') + '; padding: 12px 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }',
+      '.learn .lfail .msg { display: flex; align-items: flex-start; gap: 8px; ' + t(BODY, 700, BASE) + ' overflow-wrap: anywhere; }',
+      '.learn .lfail .msg svg { ' + iconTop(BASE) + ' }',
+      '.learn .lfail .acts { display: flex; flex-wrap: wrap; gap: ' + GAP + 'px; }',
+      '.learn .lfail .acts button { min-height: ' + TAP + 'px; padding: 0 16px; border-radius: ' + PILL + '; border: 1px solid currentColor; ' + t(CAP, 700, TIGHT) + ' }',
+      // 下のタブ(浮いた白い台。キャンバスの tabbar の形)。選んだタブは、色のほかに、絵のうしろの丸い面でも出す(形の印=§9-9。Material Design 3 のナビゲーションバーの「アクティブ インジケーター」の形)
+      '.learn .ltabs { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: calc(100% - 32px); max-width: ' + (u.wideMin - 32) + 'px; height: 64px; border-radius: 32px;'
+        + ' background: ' + v('panel') + '; box-shadow: ' + v('shadow') + '; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 0 8px; }',
+      '.learn .ltab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: ' + v('panelMuted') + '; ' + t(CAP, 700, TIGHT) + ' }',
+      '.learn .ltab .ic { width: 56px; height: 28px; border-radius: ' + PILL + '; display: flex; align-items: center; justify-content: center; }',
+      '.learn .ltab[aria-current="page"] { color: ' + v('softInk') + '; }',
+      '.learn .ltab[aria-current="page"] .ic { background: ' + v('soft') + '; }',
+      // 復習の流れ(ui/learn.js。§9-10 の「復習」。工程W4b-2)。並びと字は W2a の案のページ: 頭(‹・題・何語目か)・進み具合の帯・中身・下に固定したボタンの段。
+      //   復習の間と、単語帳の 1 語の画面(data-one。工程W4c-1)は、頭(ロゴと設定)と下のタブを隠し、地は札の色(見本の 1 語の画面と同じ)
+      '.learn[data-run], .learn[data-one] { background: ' + v('panel') + '; }',
+      '.learn[data-run] .ltop, .learn[data-run] .ltabs, .learn[data-one] .ltop, .learn[data-one] .ltabs { display: none; }',
+      '.learn[data-run] .lbody, .learn[data-one] .lbody { padding: 0; gap: 0; }',
+      // 広い画面(ui.learnSideMin 以上。工程W4c-2): 頭(ロゴと名前・設定)と下のタブを、左の行き先の一覧(幅 ui.learnSide。札の色・右に線)にまとめる。キャンバスの PC 版(design/round3/gen.js の pcHome)の形。
+      //   中身は、スマホと同じ 1 列(ui.wideMin まで)を、残りの幅のまん中に。選んだ行き先は、行の全体に色の面(Material Design 3 のナビゲーション ドロワーの形)。
+      //   復習の間は、一覧も隠す(気が散らない=スマホで下のタブを隠すのと同じ)。単語帳の 1 語の画面では残す(広い画面には場所がある。2026-10-24 利用者「全部おすすめで」)
+      '@media (min-width: ' + u.learnSideMin + 'px) { .learn { padding-left: calc(' + u.learnSide + 'px + env(safe-area-inset-left, 0px)); }'
+        + ' .learn[data-run] { padding-left: env(safe-area-inset-left, 0px); }'
+        + ' .learn .ltop, .learn[data-one] .ltop { position: fixed; left: 0; top: 0; bottom: 0; z-index: 1; width: ' + u.learnSide + 'px; max-width: none; margin: 0; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 0;'
+        + ' padding: 20px 12px; background: ' + v('panel') + '; box-shadow: inset -1px 0 0 ' + v('line') + '; }'
+        + ' .learn .ltop .brand { min-height: 44px; padding: 0 12px; }'
+        + ' .learn .lgear { margin-top: auto; width: 100%; height: 48px; border-radius: ' + PILL + '; background: transparent; box-shadow: none; justify-content: flex-start; gap: 12px; padding: 0 16px; ' + t(BODY, 700, TIGHT) + ' }'
+        + ' .learn .lglabel { display: inline; }'
+        + ' .learn .ltabs, .learn[data-one] .ltabs { position: fixed; left: 12px; top: 84px; bottom: auto; z-index: 2; transform: none; width: calc(' + u.learnSide + 'px - 24px); max-width: none; height: auto; border-radius: 0;'
+        + ' background: transparent; box-shadow: none; display: flex; flex-direction: column; gap: 4px; padding: 0; }'
+        + ' .learn .ltab { height: 48px; flex-direction: row; justify-content: flex-start; gap: 12px; padding: 0 16px; border-radius: ' + PILL + '; color: ' + v('panelInk') + '; ' + t(BODY, 700, TIGHT) + ' }'
+        + ' .learn .ltab .ic { width: auto; height: auto; }'
+        + ' .learn .ltab[aria-current="page"] { background: ' + v('soft') + '; color: ' + v('softInk') + '; }'
+        + ' .learn .ltab[aria-current="page"] .ic { background: transparent; }'
+        + ' .learn .lbody { padding: 32px 24px 48px; } }',
+      '.rv { flex: 1 0 auto; display: flex; flex-direction: column; }',
+      '.rv .rtop { min-height: 56px; display: flex; align-items: center; gap: 4px; padding: 0 16px 0 4px; }',
+      '.rv .rback { width: ' + TAP + 'px; height: ' + TAP + 'px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: ' + v('panelInk') + '; }',
+      '.rv .rtitle { flex: 1 1 auto; min-width: 0; ' + t(LEAD, 700, TIGHT) + ' }',
+      '.rv .rcount { flex: none; font-family: ' + FE + '; ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; font-variant-numeric: tabular-nums; }',
+      '.rv .rbar { height: 4px; margin: 0 16px; border-radius: ' + PILL + '; background: ' + v('line') + '; overflow: hidden; }',
+      '.rv .rbar i { display: block; height: 100%; background: ' + v('key') + '; }',
+      '.rv .rmain { flex: 1 0 auto; display: flex; flex-direction: column; gap: 16px; padding: 20px 16px 24px; }',
+      '.rv .rmain.center { align-items: center; justify-content: center; gap: 12px; text-align: center; }',
+      '.rv .rkind { border-radius: ' + PILL + '; background: ' + v('well') + '; color: ' + v('panelMuted') + '; padding: 0 12px; ' + t(CAP, 700, LOOSE) + ' }',
+      '.rv .rword { margin: 0; font-family: ' + FE + '; ' + t(HEAD, 800, TIGHT) + ' letter-spacing: -0.01em; overflow-wrap: anywhere; }',
+      '.rv .rword.long { font-size: ' + TITLE + 'px; }',
+      '.rv .rword:focus, .rv .rend:focus { outline: none; }',
+      '.rv .rhint { ' + t(CAP, 400, LOOSE) + ' color: ' + v('panelMuted') + '; }',
+      '.rv .rhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }',
+      '.rv .rhead .rword { flex: 1 1 auto; min-width: 0; }',
+      '.rv .rsay { width: ' + BTN + 'px; height: ' + BTN + 'px; flex: none; border-radius: 50%; background: ' + v('panel') + '; color: ' + v('panelInk') + '; box-shadow: inset 0 0 0 1px ' + v('ring') + '; display: flex; align-items: center; justify-content: center; }',
+      '.rv .rsay[aria-pressed="true"] { background: ' + v('key') + '; color: ' + v('keyInk') + '; box-shadow: none; }',
+      '.rv .rmean { display: flex; flex-direction: column; gap: 4px; }',
+      '.rv .rmean .line { ' + t(BODY, 400, BASE) + ' overflow-wrap: anywhere; }',
+      '.rv .rmean .line:first-child { ' + t(LEAD, 700, BASE) + ' }',
+      '.rv .rsrc, .rv .rwork { ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; overflow-wrap: anywhere; }',
+      '.rv .rnone { ' + t(BODY, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
+      '.rv .rrule { height: 1px; background: ' + v('line') + '; }',
+      '.rv .rlabel { margin: 0; ' + t(CAP, 700, TIGHT) + ' color: ' + v('panelMuted') + '; }',
+      '.rv .rsentrow { display: flex; align-items: flex-start; gap: 8px; margin-top: -8px; }',
+      '.rv .ren { flex: 1 1 auto; min-width: 0; font-family: ' + FE + '; ' + t(LEAD, 400, BASE) + ' overflow-wrap: anywhere; }',
+      // 読んだ文の中のその語: 本文の英文と同じマーカーの地と字(太く)。離れた熟語の間の語は、本文と同じ破線(案 C)
+      '.rv .ren mark { background: ' + v('enBg') + '; color: ' + v('enInk') + '; font-weight: 700; border-radius: 4px; padding: 0 2px; }',
+      '.rv .ren .gap { padding-bottom: 2px; background-image: repeating-linear-gradient(90deg, ' + v('idiom') + ' 0 4px, transparent 4px 7px); background-size: 100% 2px; background-position: 0 100%; background-repeat: no-repeat; }',
+      '.rv .rjp { margin-top: -8px; ' + t(CAP, 400, LOOSE) + ' color: ' + v('panelMuted') + '; }',
+      // 下のボタンの段(画面の下に固定。送っても指の届く所に残る)
+      '.rv .rfoot { position: sticky; bottom: 0; background: ' + v('panel') + '; border-top: 1px solid ' + v('line') + '; display: flex; flex-direction: column; gap: 8px; padding: 12px 16px calc(20px + env(safe-area-inset-bottom, 0px)); }',
+      '.rv .rbtn { min-height: ' + BIG + 'px; border-radius: 28px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 12px; text-align: center; ' + t(BODY, 700, TIGHT) + ' }',
+      '.rv .rbtn.main { background: ' + v('key') + '; color: ' + v('keyInk') + '; }',
+      // 「分からなかった」と「分かった」は、同じ大きさ・同じ見た目(どちらかへ押させない=W2a の 2)
+      '.rv .rbtn.even { background: ' + v('panel') + '; color: ' + v('panelInk') + '; box-shadow: inset 0 0 0 2px ' + v('ring') + '; }',
+      '.rv .rtwo { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: ' + GAP + 'px; }',
+      '@media (max-width: 359px) { .rv .rtwo .rbtn { padding: 0 8px; } .rv .rtwo .rbtn svg { display: none; } }',   // 幅 320: 絵を外して、字を 1 行に(見本と同じ)
+      '.rv .rnote { ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; text-align: center; }',
+      // 回のおわり(数えた事実だけ)
+      '.rv .rend { margin: 0; ' + t(TITLE, 700, TIGHT) + ' }',
+      '.rv .rfacts { display: flex; flex-direction: column; }',
+      '.rv .rfact { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid ' + v('line') + '; ' + t(BODY, 400, BASE) + ' }',
+      '.rv .rfact b { flex: none; font-family: ' + FE + '; ' + t(LEAD, 700, TIGHT) + ' font-variant-numeric: tabular-nums; }',
+      '.rv .rleft { ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
+      // 単語帳(ui/learn.js。§9-10 の「単語帳」。工程W4c-1)。並びと字は W2b の案のページの 2: 頭(単語帳と語数)・さがす欄・並べ方・一覧(1 行 64px)
+      '.learn .vhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 4px 4px 0; }',
+      '.learn .vhead h2 { ' + t(TITLE, 700, TIGHT) + ' }',
+      '.learn .vcount { flex: none; ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; font-variant-numeric: tabular-nums; }',
+      '.learn .vtools { display: flex; flex-direction: column; gap: 12px; }',
+      // さがす欄(§9-9 の入力欄): 字 16px(iPhone の Safari は、16px より小さい字の欄に触れると拡大する)・高さ 48px・枠の線は panelMuted(明るさの比 3 以上)。欄の全体を押すと、字を打てる
+      '.learn .vfind { min-height: ' + BTN + 'px; border-radius: ' + PILL + '; background: ' + v('panel') + '; box-shadow: inset 0 0 0 1px ' + v('panelMuted') + '; display: flex; align-items: center; gap: 8px; padding: 0 2px 0 16px; color: ' + v('panelMuted') + '; }',
+      '.learn .vfind:focus-within { outline: 2px solid ' + v('key') + '; outline-offset: 2px; }',
+      '.learn .vq { flex: 1 1 auto; min-width: 0; height: ' + (BTN - 2) + 'px; margin: 0; padding: 0; border: 0; background: transparent; color: ' + v('panelInk') + '; font-family: inherit; ' + t(BODY, 500, BASE) + ' outline: none; -webkit-appearance: none; appearance: none; }',
+      '.learn .vq::placeholder { color: ' + v('panelMuted') + '; opacity: 1; }',
+      '.learn .vq::-webkit-search-cancel-button, .learn .vq::-webkit-search-decoration { -webkit-appearance: none; display: none; }',   // 消す「×」は自分で出す(端末ごとに出たり出なかったりしない)
+      '.learn .vclear { width: ' + TAP + 'px; height: ' + TAP + 'px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: ' + v('panelMuted') + '; }',
+      // 並べ方: 設定の「見た目」と同じ選ぶ部品(選んだ方は藍の面とチェック)。学ぶ画面の地(ground)は、くぼみの色(well)とほぼ同じなので、選んでいない方は札の色と輪にする(写真で、ボタンに見えなかった)
+      '.learn .vsort button:not([aria-pressed="true"]) { background: ' + v('panel') + '; box-shadow: inset 0 0 0 1px ' + v('ring') + '; }',
+      '.learn .vbox { display: flex; flex-direction: column; gap: 12px; }',
+      '.learn .vrow { width: 100%; min-height: 64px; display: flex; align-items: center; gap: 12px; padding: 8px 16px; text-align: left; color: inherit; -webkit-tap-highlight-color: transparent; }',
+      '.learn .vrow + .vrow { border-top: 1px solid ' + v('line') + '; }',
+      '.learn .vrow:focus-visible { outline: 2px solid ' + v('key') + '; outline-offset: -2px; }',
+      '.learn .vrow .t { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }',
+      '.learn .vrow .w { font-family: ' + FE + '; ' + t(LEAD, 700, TIGHT) + ' overflow-wrap: anywhere; }',
+      '.learn .vrow .m { ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',   // 意味の 1 行目を 1 行で切る
+      // 語の様子: 字と形(白い丸・半分の丸・チェックの丸)。色は、まだ=灰・復習中=藍の字・覚えた=緑(今の状態・うまくいった結果=設計メモ 2-5)
+      '.vst { flex: none; display: inline-flex; align-items: center; gap: 4px; ' + t(CAP, 700, TIGHT) + ' color: ' + v('panelMuted') + '; white-space: nowrap; }',
+      '.vst[data-st="learning"] { color: ' + v('softInk') + '; }',
+      '.vst[data-st="learned"] { color: ' + v('accent') + '; }',
+      '.vst .cut { stroke: ' + v('panel') + '; }',
+      // 枠の付いた、字だけのボタン(さがす欄を空にする・単語帳から外す。外すも赤にしない=赤は失敗の知らせだけ)。2 回押しの 1 回目は藍の面
+      '.vline { min-height: ' + BTN + 'px; border-radius: ' + PILL + '; border: 1px solid ' + v('panelMuted') + '; padding: 0 20px; color: ' + v('panelInk') + '; ' + t(BODY, 700, TIGHT) + ' display: flex; align-items: center; justify-content: center; text-align: center; }',
+      '.vline[data-armed] { background: ' + v('key') + '; color: ' + v('keyInk') + '; border-color: ' + v('key') + '; }',
+      '.learn .vnone .vline { align-self: flex-start; margin-top: 12px; }',
+      // 1 語の画面: 復習の答えたあとの中身(.rv)の下に、様子・次に出る日・調べた回数・入れた日。いちばん下に「単語帳から外す」(画面の下には固定しない=いつも指の届く所に置かない)
+      '.rv .vfacts { display: flex; flex-direction: column; margin-top: 8px; border-top: 1px solid ' + v('line') + '; }',   // 読んだ文の無い語でも、意味との境が分かるように、上にも線
+      '.rv .vfact { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; padding: 8px 0; border-bottom: 1px solid ' + v('line') + '; ' + t(BODY, 400, BASE) + ' }',
+      '.rv .vfact .k { flex: none; color: ' + v('panelMuted') + '; }',
+      '.rv .vfact .v { flex: 1 1 auto; min-width: 0; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }',
+      '.rv .vfact .vnote { flex-basis: 100%; ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
+      '.rv .vfoot { display: flex; flex-direction: column; gap: 8px; padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid ' + v('line') + '; }',
+
       // 知らせの行(操作部のすぐ上。文言・「×」・押せる所)
       '.note { border-radius: 20px; background: ' + v('panel') + '; box-shadow: ' + v('shadow') + '; padding: 8px 8px 8px 16px; display: grid;'
         + ' grid-template-columns: minmax(0, 1fr) auto; column-gap: 4px; row-gap: 4px; align-items: center; }',
@@ -8336,10 +9643,22 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     alert: [['path', { d: 'M12 4.5l8.5 15h-17z' }], ['path', { d: 'M12 10.5v4M12 17.2v.3' }]],
     dict: [['path', { d: 'M6 4h12v16H6z' }], ['path', { d: 'M9 8h6M9 12h6' }]],
     bookmarkPlus: [['path', { d: 'M7 4h10v16l-5-3.5L7 20V4z' }], ['path', { d: 'M12 8v5M9.5 10.5h5' }]],
-    bookmarkCheck: [['path', { d: 'M7 4h10v16l-5-3.5L7 20V4z' }], ['path', { d: 'M9.5 10.5l2 2 3.5-3.5' }]]
+    bookmarkCheck: [['path', { d: 'M7 4h10v16l-5-3.5L7 20V4z' }], ['path', { d: 'M9.5 10.5l2 2 3.5-3.5' }]],
+    // 学ぶ画面(ui/learn.js。W2b の案のページの絵): 下のタブ(ホーム・単語帳・記録)・右上の設定・「はじめる」
+    home: [['path', { d: 'M4 11l8-6 8 6' }], ['path', { d: 'M6 10v9h12v-9' }]],
+    bookmark: [['path', { d: 'M7 4h10v16l-5-3.5L7 20V4z' }]],
+    chart: [['path', { d: 'M5 19v-8M12 19V6M19 19v-5' }]],
+    sliders: [['path', { d: 'M4 7h9M17 7h3M4 17h3M11 17h9' }], ['circle', { cx: 15, cy: 7, r: 2 }], ['circle', { cx: 9, cy: 17, r: 2 }]],
+    play: [['path', { d: 'M8 5.5v13l10.5-6.5z' }]],
+    // 単語帳(工程W4c-1): さがす・語の様子(まだ=白い丸/復習中=半分の丸/覚えた=チェックの丸。色だけにしない=§9-9)
+    search: [['circle', { cx: 11, cy: 11, r: 6 }], ['path', { d: 'M20 20l-4.5-4.5' }]],
+    stNew: [['circle', { cx: 12, cy: 12, r: 8 }]],
+    stMid: [['circle', { cx: 12, cy: 12, r: 8 }], ['path', { d: 'M12 4a8 8 0 0 1 0 16z', fill: 'currentColor', stroke: 'none' }]],
+    stDone: [['circle', { cx: 12, cy: 12, r: 9, fill: 'currentColor', stroke: 'none' }], ['path', { class: 'cut', d: 'M8 12.4l2.8 2.8 5.2-5.6' }]]
   };
 
   let doc = null, win = null, host = null, shadow = null, box = null, bay = null, toastEl = null, toastT = null;
+  let mode = '', view = null, darkMq = null;   // mode = 'learn'(専用のページの学ぶ画面。工程W4b-1)か ''(読む画面)。view = 画面いっぱいの置き場(学ぶ画面だけ)
   let liveSoft = null, liveLoud = null;   // 読み上げ用の知らせの置き場(見えない。いつも DOM にある)
   let layer = null, sheetEl = null, sheetBody = null, sheetNow = null;   // 下から出る板(1枚だけ)。sheetNow = { name, onClose, back(開く前に、フォーカスがあった所) }
   const slots = {};                 // 画面の下の置き場の段(上から notice・main)
@@ -8511,14 +9830,18 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   // ---- 描き直す ----
+  // 学ぶ画面の色の組: 端末の表示(ライト/ダーク)に合わせて、白か暗い(手で選ぶ所は作らない=§9-10)
+  const learnTheme = () => (darkMq && darkMq.matches ? 'dark' : 'white');
   function draw(){
     if (!host) return;
     cur = Y.page.status();
+    // 学ぶ画面: 進行役は動いていない(本文が無い)。状態は 'learn'・レベルは設定の値(設定の画面の「目標」が読む)・色の組は端末の表示から
+    if (mode === 'learn') cur = Object.assign(cur, { state: 'learn', level: Y.settings.get().level, themeNow: learnTheme() });
     // 色の組(操作部・板・メニュー。CSS が、土台の印で切り替える)。本文ページでないとき・知らない名前は、初めの組
     const th = theme.has(cur.themeNow) ? cur.themeNow : theme.initial;
     if (host.getAttribute('data-theme') !== th) host.setAttribute('data-theme', th);
     // ページの見え方が変わった(英語にした・戻した・割合・見せ方・書体・文字の大きさ・レベル・届いた文): 読んでいる場所を合わせ直すスクロールが来るので、数えない
-    const sig = [cur.state, cur.level, cur.ratio, cur.style, cur.font, cur.size, cur.orig, cur.n.shown, cur.n.translated].join('|');
+    const sig = [cur.state, cur.level, cur.ratio, cur.style, cur.font, cur.size, cur.sayShown, cur.orig, cur.n.shown, cur.n.translated].join('|');
     if (sig !== shownSig){ shownSig = sig; quiet(); }
     parts.forEach(p => { if (p.def.draw){ try { p.def.draw(cur); } catch (e){ warn(e); } } });
     if (!canHide()) setAway(false);
@@ -8538,7 +9861,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (!h) return;
     // リンクの中の英語の語・「あ/A」は、リンクへ移らない(どのページでも=記事の本文の中のリンク。§3。v1.51)
     if (e.target && e.target.closest && e.target.closest('a[href]') && e.preventDefault) e.preventDefault();
-    if (h.chip){ quiet(); Y.page.toggle(h.sid); return; }
+    if (h.chip){ quiet(); hushSent(h.sid); Y.page.toggle(h.sid); return; }
+    if (h.say){ saySent(h.sid); return; }
     const w = find('word');                       // 単語の板(工程4b-1b)
     if (w && w.def.open) w.def.open(h);
   }
@@ -8548,11 +9872,30 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (sheetNow && e.key === 'Tab'){ e.preventDefault(); const list = tabbables(); (list[e.shiftKey ? list.length - 1 : 0] || sheetEl).focus(); return; }
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const h = Y.render.hit(e.target);
-    if (!h || !h.chip) return;
+    if (!h || (!h.chip && !h.say)) return;
     e.preventDefault();
+    if (h.say){ saySent(h.sid); return; }
     quiet();
+    hushSent(h.sid);
     Y.page.toggle(h.sid);
   }
+  // 文の終わりの 🔊(工程W4a。§9-10): その文の英文を読む。もう一度押すと止める。板は開かない・調べた回数に数えない・読んだ記録は say
+  let sayingSid = null;
+  function saySent(sid){
+    const speech = Y.speech;
+    if (!speech) return;
+    if (sayingSid === sid){ speech.stop(); return; }                // 止めると、下の onEnd が印を外す
+    const d = Y.page.sentence(sid);
+    if (!d || !d.en) return;
+    if (host && host.ownerDocument) speech.attach(host.ownerDocument.defaultView);
+    sayingSid = sid;                                                // 先に印を付ける(前の発話の「終わった」は、印が違うので何もしない)
+    Y.render.saying(sid);
+    const end = () => { if (sayingSid === sid){ sayingSid = null; Y.render.saying(null); } };
+    if (!speech.say(d.en, { onEnd: end })){ end(); return; }
+    try { if (Y.watch) Y.watch.act('say', sid); } catch (e){}
+  }
+  // 「あ」で日本語に戻した文が鳴っていたら、止める
+  function hushSent(sid){ if (sayingSid === sid && Y.speech) Y.speech.stop(); }
 
   // ---- 下から出る板(メニュー・見た目・単語の板が使う。出せるのは1枚。キャンバスの sheetShell)----
   //   sheet(name, 中身, { label, onClose }): 出す(前の板があれば、しまってから)。unsheet(name?): しまう(name を渡したら、その板が出ているときだけ)
@@ -8573,6 +9916,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     sheetEl.scrollTop = 0;
     layer.hidden = false;
     bay.setAttribute('inert', '');               // 板が出ている間は、うしろの操作部に、キーボードでも入れない
+    if (view) view.setAttribute('inert', '');     // 学ぶ画面も同じ(設定の画面が、その上に出る)
     hold('sheet', true);
     if (Yomu.watch && Yomu.watch.cover) Yomu.watch.cover(sheetNow.full);   // 画面いっぱいの板(設定)が出ている間は、読んだ時間に数えない(§8-8)
     const first = content.querySelector('[data-focus]') || content.querySelector('button') || sheetEl;   // 押せる所が無い板は、板そのものへ
@@ -8605,6 +9949,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     layer.hidden = true;
     sheetEl.removeAttribute('data-full');
     bay.removeAttribute('inert');
+    if (view) view.removeAttribute('inert');
     while (sheetBody.firstChild) sheetBody.removeChild(sheetBody.firstChild);
     hold('sheet', false);
     if (Yomu.watch && Yomu.watch.cover) Yomu.watch.cover(false);
@@ -8639,13 +9984,17 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   // ---- 土台を作る(1回) ----
+  //   opts = { doc?, open?, mode? }。mode 'learn' = 専用のページの学ぶ画面(§9-10。工程W4b-1): 画面いっぱいの置き場(view)を作り、画面の下の置き場(操作部)は出さない。
+  //   ページの上のタップ・送り・広告をよける見回りは付けない(本文が無い)。色の組は端末の表示に合わせる。中身は部品(ui/learn.js)が描く
   function mount(opts){
     if (host) return;
     opts = opts || {};
     doc = opts.doc || document;
     win = doc.defaultView;
+    mode = opts.mode === 'learn' ? 'learn' : '';
     host = doc.createElement('div');
     host.id = HOST_ID;
+    if (mode) host.setAttribute('data-mode', mode);
     // closed: ページの側から中をさわれない。見本ページ用の束(dev)だけ open(検査と、目での確かめのため)
     shadow = host.attachShadow({ mode: (Y.build && Y.build.dev) || opts.open ? 'open' : 'closed' });
     host.setAttribute('data-yomu-css', addCss(style.css()));
@@ -8663,6 +10012,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     toastEl = el('div', { class: 'toast', hidden: true });
     liveSoft = el('div', { class: 'sr', role: 'status', 'aria-live': 'polite' });
     liveLoud = el('div', { class: 'sr', role: 'alert', 'aria-live': 'assertive' });
+    if (mode){
+      bay.hidden = true;
+      view = el('div', { class: 'view', 'data-view': mode });
+      box.appendChild(view);
+    }
     box.appendChild(bay);
     box.appendChild(layer);
     box.appendChild(toastEl);
@@ -8682,6 +10036,13 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     Y.page.on('notice', draw);
     Y.settings.on(() => draw());                     // 設定が変わった(右下のボタンを出さないサイト など。工程8c-2)
     Y.page.on('progress', p => each('progress', p));
+    if (mode === 'learn'){
+      // 端末の表示(ライト/ダーク)が変わったら、色の組を変える(Safari の古い版は addListener だけ)
+      darkMq = win.matchMedia ? win.matchMedia('(prefers-color-scheme: dark)') : null;
+      if (darkMq){ if (darkMq.addEventListener) darkMq.addEventListener('change', draw); else if (darkMq.addListener) darkMq.addListener(draw); }
+      draw();
+      return;
+    }
     doc.addEventListener('click', onDocClick);
     doc.addEventListener('keydown', onDocKey);
     win.addEventListener('scroll', onScroll, { passive: true });
@@ -8737,6 +10098,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     fresh: () => Date.now() - backAt < cfg.ui.guardMs,   // 隠れていた置き場が、出てきたすぐあとか(回数を使うボタンが、押しまちがいを受けないために聞く)
     status: () => cur,
     mounted: () => !!host,
+    mode: () => mode,                                                    // 'learn'(専用のページの学ぶ画面)か ''(読む画面)
+    view: () => view,                                                    // 学ぶ画面の、画面いっぱいの置き場(読む画面では null)
     root: () => shadow,                                                  // Shadow DOM の根(部品と検査が使う。ページの側には出ない)
     box: () => box,
     slot: name => slots[name] || null
@@ -9091,7 +10454,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
 /* ---- ui/menu.js ---- */
 // ui/menu.js — メニュー(部品の約束 §9-3。キャンバス3ページ目の「メニュー(学習レベルは出さない)」)
-//   ロゴを押すと、下から出る。このページ(オフライン保存=準備中。config.ui.offlineEntry のときだけ・まだ訳していなければ「ブレンド」/訳してあれば「訳し直す」・(残っていれば)続きを訳す・(失敗していれば)熟語さがしをやり直す)/見た目/設定/学ぶ画面をひらく。
+//   ロゴを押すと、下から出る。このページ(オフライン保存=準備中。config.ui.offlineEntry のときだけ・まだ訳していなければ「ブレンド」/訳してあれば「訳し直す」・(残っていれば)続きを訳す・(失敗していれば)熟語さがしをやり直す)/見た目/設定/学ぶ画面をひらく(専用のページを新しいタブで=工程W4a)。
 //   学習レベルは出さない(設定の「目標」に寄せる=設計メモ 2-5)。回数を使う所には、通信の数を書く(つなぎ方によっては書かない=Yomu.ui.cost)。
 //   使用中(status().busy)は、回数を使う所を押せなくする
 (function(){
@@ -9104,6 +10467,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
   const soon = () => ui.toast(ui.t('soon'));
   const close = () => ui.unsheet(NAME);
+  // 「学ぶ画面をひらく」: 専用のページを新しいタブで開く(読んでいたページは残る。§9-10)。開けなければ、住所を添えて知らせる(行き止まりにしない)
+  function learn(){
+    const env = Y.env || {}, url = env.siteUrl;
+    if (!url || typeof env.openTab !== 'function'){ soon(); return; }
+    let ok = false;
+    try { ok = env.openTab(url) === true; } catch (e){}
+    if (ok) close(); else ui.toast(ui.t('menu.learnFail', { url }), Y.config.ui.toastLongMs);
+  }
   // 回数を使う押せる所: 文言の下に、通信の数を小さく書く
   function tile(o){
     const label = ui.el('span', { text: o.label });
@@ -9156,7 +10527,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         hideBtn,
         look.b,
         row('settings', ui.t('menu.settings'), () => { if (!ui.show('settings')) soon(); }).b,
-        row('learn', ui.t('menu.learn'), soon).b
+        row('learn', ui.t('menu.learn'), learn).b
       ])
     ]);
   }
@@ -9195,7 +10566,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
 /* ---- ui/look.js ---- */
 // ui/look.js — メニューの「見た目」(部品の約束 §9-3。キャンバス3ページ目の「メニュー › 見た目」)
-//   上から、テーマ(サイトの色に合わせる/色の組)・英文の見せ方(マーカー/書体だけ)・英文の書体・英文の文字の大きさ。
+//   上から、テーマ(サイトの色に合わせる/色の組)・英文の見せ方(マーカー/書体だけ)・英文の書体・英文の文字の大きさ・文の終わりの 🔊(出さない/出す=工程W4a。読み上げの無い端末では出さない)。
 //   どれも、すぐ切り替わる(通信しない)。選んだものは、進行役が設定に残す。色の組・書体・大きさの名前は core/theme.js(足したら、ここにも並ぶ)
 (function(){
   'use strict';
@@ -9204,7 +10575,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const NAME = 'look';
   const STYLES = [['marker', 'look.marker', 's-marker'], ['quiet', 'look.quiet', 's-quiet']];
 
-  let picks = [], autoBtn = null, autoNow = null, autoTick = null, sets = [], fonts = [], sizes = [];
+  let picks = [], autoBtn = null, autoNow = null, autoTick = null, sets = [], fonts = [], sizes = [], says = [];
 
   const tickOf = () => ui.el('span', { class: 'tick', hidden: true }, [ui.icon('check', 14, 2.6)]);
   const mini = () => ui.el('span', { class: 'tick', hidden: true }, [ui.icon('check', 12, 3)]);   // 角に付ける小さい印(色の組の札・横に並ぶ選ぶボタン)
@@ -9244,6 +10615,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const f = seg('font', theme.fonts(), name => Y.page.setFont(name));
     const z = seg('size', theme.sizes(), name => Y.page.setSize(name));
     fonts = f.items; sizes = z.items;
+    const canSay = !!(Y.speech && Y.speech.can());
+    const w = canSay ? seg('say', ['off', 'on'], name => Y.page.setSentSay(name === 'on')) : null;
+    says = w ? w.items : [];
     return ui.el('div', { class: 'look' }, [
       ui.el('div', { class: 'top' }, [
         ui.el('button', { class: 'iconbtn start', 'data-act': 'back', 'aria-label': ui.t('look.back'), onclick: () => { if (!ui.show('menu')) ui.unsheet(NAME); } }, [ui.icon('chevL', 20, 2)]),
@@ -9261,7 +10635,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       f.box,
       ui.el('div', { class: 'label', text: ui.t('look.size') }),
       z.box
-    ]));
+    ], w ? [
+      ui.el('div', { class: 'label', text: ui.t('look.say') }),
+      w.box
+    ] : []));
   }
   function sync(s){
     picks.forEach(p => {
@@ -9274,6 +10651,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     sets.forEach(x => press(x.b, !auto && s.theme === x.name));
     fonts.forEach(x => press(x.b, s.font === x.name));
     sizes.forEach(x => press(x.b, s.size === x.name));
+    says.forEach(x => press(x.b, (s.sentSay === true) === (x.name === 'on')));
   }
 
   ui.part(NAME, {
@@ -9394,7 +10772,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 //   意味を出す順(設計メモ 2-4): 範囲が熟語と同じ → 熟語さがしの意味/内蔵辞書(活用形は原形に直して引く。初めての1回だけ、辞書を取ってくる)/無ければ「内蔵辞書にありません」。
 //   「この文での意味をAIに聞く」は、押したときだけ1回通信する(保存にあれば、通信なしで出す。板を閉じたら・範囲を変えたら、中止)。「単語帳に追加」は、保存だけ(復習はフェーズ2)。
 //   音声(ui/speech.js): 「発音を聞く」(選んだ語句)・「この文を聞く」。同じボタンをもう一度押したら止める。板を閉じたら・範囲を変えたら、止める。
-//   品詞の札は出さない(内蔵辞書に品詞の欄が無い=2026-10-09 利用者)。試験の級・「この作品で○回目」の場所は、空けてある。
+//   品詞の札は出さない(内蔵辞書に品詞の欄が無い=2026-10-09 利用者)。試験の級の札の場所は、札の行に空けてある(工程G1)。
+//   調べた回数(core/seen.js。§8-11 の 4): 板を開いて、見出しが決まったときに 1 回数える(ひろげて見出しが変わっても、数えるのは開いた 1 回に 1 つ)。
+//   合わせた数が config.seen.show 以上なら、札の行の左(「熟語」の札の右)に「調べたのは ○ 回目」(押せない・枠なし。工程W4a。§9-10)
 //   外から来た文字(辞書・訳)は textContent だけで出す。板が持つ文の英文が変わったら(訳し直し)、閉じる
 (function(){
   'use strict';
@@ -9555,6 +10935,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (p.hit) return { head: p.hit.head, kind: 'word', mean: Y.dict.format(p.hit.mean).lines.slice(0, cfg.ui.meanLines).join(' / '), meanSrc: 'dict' };
     return { head: p.text, kind: 'word', mean: r.ai ? r.ai.text : '', meanSrc: r.ai ? 'ai' : undefined };
   }
+  // 調べた回数を数える(同じ文の開き直しは、部品の側で数えない)。戻り(合わせた数など)は cur.seen に持ち、届いたら描き直す(札を出す)。数えられなくても、板は止めない
+  function look(head, kind){
+    const mine = cur;
+    mine.looked = true;
+    Promise.resolve().then(() => (Y.seen ? Y.seen.note(head, { kind, en: mine.en }) : null))
+      .then(r => { if (cur === mine && r){ mine.seen = r; if (isOpen() && seenTotal() >= cfg.seen.show) paint(); } }, () => {});
+  }
+  const seenTotal = () => (cur && cur.seen && typeof cur.seen.total === 'number' ? cur.seen.total : 0);
   function checkVocab(head){
     const mine = cur, r = cur.r;
     r.head = head; r.inVocab = null;
@@ -9748,14 +11136,18 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // 単語帳の見出しは、辞書が届く(か、取れないと分かる)まで決まらない(went → go)。それまでは、調べない・押せない
     const head = !p.idiom && !Y.dict.ready() && !dictErr ? null : entry(p).head;
     if (cur.r.head !== head){ if (head == null){ cur.r.head = null; cur.r.inVocab = null; } else checkVocab(head); }
+    if (head != null && !cur.looked && head.length <= cfg.vocab.headMax) look(head, entry(p).kind);
     if (!p.idiom && !Y.dict.ready() && !loading && !dictErr) fetchDict();
     if (p.hit && cur.counted !== p.text){ cur.counted = p.text; act('dict', cur.sid); }
     const root = ui.root(), had = root && root.activeElement && body.contains(root.activeElement) ? root.activeElement.getAttribute('data-act') : null;
     const prev = step(cur.from, -1), next = step(cur.to, 1);
     const parts = [
       ui.el('div', { class: 'tags' }, [
-        p.idiom ? ui.el('span', { class: 'tag', text: ui.t('word.idiom') }) : null,
-        p.hit ? ui.el('span', { class: 'src', text: ui.t('word.srcDict') }) : null,
+        ui.el('div', { class: 'chips' }, [
+          p.idiom ? ui.el('span', { class: 'tag', text: ui.t('word.idiom') }) : null,
+          seenTotal() >= cfg.seen.show ? ui.el('span', { class: 'seen', 'data-seen': String(seenTotal()), text: ui.t('word.seen', { n: seenTotal() }) }) : null,   // 事実の札(押せない・枠なし=押せるボタンに見せない)
+          p.hit ? ui.el('span', { class: 'src', text: ui.t('word.srcDict') }) : null
+        ]),
         ui.el('button', { class: 'iconbtn end', 'data-act': 'close', 'data-focus': '', 'aria-label': ui.t('note.close'), onclick: close }, [ui.icon('close', 20, 2)])
       ]),
       ui.el('div', { class: 'headrow' }, [ui.el('div', { class: 'head' + (p.text.length > cfg.ui.headLong ? ' long' : ''), lang: 'en', text: p.text }), sayBtn('word', 'sayword', 22, p.say)]),
@@ -9798,7 +11190,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (!d) return;
       const lay = layout(d.en, d.words, h.ti);
       if (!lay) return;
-      const mine = cur = Object.assign(d, { tokens: lay.tokens, spans: lay.spans, from: lay.from, to: lay.to, from0: lay.from, to0: lay.to, all: false, counted: null, r: null, saying: null });
+      const mine = cur = Object.assign(d, { tokens: lay.tokens, spans: lay.spans, from: lay.from, to: lay.to, from0: lay.from, to0: lay.to, all: false, counted: null, looked: false, seen: null, r: null, saying: null });
       body = ui.el('div', { class: 'word' });
       act(lay.idiom ? 'idiom' : 'tap', d.sid);
       paint();
@@ -10556,7 +11948,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     Object.keys(part).forEach(k => { const items = okName('vocab', k) && isPlain(part[k]) && part[k].items; if (isPlain(items)) Object.keys(items).forEach(w => { if (isPlain(items[w]) && items[w].del == null) n++; }); });
     return n;
   }
-  const PARTS = ['settings', 'vocab', 'log', 'runs', 'quota'];      // 見せる順(logx=読んだ記録の詳しい分は、log と一緒に数える)
+  const PARTS = ['settings', 'vocab', 'seen', 'work', 'log', 'runs', 'quota'];      // 見せる順(logx=読んだ記録の詳しい分は、log と一緒に数える。seen・work は工程W3b-1)
   function contents(parts){
     const out = [];
     PARTS.forEach(name => {
@@ -10710,7 +12102,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     function countPages(){
       return Y.store.pages.count().then(n => { if (!alive()) return; pagesVal.textContent = ui.t('data.pagesN', { n }); pagesVal.setAttribute('data-pages', String(n)); clearBtn.disabled = !n; }, () => { if (alive()) clearBtn.disabled = false; });
     }
-    countPages();
+    // 学ぶ画面(専用のページ。工程W4b-1)では、このサイトの保存(訳したページ)は無いので、数えず、消す所も出さない
+    const onLearn = ui.mode() === 'learn';
+    if (!onLearn) countPages();
     let clearing = false;
     stops.push(ui.twoTap(clearBtn, { label: clearLabel, armed: ui.t('data.clearArmed'), fn: async () => {
       if (clearing) return;
@@ -10757,10 +12151,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       inTip.length ? ui.el('div', { class: 'label', 'data-tip': 'in', text: ui.t('data.inTip') }) : null,
       inTip.length ? ui.el('div', { class: 'rows', 'data-box': 'intip' }, [ui.el('div', { class: 'steps flat' },
         inTip.map((text, i) => ui.el('div', { class: 'step' }, [ui.el('span', { class: 'num', 'aria-hidden': 'true', text: String(i + 1) }), ui.el('span', { text })])))]) : null,
+    ].concat(onLearn ? [] : [
       ui.el('div', { class: 'label', text: ui.t('data.site') }),
       ui.el('div', { class: 'rows' }, [ui.el('div', { class: 'rowstat' }, [ui.el('span', { text: ui.t('data.pages') }), pagesVal])]),
       ui.el('p', { class: 'hint', text: ui.t('data.clearNote', { cost: c2 ? ui.t('data.clearCost', { cost: c2 }) : '' }) }),
-      clearBtn, clearResult,
+      clearBtn, clearResult
+    ], [
       ui.el('div', { class: 'label', text: ui.t('data.about') }),
       Y.store.shared.backend === 'mem' || Y.store.site.backend === 'mem' ? alertBox(ui.t('data.memWarn')) : null,
       ui.el('div', { class: 'rows', 'data-box': 'about' }, [
@@ -10771,7 +12167,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       ]),
       // 調べるための記録(うまく動かないときに、写して送ってもらう。ui/settings_diag.js)
       ui.el('p', { class: 'hint', text: ui.t('diag.note') })
-    ].concat(Y.uiDiag ? Y.uiDiag.copyBox() : []) });
+    ].concat(Y.uiDiag ? Y.uiDiag.copyBox() : [])) });
   }
 
   S.add('data', data);
@@ -10851,6 +12247,775 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   ui.part('fix', { open(){ S.go('fix'); }, close: () => ui.unsheet('settings') });
 })();
 
+/* ---- ui/learn.js ---- */
+// ui/learn.js — 学ぶ画面(専用のページ。部品の約束 §9-10 の「入れ物」「ホーム」。工程W4b-1。並びと字は W2b の案のページ)
+//   土台(ui/root.js)が学ぶ画面の形(mode 'learn')で作られたときだけ、画面いっぱいの置き場(Yomu.ui.view())に描く。読む画面では何もしない。
+//   頭(ロゴと名前・右上の設定)・下のタブ 3 つ(ホーム・単語帳・記録)・中身(タブごと)。単語帳は工程W4c-1。記録は工程W4c-2。
+//   広い画面(ui.learnSideMin 以上)は、CSS だけで、頭と下のタブを左の行き先の一覧にまとめる(工程W4c-2。ui/style.js)。
+//   ホームの「はじめる」の先=復習の流れ(工程W4b-2)は、答えを Yomu.review.start() の Session に書く。単語帳の「外す」は Yomu.vocab.remove。
+//   ほかは保存を読むだけ(Yomu.review.home・Yomu.learn.recent・Yomu.learn.words・Yomu.learn.record。見るのは shared だけ=§8-10)。通信しない。
+//   外から来た文字(作品と話の題・サイトの名前)は textContent だけ。開き直した・ほかのタブから戻った・設定が変わったら、読み直す
+(function(){
+  'use strict';
+  const Y = Yomu;
+  const ui = Yomu.ui, cfg = Yomu.config, util = Yomu.util;
+  const TABS = [['home', 'home'], ['vocab', 'bookmark'], ['record', 'chart']];   // [名前, 絵]
+  const NAROU = /^narou[0-9]*:[^/]+\/([0-9]+)$/;                               // なろうの話の鍵(話の番号が数字。短編は 0)
+
+  let doc = null, win = null, body = null, tabBtns = [], tab = 'home', gen = 0;
+
+  const sep = () => ui.t('learn.sep');
+  // 文言の | で区切った句を、それぞれ折り返さない字の入れ物に(句の途中で切らない=幅 390 と 320 の写真で「単語帳に追 / 加」「出 / ます」「次の日か / ら」と切れた)
+  const phrases = text => String(text).split('|').map(x => ui.el('span', { class: 'nowrap', text: x }));
+  function fill(box, kids){
+    while (box.firstChild) box.removeChild(box.firstChild);
+    kids.forEach(k => { if (k != null) box.appendChild(k); });
+  }
+
+  // ---- 日付の字 ----
+  // 読んだ日: きょう・きのう・○ 日前(6 日前まで)・○月○日(年が違えば、年から)。暦の日で数える(学習日の午前4時の境は使わない=見る人の感じ方に合わせる)
+  function whenText(iso, nowIso){
+    const a = new Date(iso), b = new Date(nowIso);
+    if (isNaN(a) || isNaN(b)) return '';
+    const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const n = Math.round((day(b) - day(a)) / 864e5);
+    if (n <= 0) return ui.t('learn.today');
+    if (n === 1) return ui.t('learn.yesterday');
+    if (n < 7) return ui.t('learn.daysAgo', { n });
+    return a.getFullYear() === b.getFullYear() ? ui.t('learn.date', { m: a.getMonth() + 1, d: a.getDate() }) : ui.t('learn.dateY', { y: a.getFullYear(), m: a.getMonth() + 1, d: a.getDate() });
+  }
+  // 次に出る学習日(YYYY-MM-DD): あした・○月○日
+  function dayText(day, today){
+    if (day === util.addDays(today, 1)) return ui.t('learn.tomorrow');
+    const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(String(day || ''));
+    if (!m) return '';
+    return m[1] === today.slice(0, 4) ? ui.t('learn.date', { m: Number(m[2]), d: Number(m[3]) }) : ui.t('learn.dateY', { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) });
+  }
+  // かかる時間の見込み(1 語 learn.secPerWord 秒。§9-10)
+  function minutes(n){
+    const s = cfg.learn.secPerWord;
+    const a = Math.max(1, Math.round(n * s[0] / 60)), b = Math.max(a, Math.ceil(n * s[1] / 60));
+    return a === b ? ui.t('learn.min1', { a }) : ui.t('learn.min', { a, b });
+  }
+
+  // ---- ホーム ----
+  // 今日の復習(この回の語数・内訳・目安の時間・「はじめる」)/復習の無い日(おしまいと、次に出る日と語数)/単語帳がから(入れ方の 1 行)
+  function hero(h, today){
+    const kids = [ui.el('h2', { class: 'lcap', text: ui.t('learn.review') })];
+    if (!h.words) kids.push(ui.el('p', { class: 'lhint', 'data-box': 'empty' }, phrases(ui.t('learn.empty'))));
+    else if (h.size){
+      kids.push(ui.el('p', { class: 'lbig' }, [ui.el('b', { class: 'en', 'data-n': 'size', text: String(h.size) }), ui.el('span', { text: ui.t('learn.unit') })]));
+      const parts = [];
+      if (h.due) parts.push(ui.t('learn.due', { n: h.due }));
+      if (h.fresh) parts.push(ui.t('learn.fresh', { n: h.fresh }));
+      parts.push(minutes(h.size));
+      // 折り返すのは区切りの所だけ(「3〜4 / 分くらい」のように、ひとまとまりの途中で切らない。幅 320 の写真で見つけた)
+      kids.push(ui.el('p', { class: 'lsub', 'data-line': 'parts' }, parts.reduce((out, x, i) => out.concat(i ? [sep()] : [], [ui.el('span', { class: 'nowrap', text: x })]), [])));
+      kids.push(ui.el('button', { class: 'lgo', 'data-act': 'start', onclick: start }, [ui.icon('play', 18, 2), ui.el('span', { text: ui.t('learn.start') })]));
+    } else {
+      kids.push(ui.el('p', { class: 'ldone', 'data-box': 'done' }, [ui.icon('check', 20, 2.6), ui.el('span', { text: ui.t('learn.done') })]));
+      const when = h.next ? dayText(h.next.day, today) : '';      // 日付にならない値なら、次に出る日の行を出さない
+      if (when) kids.push(ui.el('p', { class: 'lsub', 'data-line': 'next', text: ui.t('learn.next', { when, n: h.next.n }) }));
+    }
+    return ui.el('section', { class: 'lcard', 'data-box': 'review' }, kids);
+  }
+  // ---- 復習の流れ(§9-10 の「復習」。工程W4b-2。並びと字は W2a の案のページ)----
+  //   1 語の画面: 答える前(見出しだけ・「答えを見る」)→ 答えたあと(意味・読んだ文・原文・作品と話・発音・同じ見た目のボタン 2 つ)→ 次の語。
+  //   そのあと、その回の終わりのもう一度(Yomu.review.start() の Session が並べる)→ 回のおわり(数えた事実・「ホームへ」「もう ○ 語」)。
+  //   答えは 1 語ごとに Session.answer で保存する(途中でやめても、答えた分は残る=左上の「‹」は確かめずにホームへ)。
+  //   二度押し: 「答えを見る」と「分かった」は、ほぼ同じ場所に出る。出してから learn.lockMs の間は、次のボタンを効かせない(見た目は変えない)。
+  //   答えを書いている間の 2 回目は、何もしない。音は押したときだけ(Yomu.speech。もう一度押すと止める)
+  let run = null;          // { s: Session, open, lockAt, busy, err, saying, focus, end } | { starting: true } | null
+  let shell = null;        // .learn(復習の間は data-run の印=頭と下のタブを隠す)
+  const now = () => Date.now();
+  const lockMs = () => cfg.learn.lockMs;
+
+  function setRun(on){
+    if (shell){ if (on) shell.setAttribute('data-run', ''); else shell.removeAttribute('data-run'); }
+  }
+  function hush(){
+    if (run && run.saying){ run.saying = null; Y.speech.stop(); }
+    if (one && one.saying){ one.saying = null; Y.speech.stop(); }
+  }
+  function stopRun(){
+    hush();
+    run = null;
+    setRun(false);
+  }
+  function home(){
+    stopRun();
+    go('home');
+  }
+
+  // 「はじめる」「もう ○ 語」: 1 回の流れを始める。読むのが遅ければ「読み込んでいます…」・読めなければ、ホームの失敗の知らせ
+  async function start(){
+    if (run && (run.starting || (run.s && !run.end))) return;   // 二度押し
+    hush();
+    const my = ++gen;                                          // 読んでいる途中のホームを捨てる
+    run = { starting: true };
+    setRun(true);
+    const view = ui.view();
+    if (view) view.scrollTop = 0;
+    const slow = setTimeout(() => { if (my === gen && run && run.starting) fill(body, [ui.el('p', { class: 'lstate', text: ui.t('learn.loading') })]); }, cfg.learn.slowMs);
+    try {
+      const s = await Y.review.start();
+      if (my !== gen) return;
+      if (!s.current()){ home(); return; }                    // 出す語が無くなっていた(ほかのタブで答えた など)=ホームに今の数を出す
+      const me = { s, open: false, lockAt: now() + lockMs(), busy: false, err: null, saying: null, focus: true, end: false };
+      me.alive = () => run === me;
+      me.paint = paintRun;
+      run = me;
+      paintRun();
+    } catch (e){
+      if (my !== gen) return;
+      stopRun();
+      fail(e && e.kind === 'newer' ? 'newer' : 'fail');
+    } finally { clearTimeout(slow); }
+  }
+
+  // 頭: 「‹」(ホームへ)・「今日の復習」か「もう一度」・何語目か / 全部・進み具合の帯
+  function top(title, i, n){
+    return [
+      ui.el('div', { class: 'rtop' }, [
+        ui.el('button', { class: 'rback', 'data-act': 'back', 'aria-label': ui.t('rv.back'), onclick: home }, [ui.icon('chevL', 20, 2)]),
+        ui.el('h2', { class: 'rtitle', text: title }),
+        ui.el('span', { class: 'rcount en', 'data-n': 'count', text: ui.t('rv.count', { i, n }) })
+      ]),
+      ui.el('div', { class: 'rbar', 'aria-hidden': 'true' }, [ui.el('i', { style: 'width: ' + (n ? Math.round(100 * i / n) : 100) + '%' })])
+    ];
+  }
+  // 発音を聞く・この文を聞く。own = 今の画面の状態(復習の run か、単語帳の 1 語の画面 one)。{ saying, alive(), paint() }
+  function sayBtn(own, which, text, label){
+    if (!Y.speech.can() || !text) return null;
+    const on = own.saying === which;
+    return ui.el('button', { class: 'rsay', 'data-act': 'say-' + which, 'aria-pressed': on ? 'true' : 'false', 'aria-label': ui.t(label),
+      onclick: () => {                                         // タップの流れの中で、待たずに鳴らす(iPhone)
+        if (!own.alive()) return;
+        if (own.saying === which){ hush(); own.paint(); return; }
+        own.saying = which;
+        const ok = Y.speech.say(text, { onEnd(){ if (own.alive() && own.saying === which){ own.saying = null; own.paint(); } } });
+        if (!ok && own.saying === which) own.saying = null;
+        own.paint();
+      } }, [ui.icon(on ? 'stop' : 'speaker', 22, 1.9)]);
+  }
+
+  // 読んだ英文の中の、その語(単語は見出しと出会った形・原形に直して同じもの。熟語は tokens の当て方=離れた熟語も)に印を付けた字の並び
+  const low = s => String(s || '').toLowerCase().split(String.fromCharCode(0x2019)).join("'").trim();
+  function marked(item, en){
+    const heads = [item.head].concat(Array.isArray(item.forms) ? item.forms : []).filter(x => typeof x === 'string' && x.trim());
+    const phrase = item.kind === 'idiom' || /\s/.test(String(item.head).trim());
+    let toks, hit;
+    if (phrase){
+      toks = Y.tokens.split(en, heads.map(w => ({ w })));
+      hit = tk => tk.t === 'i';
+    } else {
+      toks = Y.tokens.split(en, []);
+      const want = new Set(heads.map(low));
+      const same = tk => tk.t === 'w' && want.has(low(tk.s));
+      const root = tk => tk.t === 'w' && !!Y.lemma && Y.lemma.candidates(String(tk.s)).some(c => c && want.has(low(c.lemma)));
+      hit = toks.some(same) ? same : root;                     // 同じ形が無いときだけ、原形に直して当てる
+    }
+    return toks.map(tk => (hit(tk) ? ui.el('mark', { text: tk.s }) : tk.g != null ? ui.el('span', { class: 'gap', text: tk.s }) : String(tk.s)));
+  }
+  const srcText = src => (src === 'dict' || src === 'ai' || src === 'idiom' ? ui.t('rv.src.' + src) : '');
+  function workText(ex){
+    const t = ex && util.isPlain(ex.title) ? ex.title : {};
+    const m = NAROU.exec(String(ex.page || ''));
+    const ep = m && m[1] !== '0' ? ui.t('learn.ep', { n: Number(m[1]) }) : '';
+    return [t.work, [ep, t.ep !== t.work ? t.ep : ''].filter(Boolean).join(' ')].filter(Boolean).join(sep());
+  }
+
+  // 答える前: 種類の札・見出し・「意味を思い出して…」
+  function askPart(item){
+    return ui.el('div', { class: 'rmain center' }, [
+      ui.el('span', { class: 'rkind', text: ui.t(item.kind === 'idiom' ? 'rv.idiom' : 'rv.word') }),
+      ui.el('p', { class: 'rword' + (String(item.head).length > cfg.ui.headLong ? ' long' : ''), lang: 'en', tabindex: '-1', 'data-focus': '', text: item.head }),
+      ui.el('p', { class: 'rhint' }, phrases(ui.t('rv.hint')))
+    ]);
+  }
+  // 答えたあと: 見出しと発音・意味と出どころ・読んだ文(その語に印)と、この文を聞く・日本語の原文・作品と話。単語帳の 1 語の画面も、同じものを使う(own = run か one)
+  function answerPart(item, own){
+    const ex = Array.isArray(item.ex) && item.ex.length ? item.ex[item.ex.length - 1] : null;   // ⭐ を押したときの文(入れ直すと新しい文=いちばんあと)
+    const lines = String(item.mean || '').split(' / ').map(x => x.trim()).filter(Boolean);
+    const kids = [
+      ui.el('div', { class: 'rhead' }, [
+        ui.el('p', { class: 'rword' + (String(item.head).length > cfg.ui.headLong ? ' long' : ''), lang: 'en', tabindex: '-1', 'data-focus': '', text: item.head }),
+        sayBtn(own, 'word', item.head, 'word.say')
+      ]),
+      lines.length
+        ? ui.el('div', { class: 'rmean', 'data-box': 'mean' }, lines.map(x => ui.el('p', { class: 'line', text: x })).concat(srcText(item.meanSrc) ? [ui.el('p', { class: 'rsrc', text: srcText(item.meanSrc) })] : []))
+        : ui.el('p', { class: 'rnone', 'data-box': 'mean', text: ui.t('rv.noMean') })
+    ];
+    if (ex && typeof ex.en === 'string' && ex.en.trim()){
+      kids.push(ui.el('div', { class: 'rrule', 'aria-hidden': 'true' }), ui.el('h3', { class: 'rlabel', text: ui.t('rv.sent') }),
+        ui.el('div', { class: 'rsentrow' }, [ui.el('p', { class: 'ren', lang: 'en', 'data-box': 'sent' }, marked(item, ex.en)), sayBtn(own, 'sent', ex.en, 'word.saySent')]));
+      if (ex.jp) kids.push(ui.el('p', { class: 'rjp', text: ex.jp }));
+      const w = workText(ex);
+      if (w) kids.push(ui.el('p', { class: 'rwork', text: w }));
+    }
+    return ui.el('div', { class: 'rmain' }, kids);
+  }
+  function errPart(){
+    if (!run.err) return null;
+    const text = ui.t(run.err === 'stuck' ? 'rv.stuck' : run.err === 'newer' ? 'learn.newer' : 'rv.saveFail');
+    const acts = run.err === 'stuck' ? [ui.el('button', { 'data-act': 'fix', onclick: () => { ui.show('fix'); } }, [ui.t('act.fix')]), ui.el('button', { 'data-act': 'home', onclick: home }, [ui.t('rv.home')])] : [];
+    return ui.el('div', { class: 'lfail', 'data-fail': run.err, role: 'alert' }, [
+      ui.el('p', { class: 'msg' }, [ui.icon('alert', 18, 2), ui.el('span', { text })]),
+      acts.length ? ui.el('div', { class: 'acts' }, acts) : null
+    ]);
+  }
+  function footPart(again){
+    const kids = [errPart()];
+    if (!run.open) kids.push(ui.el('button', { class: 'rbtn main', 'data-act': 'show', onclick: reveal }, [ui.t('rv.show')]));
+    else {
+      kids.push(ui.el('div', { class: 'rtwo' }, [
+        ui.el('button', { class: 'rbtn even', 'data-act': 'wrong', onclick: () => answer(Y.fsrs.AGAIN) }, [ui.icon('refresh', 20, 2), ui.el('span', { text: ui.t('rv.wrong') })]),
+        ui.el('button', { class: 'rbtn even', 'data-act': 'right', onclick: () => answer(Y.fsrs.GOOD) }, [ui.icon('check', 20, 2.4), ui.el('span', { text: ui.t('rv.right') })])
+      ]));
+      kids.push(ui.el('p', { class: 'rnote' }, phrases(ui.t(again ? 'rv.noteAgain' : 'rv.note'))));
+    }
+    return ui.el('div', { class: 'rfoot' }, kids);
+  }
+
+  // 今の語の画面を描く(新しい語・答えを見た直後だけ、見出しへフォーカスを移して、上から見せる)
+  function paintRun(){
+    if (!run || !run.s || run.end) return;
+    const s = run.s, item = s.current();
+    if (!item){ finish(); return; }
+    const again = s.phase === 'again';
+    const i = again ? s.pos - s.total + 1 : s.pos + 1, n = again ? s.queued - s.total : s.total;
+    fill(body, [ui.el('div', { class: 'rv', 'data-step': run.open ? 'answer' : 'ask', 'data-phase': s.phase, 'data-id': item.id },
+      top(ui.t(again ? 'rv.again' : 'learn.review'), i, n).concat([run.open ? answerPart(item, run) : askPart(item), footPart(again)]))]);
+    if (run.focus){
+      run.focus = false;
+      const view = ui.view();
+      if (view) view.scrollTop = 0;
+      const h = body.querySelector('[data-focus]');
+      if (h){ try { h.focus({ preventScroll: true }); } catch (e){} }
+    }
+  }
+  function reveal(){
+    if (!run || !run.s || run.open || run.busy || now() < run.lockAt) return;
+    hush();
+    run.open = true;
+    run.lockAt = now() + lockMs();
+    run.focus = true;
+    paintRun();
+  }
+  async function answer(g){
+    const mine = run;
+    if (!mine || !mine.s || !mine.open || mine.busy || now() < mine.lockAt) return;
+    mine.busy = true;
+    const stuck = setTimeout(() => { if (run === mine && mine.busy){ mine.err = 'stuck'; paintRun(); } }, cfg.page.stuckMs);
+    let ok = false;
+    try {
+      await mine.s.answer(g);
+      ok = true;
+    } catch (e){
+      if (e && e.kind === 'bad') return;                       // 二度押し(前の答えを書いている)・終わった回(Session が断った。保存の失敗ではない)
+      mine.err = e && e.kind === 'newer' ? 'newer' : 'save';
+    } finally {
+      clearTimeout(stuck);
+      mine.busy = false;
+    }
+    if (run !== mine) return;                                  // 書いている間に、ホームへ戻った
+    if (ok){
+      hush();
+      mine.err = null;
+      mine.open = false;
+      mine.lockAt = now() + lockMs();
+      mine.focus = true;
+    } else ui.announce(ui.t(mine.err === 'newer' ? 'learn.newer' : 'rv.saveFail'), true);
+    paintRun();
+  }
+
+  // 回のおわり: 数えた事実だけ(ほめ言葉・点数・音は出さない=W2a)。続けるかは本人が選ぶ
+  async function finish(){
+    const mine = run;
+    if (!mine || mine.end) return;
+    mine.end = true;
+    hush();
+    const sum = mine.s.summary();
+    let h = null;
+    try { h = await Y.review.home(); } catch (e){}             // 読めなければ「覚えた語」と「もう ○ 語」を出さない
+    if (run !== mine) return;
+    const fact = (key, n, vars) => ui.el('div', { class: 'rfact', 'data-fact': key }, [ui.el('span', { text: ui.t('rv.f.' + key, vars) }), ui.el('b', { class: 'en', text: String(n) })]);
+    const facts = [fact('words', sum.words), fact('right', sum.right)];
+    if (sum.wrong) facts.push(fact('fixed', sum.fixed));
+    facts.push(fact('soon', sum.soon));
+    if (h) facts.push(fact('learned', h.learned, { n: cfg.review.learned }));
+    const left = h ? h.size + h.left : 0;
+    const main = ui.el('div', { class: 'rmain' }, [
+      ui.el('h3', { class: 'rend', tabindex: '-1', 'data-focus': '', text: ui.t('rv.end') }),
+      ui.el('div', { class: 'rfacts' }, facts),
+      left ? ui.el('p', { class: 'rleft', text: ui.t('rv.left', { n: left }) }) : null
+    ]);
+    const foot = ui.el('div', { class: 'rfoot' }, [
+      ui.el('button', { class: 'rbtn main', 'data-act': 'home', onclick: home }, [ui.t('rv.home')]),
+      h && h.size ? ui.el('button', { class: 'rbtn even', 'data-act': 'more', onclick: start }, [ui.t('rv.more', { n: h.size })]) : null
+    ]);
+    fill(body, [ui.el('div', { class: 'rv', 'data-step': 'end' }, top(ui.t('learn.review'), mine.s.total, mine.s.total).concat([main, foot]))]);
+    const view = ui.view();
+    if (view) view.scrollTop = 0;
+    const e = body.querySelector('[data-focus]');
+    if (e){ try { e.focus({ preventScroll: true }); } catch (x){} }
+  }
+
+  // 続きを読むの 1 行: 「小説/記事 ・ いつ」・作品の名前(記事は記事の題。2 行まで)・話とどこまで(記事はサイトの名前)。押すと、同じタブで開く
+  function epOf(w, long){
+    const m = NAROU.exec(String(w.page || ''));
+    const num = m && m[1] !== '0' ? ui.t('learn.ep', { n: Number(m[1]) }) : '';
+    if (!num) return m ? '' : w.title.ep;             // なろうの短編は話の名前が作品の名前と同じ=出さない。カクヨムは話の題だけ(鍵の番号は話の数ではない)
+    return long && w.title.ep ? num + ' ' + w.title.ep : num;
+  }
+  function row(w, nowIso){
+    const article = w.scene === 'article';
+    const reach = ui.t('learn.reach', { n: Math.min(9, Math.max(1, Math.floor(w.reach * 10))) });
+    let detail;
+    if (article) detail = [w.title.work, reach].filter(Boolean).join(sep());
+    else if (w.kind === 'page') detail = [epOf(w, true), reach].filter(Boolean).join(sep());
+    else { const ep = epOf(w, false); detail = (ep ? ui.t('learn.readTo', { ep }) + sep() : '') + ui.t(w.kind === 'next' ? 'learn.toNext' : 'learn.toToc'); }
+    const when = whenText(w.at, nowIso);
+    return ui.el('a', { class: 'lrow', href: w.url, 'data-kind': w.kind }, [
+      ui.el('span', { class: 't' }, [
+        ui.el('span', { class: 'k', text: ui.t(article ? 'learn.article' : 'learn.novel') + (when ? sep() + when : '') }),
+        ui.el('span', { class: 'n', text: article ? (w.title.ep || w.title.work) : (w.title.work || w.title.ep) }),
+        ui.el('span', { class: 'd', text: detail })
+      ]),
+      ui.el('span', { class: 'chev', 'aria-hidden': 'true' }, [ui.icon('chevR', 20, 2)])
+    ]);
+  }
+  function cont(list, nowIso){
+    return ui.el('section', { class: 'lgroup', 'data-box': 'continue' }, [
+      ui.el('h2', { text: ui.t('learn.continue') }),
+      ui.el('div', { class: 'llist' }, list.length ? list.map(w => row(w, nowIso)) : [ui.el('p', { class: 'lempty', text: ui.t('learn.noRead') })])
+    ]);
+  }
+  const tile = (name, label, n) => ui.el('div', { class: 'ltile', 'data-tile': name }, [
+    ui.el('span', { class: 'lcap', text: label }),
+    ui.el('b', { class: 'en' }, [String(n), ui.el('span', { text: ui.t('learn.unit') })])
+  ]);
+
+  // うまくいかなかった: わけと、どうすればよいか(行き止まりにしない=設計メモ 2-5)。色と印を変えた枠(§9-5 の失敗の形)
+  //   retry = 「読み込み直す」で、もう一度読む(読めなかったとき。新しい版・待ったままは、ページを読み込み直す)
+  function failBox(kind, retry){
+    const text = ui.t(kind === 'newer' ? 'learn.newer' : kind === 'stuck' ? 'learn.stuck' : 'learn.fail');
+    const reload = () => { try { win.location.reload(); } catch (e){} };
+    const acts = [ui.el('button', { 'data-act': 'retry', onclick: kind === 'fail' ? retry : reload }, [ui.t('learn.retry')])];
+    if (kind === 'stuck') acts.push(ui.el('button', { 'data-act': 'fix', onclick: () => { ui.show('fix'); } }, [ui.t('act.fix')]));
+    ui.announce(text, true);
+    return ui.el('div', { class: 'lfail', 'data-fail': kind }, [
+      ui.el('p', { class: 'msg' }, [ui.icon('alert', 18, 2), ui.el('span', { text })]),
+      ui.el('div', { class: 'acts' }, acts)
+    ]);
+  }
+  function fail(kind){ fill(body, [failBox(kind, () => loadHome())]); }
+
+  // ホームを読み直して描く。待つ間が長ければ「読み込んでいます…」・いつまでも終わらなければ、止まった知らせ(あとから届いたら、いつもどおりに描く)
+  async function loadHome(){
+    const my = ++gen;
+    let shown = false;
+    const slow = setTimeout(() => { if (my === gen && !shown) fill(body, [ui.el('p', { class: 'lstate', text: ui.t('learn.loading') })]); }, cfg.learn.slowMs);
+    const stuck = setTimeout(() => { if (my === gen && !shown) fail('stuck'); }, cfg.page.stuckMs);
+    try {
+      await Y.settings.load();
+      const s = Y.settings.get();
+      const logOn = !(util.isPlain(s.log) && s.log.on === false);    // 読んだ記録を残さない人には、続きを読むを出さない(設計メモ 12章)
+      const [h, list] = await Promise.all([Y.review.home(), logOn ? Y.learn.recent() : Promise.resolve([])]);
+      if (my !== gen || tab !== 'home') return;
+      shown = true;
+      const nowIso = util.nowISO();
+      fill(body, [hero(h, util.today(nowIso)), logOn ? cont(list, nowIso) : null,
+        ui.el('div', { class: 'ltiles' }, [tile('words', ui.t('learn.words'), h.words), tile('learned', ui.t('learn.learned'), h.learned)])]);
+    } catch (e){
+      if (my === gen && tab === 'home'){ shown = true; fail(e && e.kind === 'newer' ? 'newer' : 'fail'); }
+    } finally {
+      clearTimeout(slow);
+      clearTimeout(stuck);
+    }
+  }
+
+  // ---- 単語帳(§9-10 の「単語帳」。工程W4c-1。並びと字は W2b の案のページの 2)----
+  //   一覧: 語数・さがす欄(英語か意味)・並べ方 2 つ(入れた順/ABC 順)・1 行に見出しと意味の 1 行目と様子(字と形)。押すと 1 語の画面。
+  //   1 語の画面: 頭(「‹」と「単語帳」。下のタブは隠す)・復習の答えたあとと同じ中身・様子・次に出る日・調べた回数(0 なら出さない)・入れた日・「単語帳から外す」(2 回押し)。
+  //   1 語の画面から戻ったら、さがした字・並べ方・見ていた位置はそのまま(タブを戻ったときも、さがした字と並べ方はそのまま。読み込み直したら、はじめの形)。
+  //   読むのは Yomu.learn.words だけ。書くのは「外す」(Yomu.vocab.remove)だけ
+  const vs = { q: '', sort: 'new', total: null, top: 0 };   // 一覧の、さがす字・並べ方・単語帳の語数・1 語の画面を開いたときの送った位置
+  let list = null;         // 描いている一覧の部品 { tools, input, clear, seg, count, box }
+  let one = null;          // 1 語の画面 { e(一覧の 1 行の値), saying, busy, err, alive(), paint() }
+  const ST = { new: 'stNew', learning: 'stMid', learned: 'stDone' };
+  const firstMean = it => String(it.mean || '').split(' / ').map(x => x.trim()).filter(Boolean)[0] || '';
+  const dayNum = s => { const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(String(s || '')); return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 864e5 : NaN; };
+  const dateOf = (y, m, d, thisYear) => (y === thisYear ? ui.t('learn.date', { m, d }) : ui.t('learn.dateY', { y, m, d }));
+
+  // 次に出る日: 今日(出す日が来ている)・○月○日(あした)・○月○日(あと ○ 日)。日付にならない値なら ''
+  function dueText(due, today){
+    const a = dayNum(due), b = dayNum(today);
+    if (isNaN(a) || isNaN(b)) return '';
+    if (a <= b) return ui.t('vocab.due.today');
+    const date = dateOf(Number(due.slice(0, 4)), Number(due.slice(5, 7)), Number(due.slice(8, 10)), Number(today.slice(0, 4)));
+    return a - b === 1 ? ui.t('vocab.due.tomorrow', { date }) : ui.t('vocab.due.days', { date, n: a - b });
+  }
+  // 入れた日(暦の日。年が違えば、年から)
+  function atText(iso, nowIso){
+    const a = new Date(iso), b = new Date(nowIso);
+    if (!iso || isNaN(a) || isNaN(b)) return '';
+    return dateOf(a.getFullYear(), a.getMonth() + 1, a.getDate(), b.getFullYear());
+  }
+  const stBadge = st => ui.el('span', { class: 'vst', 'data-st': st }, [ui.icon(ST[st] || 'stNew', 16, 1.8), ui.el('span', { text: ui.t('vocab.st.' + st) })]);
+
+  // 一覧の入れ物を描いて、読む。o = { top(戻したい送った位置), focus(フォーカスを戻す語の id) }
+  function vocabTab(o){
+    const input = ui.el('input', { class: 'vq', type: 'search', enterkeyhint: 'search', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
+      'aria-label': ui.t('vocab.search'), placeholder: ui.t('vocab.search') });
+    input.value = vs.q;
+    // 日本語の変換の途中は、さがさない(確定したら、さがす)
+    input.addEventListener('input', e => { if (!(e && e.isComposing)) setQ(input.value); });
+    input.addEventListener('compositionend', () => setQ(input.value));
+    input.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); try { input.blur(); } catch (x){} } });   // 「検索」でキーボードを閉じる
+    const clear = ui.el('button', { class: 'vclear', 'data-act': 'clear', 'aria-label': ui.t('vocab.clear'), onclick: () => setQ('', true) }, [ui.icon('close', 18, 2)]);
+    clear.hidden = !vs.q;
+    const seg = ui.el('div', { class: 'seg vsort', role: 'group', 'aria-label': ui.t('vocab.sort') }, ['new', 'abc'].map(k =>
+      ui.el('button', { 'data-sort': k, onclick: () => setSort(k) }, [ui.el('span', { text: ui.t('vocab.sort.' + k) }), ui.el('span', { class: 'tick', hidden: true }, [ui.icon('check', 12, 3)])])));
+    const count = ui.el('span', { class: 'vcount', 'data-n': 'words' });
+    const tools = ui.el('div', { class: 'vtools' }, [ui.el('label', { class: 'vfind' }, [ui.icon('search', 20, 2), input, clear]), seg]);
+    const box = ui.el('div', { class: 'vbox' });
+    list = { tools, input, clear, seg, count, box };
+    paintSeg();
+    fill(body, [ui.el('div', { class: 'vhead' }, [ui.el('h2', { text: ui.t('tab.vocab') }), count]), tools, box]);
+    return loadVocab(Object.assign({ count: true }, o));
+  }
+  function paintSeg(){
+    if (!list) return;
+    list.seg.querySelectorAll('button').forEach(b => {
+      const on = b.getAttribute('data-sort') === vs.sort;
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      const k = b.querySelector('.tick'); if (k) k.hidden = !on;
+    });
+  }
+  function setQ(q, focus){
+    if (!list) return;
+    q = String(q || '');
+    if (list.input.value !== q) list.input.value = q;
+    list.clear.hidden = !q;
+    if (focus){ try { list.input.focus({ preventScroll: true }); } catch (e){} }
+    if (q === vs.q) return;
+    vs.q = q;
+    loadVocab({ hits: true });
+  }
+  function setSort(k){
+    if (!list || vs.sort === k) return;
+    vs.sort = k;
+    paintSeg();
+    loadVocab({});
+  }
+
+  // 一覧を読む(待つ間が長ければ「読み込んでいます…」・いつまでも終わらなければ、止まった知らせ)。o.count = 単語帳の語数も読み直す(さがしている間の打つたびには読まない)
+  async function loadVocab(o){
+    o = o || {};
+    const v = list;
+    if (!v) return;
+    const my = ++gen;
+    const cur = () => my === gen && list === v && !one;
+    let shown = false;
+    const slow = setTimeout(() => { if (cur() && !shown) fill(v.box, [ui.el('p', { class: 'lstate', text: ui.t('learn.loading') })]); }, cfg.learn.slowMs);
+    const stuck = setTimeout(() => { if (cur() && !shown) fill(v.box, [failBox('stuck')]); }, cfg.page.stuckMs);
+    try {
+      const q = vs.q;
+      const [rows, all] = await Promise.all([Y.learn.words({ q, sort: vs.sort }), q && (o.count || vs.total == null) ? Y.learn.words({}) : null]);
+      if (!cur()) return;
+      shown = true;
+      if (!q) vs.total = rows.length; else if (all) vs.total = all.length;
+      paintList(v, rows, q);
+      if (q && o.hits) ui.announce(rows.length ? ui.t('vocab.hits', { n: rows.length }) : ui.t('vocab.none', { q }));
+      const view = ui.view();
+      if (view && o.top != null) view.scrollTop = o.top;
+      if (o.focus){
+        const r = Array.from(v.box.querySelectorAll('.vrow')).find(x => x.getAttribute('data-id') === o.focus);
+        if (r){ try { r.focus({ preventScroll: true }); } catch (e){} }
+      }
+    } catch (e){
+      if (cur()){ shown = true; fill(v.box, [failBox(e && e.kind === 'newer' ? 'newer' : 'fail', () => loadVocab({ count: true }))]); }
+    } finally {
+      clearTimeout(slow);
+      clearTimeout(stuck);
+    }
+  }
+  function paintList(v, rows, q){
+    v.count.textContent = vs.total != null ? ui.t('vocab.count', { n: vs.total }) : '';
+    const empty = !q && !rows.length;                          // 単語帳がから: さがす欄と並べ方は出さず、入れ方の 1 行(ホームと同じ)
+    v.tools.hidden = empty;
+    if (empty){ fill(v.box, [ui.el('section', { class: 'lcard', 'data-box': 'empty' }, [ui.el('p', { class: 'lhint' }, phrases(ui.t('learn.empty')))])]); return; }
+    if (!rows.length){                                         // さがして 1 語も当たらない(行き止まりにしない)
+      fill(v.box, [ui.el('section', { class: 'lcard vnone', 'data-box': 'none' }, [
+        ui.el('p', { class: 'lhint', text: ui.t('vocab.none', { q }) }),
+        ui.el('button', { class: 'vline', 'data-act': 'clear-all', onclick: () => setQ('', true) }, [ui.t('vocab.clearAll')])
+      ])]);
+      return;
+    }
+    fill(v.box, [ui.el('div', { class: 'llist vlist' }, rows.map(e => ui.el('button', { class: 'vrow', 'data-id': e.item.id, 'data-st': e.status, onclick: () => openOne(e) }, [
+      ui.el('span', { class: 't' }, [ui.el('span', { class: 'w', lang: 'en', text: e.item.head }), firstMean(e.item) ? ui.el('span', { class: 'm', text: firstMean(e.item) }) : null]),
+      stBadge(e.status)
+    ])))]);
+  }
+
+  // 1 語の画面
+  function openOne(e){
+    if (one || !list) return;
+    hush();
+    const view = ui.view();
+    vs.top = view ? view.scrollTop : 0;
+    gen++;                                                    // 読んでいる途中の一覧を捨てる
+    list = null;
+    const me = { e, saying: null, busy: false, err: null };
+    me.alive = () => one === me;
+    me.paint = () => paintOne(me, false);
+    one = me;
+    if (shell) shell.setAttribute('data-one', '');
+    paintOne(me, true);
+  }
+  function closeOne(){
+    if (!one) return;
+    hush();
+    one = null;
+    if (shell) shell.removeAttribute('data-one');
+  }
+  function backToList(){
+    if (!one) return;
+    const id = one.e.item.id;
+    closeOne();
+    vocabTab({ top: vs.top, focus: id });
+  }
+  function factsPart(e){
+    const nowIso = util.nowISO();
+    const row = (key, value, note) => ui.el('div', { class: 'vfact', 'data-fact': key }, [
+      ui.el('span', { class: 'k', text: ui.t('vocab.f.' + key) }), ui.el('span', { class: 'v', text: value }), note ? ui.el('p', { class: 'vnote', text: note }) : null]);
+    const st = e.status === 'learned' ? ui.t('vocab.status.learned', { k: e.k }) : e.status === 'learning' ? ui.t(e.k ? 'vocab.status.learningK' : 'vocab.status.learning', { k: e.k }) : ui.t('vocab.status.new');
+    const rows = [row('status', st)];
+    if (e.status === 'new') rows.push(row('due', ui.t('vocab.due.none'), ui.t('vocab.due.noneNote', { n: cfg.review.newPerDay })));
+    else { const d = dueText(e.due, util.today(nowIso)); if (d) rows.push(row('due', d)); }
+    if (e.seen > 0) rows.push(row('seen', ui.t('vocab.seen', { n: e.seen })));   // 0 は出さない(数え始める前に入れた語に「0 回」と出さない)
+    const at = atText(e.item.at, nowIso);
+    if (at) rows.push(row('at', at));
+    return ui.el('div', { class: 'vfacts', 'data-box': 'facts' }, rows);
+  }
+  function paintOne(me, first){
+    if (one !== me) return;
+    const it = me.e.item;
+    const main = answerPart(it, me);
+    main.appendChild(factsPart(me.e));
+    const label = ui.el('span', { text: ui.t('vocab.remove') });
+    const btn = ui.el('button', { class: 'vline vremove', 'data-act': 'remove' }, [label]);
+    ui.twoTap(btn, { label, armed: ui.t('word.removeArmed'), fn: () => remove(me) });
+    const err = me.err ? ui.el('div', { class: 'lfail', 'data-fail': me.err, role: 'alert' }, [
+      ui.el('p', { class: 'msg' }, [ui.icon('alert', 18, 2), ui.el('span', { text: ui.t(me.err === 'newer' ? 'learn.newer' : 'vocab.removeFail') })])]) : null;
+    fill(body, [ui.el('div', { class: 'rv', 'data-step': 'word', 'data-id': it.id }, [
+      ui.el('div', { class: 'rtop' }, [
+        ui.el('button', { class: 'rback', 'data-act': 'back', 'aria-label': ui.t('vocab.back'), onclick: backToList }, [ui.icon('chevL', 20, 2)]),
+        ui.el('h2', { class: 'rtitle', text: ui.t('tab.vocab') })
+      ]),
+      main,
+      ui.el('div', { class: 'vfoot' }, [err, btn, ui.el('p', { class: 'rnote' }, [ui.t('vocab.removeNote')])])
+    ])]);
+    if (first){
+      const view = ui.view();
+      if (view) view.scrollTop = 0;
+      const h = body.querySelector('[data-focus]');
+      if (h){ try { h.focus({ preventScroll: true }); } catch (x){} }
+    }
+  }
+  // 外す(2 回押しの 2 回目): 外したら一覧へ戻り、短い知らせ(取り消しは作らない=2 回押しで先に防ぐ)。外せなければ、同じ画面のまま失敗の知らせ
+  async function remove(me){
+    if (one !== me || me.busy) return;
+    me.busy = true;
+    hush();
+    const head = me.e.item.head;
+    try {
+      await Y.vocab.remove(head);                              // false = もう入っていなかった(ほかのタブで外した)=外れているので同じ扱い
+    } catch (e){
+      me.busy = false;
+      if (one !== me) return;
+      me.err = e && e.kind === 'newer' ? 'newer' : 'fail';
+      ui.announce(ui.t(me.err === 'newer' ? 'learn.newer' : 'vocab.removeFail'), true);
+      paintOne(me, false);
+      return;
+    }
+    me.busy = false;
+    if (one === me){
+      closeOne();
+      vocabTab({ top: vs.top });
+    } else if (tab === 'vocab' && list && !one) loadVocab({ count: true });   // 外している間に「‹」で戻った: 一覧を読み直す
+    ui.toast(ui.t('vocab.removed', { head }));
+  }
+
+  // ---- 記録(§9-10 の「記録」。工程W4c-2。並びと字は W2b の案のページの 3)----
+  //   この 7 日(画面に出た英語・読んだ時間・復習した日・復習で答えた回数)と、日ごとの画面に出た英語の棒グラフ(14 日)/これまで(英語・時間・単語帳の語数・覚えた語数)/数え方の注。
+  //   棒グラフ: 1 色(英文の緑)・目盛りの線は 1 本・押すか、なぞるか、左右の矢印で日を選ぶと、上の 1 行にその日の数(はじめは今日。選んだ列は地の色と下の印でも出す)。
+  //   読んだ記録を「残さない」人には、そう出して「設定をひらく」(復習の数・単語帳・覚えたは出す=読んだ記録ではない。2026-10-24 利用者「全部おすすめで」)。
+  //   判定・目標・連続日数・人との比べは出さない。読むのは Yomu.learn.record だけ
+  const rs = { pick: null };       // 棒グラフで選んだ日(YYYY-MM-DD。null = 今日。読み直しても、その日が 14 日の中にあれば、そのまま)
+  const fmt = n => Math.round(n).toLocaleString('en-US');
+  const ymd = s => { const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(String(s || '')); return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null; };
+  const dayLong = (s, today) => { const a = ymd(s); return a ? dateOf(a[0], a[1], a[2], Number(String(today).slice(0, 4))) : ''; };
+  const dayShort = s => { const a = ymd(s); return a ? ui.t('rec.md', { m: a[1], d: a[2] }) : ''; };
+  // 読んだ時間: ○ 時間 ○ 分(時間があれば 0 分は書かない)・1 分に満たなければ「1 分未満」・0 秒は「0 分」
+  function timeParts(sec){
+    const m = Math.floor(sec / 60);
+    if (sec > 0 && m < 1) return [['1', ui.t('rec.u.under')]];
+    const h = Math.floor(m / 60), r = m % 60;
+    if (!h) return [[String(r), ui.t('rec.u.min')]];
+    return r ? [[fmt(h), ui.t('rec.u.hour')], [String(r), ui.t('rec.u.min')]] : [[fmt(h), ui.t('rec.u.hour')]];
+  }
+  // 1 つの数: 名前(上)と、数と単位(数は英語の書体・単位は日本語の小さな字)
+  const numPart = (key, label, parts) => ui.el('div', { class: 'rnum', 'data-n': key }, [
+    ui.el('span', { class: 'lcap', text: label }),
+    ui.el('b', { class: 'en' }, parts.reduce((out, [n, u]) => out.concat([String(n), ui.el('span', { text: u })]), []))
+  ]);
+  const secHead = (title, note) => ui.el('div', { class: 'rhd' }, [ui.el('h3', { text: title }), note ? ui.el('span', { class: 'lsub', text: note }) : null]);
+  // 目盛りの線の値: いちばん多い日を超えない、きりのよい数(1・2・5 × 10 の何乗)
+  function niceTick(max){
+    if (!(max > 0)) return 0;
+    const p = Math.pow(10, Math.floor(Math.log10(max)));
+    return [5 * p, 2 * p, p].find(x => x <= max) || p;
+  }
+  function chart(days, today){
+    const max = days.reduce((m, d) => Math.max(m, d.enWords), 0), tick = niceTick(max);
+    let at = days.findIndex(d => d.day === rs.pick);
+    if (at < 0) at = days.length - 1;
+    const pick = ui.el('p', { class: 'rpick', 'aria-hidden': 'true' });
+    const cols = days.map(d => ui.el('span', { class: 'rcol' }, d.enWords > 0 ? [ui.el('i', { class: 'rbar', style: 'height: ' + (100 * d.enWords / max).toFixed(2) + '%' })] : []));
+    const valueText = i => ui.t('rec.pick', { date: dayLong(days[i].day, today), sep: sep(), n: fmt(days[i].enWords) });
+    const colsBox = ui.el('span', { class: 'rcols', 'aria-hidden': 'true' }, cols);
+    const plot = ui.el('div', { class: 'rplot', role: 'slider', tabindex: '0', 'aria-label': ui.t('rec.chart'), 'aria-valuemin': '0', 'aria-valuemax': String(days.length - 1) }, [
+      tick ? ui.el('span', { class: 'rtick', style: 'bottom: ' + (100 * tick / max).toFixed(2) + '%', 'aria-hidden': 'true' }, [ui.el('b', { class: 'en', text: fmt(tick) })]) : null,
+      colsBox,
+      max ? null : ui.el('span', { class: 'rnobar', 'aria-hidden': 'true', text: ui.t('rec.noBars') })
+    ]);
+    function set(i){
+      i = Math.max(0, Math.min(days.length - 1, i));
+      at = i;
+      rs.pick = i === days.length - 1 ? null : days[i].day;
+      cols.forEach((c, k) => { if (k === i) c.setAttribute('data-on', ''); else c.removeAttribute('data-on'); });
+      pick.textContent = valueText(i);
+      plot.setAttribute('aria-valuenow', String(i));
+      plot.setAttribute('aria-valuetext', valueText(i));
+    }
+    // 押した所・なぞった所の列(箱の幅が分からないとき=まだ配置されていない、は何もしない)
+    const fromX = x => { const r = colsBox.getBoundingClientRect(); if (!(r.width > 0)) return; set(Math.floor((x - r.left) / r.width * days.length)); };
+    let down = null;
+    plot.addEventListener('pointerdown', e => { if (e.button > 0) return; down = e.pointerId; try { plot.setPointerCapture(e.pointerId); } catch (x){} fromX(e.clientX); });
+    plot.addEventListener('pointermove', e => { if (down != null && down === e.pointerId) fromX(e.clientX); });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(n => plot.addEventListener(n, e => { if (down === e.pointerId) down = null; }));
+    plot.addEventListener('keydown', e => {
+      const k = { ArrowLeft: at - 1, ArrowDown: at - 1, ArrowRight: at + 1, ArrowUp: at + 1, Home: 0, End: days.length - 1 }[e.key];
+      if (k == null) return;
+      e.preventDefault();
+      set(k);
+    });
+    set(at);
+    return ui.el('div', { class: 'rchart', 'data-box': 'chart' }, [
+      ui.el('span', { class: 'lcap', text: ui.t('rec.chart') }),
+      pick,
+      plot,
+      ui.el('div', { class: 'rxs', 'aria-hidden': 'true' }, [ui.el('span', { class: 'en', text: dayShort(days[0].day) }), ui.el('span', { class: 'en', text: dayShort(days[days.length - 1].day) })]),
+      ui.el('ul', { class: 'sr' }, days.map(d => ui.el('li', { text: ui.t('rec.pick', { date: dayLong(d.day, today), sep: sep(), n: fmt(d.enWords) }) })))   // 表の形(読み上げ用)
+    ]);
+  }
+  const recHead = () => ui.el('div', { class: 'vhead' }, [ui.el('h2', { text: ui.t('tab.record') })]);
+  function recordView(r){
+    const W = ui.t('rec.u.word'), wk = r.week, tt = r.total, today = r.today;
+    const kids = [recHead()];
+    if (!r.on) kids.push(ui.el('section', { class: 'lcard roff', 'data-box': 'off' }, [
+      ui.el('p', { class: 'lhint', text: ui.t('rec.off') }),
+      ui.el('button', { class: 'vline', 'data-act': 'open-settings', onclick: () => { ui.show('settings', { page: 'data' }); } }, [ui.t('rec.openSet')])
+    ]));
+    const week = [], total = [];
+    if (r.on) week.push(numPart('en', ui.t('rec.en'), [[fmt(wk.enWords), W]]), numPart('time', ui.t('rec.time'), timeParts(wk.actSec)));
+    week.push(numPart('days', ui.t('rec.days'), [[String(wk.reviewDays), ui.t('rec.u.day')]]), numPart('answers', ui.t('rec.answers'), [[fmt(wk.answers), ui.t('rec.u.time')]]));
+    if (r.on) total.push(numPart('en', ui.t('rec.en'), [[fmt(tt.enWords), W]]), numPart('time', ui.t('rec.time'), timeParts(tt.actSec)));
+    total.push(numPart('words', ui.t('rec.words'), [[fmt(tt.words), W]]), numPart('learned', ui.t('rec.learned'), [[fmt(tt.learned), W]]));
+    const a = dayLong(wk.from, today), b = dayLong(wk.to, today);
+    const range = a && b ? ui.t('rec.range', { a, b }) : '';
+    const since = r.on && tt.from && dayLong(tt.from, today) ? ui.t('rec.since', { date: dayLong(tt.from, today) }) : '';
+    kids.push(
+      ui.el('section', { class: 'lcard rsec', 'data-box': 'week' }, [secHead(ui.t('rec.week'), range), ui.el('div', { class: 'rgrid' }, week), r.on && r.days.length ? chart(r.days, today) : null]),
+      ui.el('section', { class: 'lcard rsec', 'data-box': 'total' }, [secHead(ui.t('rec.total'), since), ui.el('div', { class: 'rgrid' }, total)]),
+      r.on ? ui.el('p', { class: 'rnote2', text: ui.t('rec.note') }) : null
+    );
+    return kids;
+  }
+  // 記録を読み直して描く(待つ間が長ければ「読み込んでいます…」・いつまでも終わらなければ、止まった知らせ。ホームと同じ形)
+  async function loadRecord(){
+    const my = ++gen;
+    let shown = false;
+    const slow = setTimeout(() => { if (my === gen && !shown) fill(body, [ui.el('p', { class: 'lstate', text: ui.t('learn.loading') })]); }, cfg.learn.slowMs);
+    const stuck = setTimeout(() => { if (my === gen && !shown) fill(body, [failBox('stuck')]); }, cfg.page.stuckMs);
+    try {
+      await Y.settings.load();
+      const r = await Y.learn.record();
+      if (my !== gen || tab !== 'record') return;
+      shown = true;
+      fill(body, recordView(r));
+    } catch (e){
+      if (my === gen && tab === 'record'){ shown = true; fill(body, [failBox(e && e.kind === 'newer' ? 'newer' : 'fail', () => loadRecord())]); }
+    } finally {
+      clearTimeout(slow);
+      clearTimeout(stuck);
+    }
+  }
+
+  // ---- タブ ----
+  function go(name){
+    if (run) stopRun();                                       // 復習の途中でタブを選ばれた(Yomu.ui.show('learn', { tab }))= やめる(答えた分は残っている)
+    closeOne();
+    list = null;
+    tab = TABS.some(x => x[0] === name) ? name : 'home';
+    tabBtns.forEach(b => { if (b.getAttribute('data-tab') === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+    const view = ui.view();
+    if (view) view.scrollTop = 0;
+    if (tab === 'home'){ loadHome(); return; }
+    if (tab === 'vocab'){ vocabTab(); return; }
+    fill(body, [recHead()]);                                  // 前のタブの中身(復習の画面など)を、読み終えるまで残さない
+    loadRecord();
+  }
+
+  function mount(){
+    if (ui.mode() !== 'learn' || !ui.view()) return;
+    doc = ui.root().ownerDocument;
+    win = doc.defaultView;
+    body = ui.el('main', { class: 'lbody' });
+    tabBtns = TABS.map(([name, pic]) => ui.el('button', { class: 'ltab', 'data-tab': name, onclick: () => go(name) }, [
+      ui.el('span', { class: 'ic', 'aria-hidden': 'true' }, [ui.icon(pic, 20, 2)]),
+      ui.el('span', { text: ui.t('tab.' + name) })
+    ]));
+    if (Y.speech && win) Y.speech.attach(win);                 // 発音・この文を聞く(復習の答えたあと)
+    shell = ui.el('div', { class: 'learn' }, [
+      ui.el('header', { class: 'ltop' }, [
+        ui.el('div', { class: 'brand' }, [ui.mark(28), ui.el('span', { text: Y.msg.app() })]),
+        ui.el('button', { class: 'lgear', 'data-act': 'settings', 'aria-label': ui.t('learn.settings'), onclick: () => { ui.show('settings'); } }, [ui.icon('sliders', 20, 2), ui.el('span', { class: 'lglabel', 'aria-hidden': 'true', text: ui.t('learn.settings') })])
+      ]),
+      ui.el('nav', { class: 'ltabs', 'aria-label': ui.t('learn.tabs') }, tabBtns),   // 行き先は中身の前(読み上げとキーボードの順=頭・行き先・中身。広い画面では左の一覧)
+      body
+    ]);
+    ui.view().appendChild(shell);
+    // 開き直した(「戻る」で戻った)・ほかのタブから戻った・設定が変わった(読んだ記録を残すか など): ホームを読み直す(復習の途中は読み直さない=答えの途中でホームに描き直さない)
+    //   単語帳の一覧も読み直す(ほかのタブで入れた・外した語。送った位置はそのまま。1 語の画面の間は読み直さない)
+    const again = () => {
+      if (run) return;
+      if (tab === 'home') loadHome();
+      else if (tab === 'record') loadRecord();
+      else if (tab === 'vocab' && list && !one){ const view = ui.view(); loadVocab({ count: true, top: view ? view.scrollTop : null }); }
+    };
+    doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible') again(); });
+    win.addEventListener('pageshow', e => { if (e && e.persisted) again(); });
+    Y.settings.on(again);
+    go('home');
+  }
+
+  // Yomu.ui.show('learn', { tab }) = そのタブへ(知らない名前ならホーム。工程W4b-2 の回のおわりの「ホームへ」も、ここから)
+  ui.part('learn', { mount, open: params => { if (body) go(params && params.tab); }, tab: () => tab, go });
+})();
+
 };   /* ---- Yomu.rest のおわり ---- */
 
 /* ---- shell/boot.js ---- */
@@ -10860,6 +13025,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 //   どのページでも(既知でないページ。v1.51 工程8c-1。2026-10-17 利用者=設計メモ 2-6): 記事と分かるまで、印を付けない・土台を作らない・
 //     見張りを始めない・離れるときの控えを書かない・保存にさわらない。記事と分かったら、残りの部品を動かして(Yomu.rest=§2-3)、今までの起動。
 //     見るのは、起動のとき・load のあと・2 秒と 6 秒あと・最初のタップかキーの 1 秒あと(§3 の「いつ見るか」)
+//   専用のページ(学ぶ画面。v1.68 工程W4b-1): 既知のサイト・どのページでもより先に見分けて、ページいっぱいに学ぶ画面を描く(下の learn)
 (function(){
   'use strict';
   const Y = Yomu;
@@ -11101,10 +13267,25 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     schedule(true);
   }
 
+  // 専用のページ(学ぶ画面。§9-10 の「入れ物」。工程W4b-1): 残りの部品を動かし、印・土台(学ぶ画面の形=ページいっぱい)・離れるときの控え。
+  //   印 data-yomu は、すぐ付ける(ページ自身の案内=site/index.html は、これを見て隠れる。保存を読むのは土台の学ぶ画面=ui/learn.js。読めないときは、そこが知らせる)。
+  //   進行役は起こさない(本文が無い)・読んだ時間の見張りもしない・Tampermonkey のメニューの 1 行も出さない(訳すものが無い)
+  function learn(doc, win){
+    try { if (win && win.top && win.top !== win) return; } catch (e){ return; }
+    const html = doc.documentElement;
+    html.setAttribute(MARK, Y.config.version);
+    rest();
+    Y.diag.mark('boot', Y.config.version);
+    Y.diag.mark('learn');
+    if (Y.ui && typeof Y.ui.mount === 'function') Y.ui.mount({ doc, mode: 'learn' });
+    if (win) leaving(doc, win);
+  }
+
   Yomu.boot = function(){
     if (typeof document === 'undefined' || !document.documentElement) return;
     const doc = document, win = doc.defaultView;
     if (doc.documentElement.hasAttribute(MARK)){ try { console.warn('[yomu] もう動いているので、2つ目は動かない'); } catch (e){} return; }
+    if (Y.sites.learn && Y.sites.learn(location)) return learn(doc, win);
     if (Y.sites.known(location)) return known(doc, win);
     if (Y.detect && Y.detect.web(location)) return web(doc, win);
   };

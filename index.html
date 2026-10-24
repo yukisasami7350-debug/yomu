@@ -5,91 +5,132 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="apple-mobile-web-app-title" content="学ぶ画面">
-<title>学ぶ画面(確かめ用)</title>
+<title>学ぶ画面</title>
 <style>
-  /* 専用のページの確かめ用(工程W1)。見た目は仮(W4 で決める)。文は全部 #app の中の囲い(Shadow DOM)に置く=Blendio の見分けは、囲いの中の字を数えない */
-  html { background: #f7f7f5; }
-  @media (prefers-color-scheme: dark) { html { background: #1c1c1e; } }
+  /* 専用のページ(学ぶ画面。工程W1・W4b-1。部品の約束 §9-10 の「入れ物」)。学ぶ画面は、Tampermonkey の Blendio が、このページの上に描く(engine/src/ui/learn.js)。
+     このページ自身が出すのは、Blendio が動いていないときの案内だけ。文は全部 #app の中の囲い(Shadow DOM)に置く=Blendio の見分けは、囲いの中の字を数えない。
+     色の値は、学ぶ画面の色の組(engine/src/core/theme.js の white と dark)と同じ。字の大きさ・行間・押せる所は、画面の物差し(§9-9)の段階だけ */
+  html { background: #F3F5F8; }
+  @media (prefers-color-scheme: dark) { html { background: #1A1D23; } }
   body { margin: 0; }
+  html[data-yomu] #app { display: none; }   /* Blendio が動き出したら(印 data-yomu)、案内を隠す。学ぶ画面が上に出る */
 </style>
 </head>
 <body>
 <div id="app"></div>
-<noscript>JavaScript is off.</noscript>
+<noscript>JavaScript がオフになっているので、学ぶ画面を出せません。</noscript>
 <script>
 (function(){
   'use strict';
-  // 住所の頭(このページの住所。?や#は除く)
-  var HERE = location.origin + location.pathname.replace(/index[.]html$/, '');
-  var MARK = 'data-yomu';            // Blendio が動き出すと、html に版を書く印(engine/src/shell/boot.js の MARK)
+  var HERE = location.origin + location.pathname.replace(/index[.]html$/, '');   // このページの住所(? と # は除く)
+  var MARK = 'data-yomu';            // Blendio が学ぶ画面を描くと、html に版を書く印(engine/src/shell/boot.js の learn)
+  var WAIT = 5000;                   // 「用意しています…」を出しておく時間(engine/src/core/config.js の learn.waitMs と同じ値)
+  var SCRIPT = 'https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js';   // スクリプトの住所(engine/build.config.json の baseUrl + yomu.user.js)
   var CSS = [
     ':host { all: initial; display: block; }',
-    '.w { --bg: #f7f7f5; --fg: #1d1d1f; --sub: #55555a; --line: #d9d9de; --card: #ffffff; --ok: #1b6e3a; --okbg: #e6f4ea; --warn: #8a5300; --warnbg: #fff3d6; --err: #b3261e; --errbg: #fde7e6; --acc: #2f4ea8;',
-    '  background: var(--bg); color: var(--fg); min-height: 100vh; box-sizing: border-box;',
-    '  font: 17px/1.7 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;',
-    '  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); }',
-    '@media (prefers-color-scheme: dark) { .w { --bg: #1c1c1e; --fg: #f2f2f7; --sub: #b0b0b8; --line: #3a3a3e; --card: #2c2c2e; --ok: #7fd49a; --okbg: #1f3527; --warn: #ffcf70; --warnbg: #3a2f14; --err: #ff9b93; --errbg: #3d1d1b; --acc: #9db4ff; } }',
-    '.in { max-width: 36em; margin: 0 auto; }',
-    'h1 { font-size: 22px; line-height: 1.4; margin: 8px 0 4px; }',
-    'h2 { font-size: 18px; line-height: 1.4; margin: 28px 0 8px; }',
-    'p { margin: 0 0 12px; }',
-    '.lead { color: var(--sub); font-size: 15px; }',
-    '.rows { list-style: none; margin: 16px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }',
-    '.row { display: flex; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--line); align-items: flex-start; }',
-    '.row:first-child { border-top: 0; }',
-    '.k { flex: 0 0 6.5em; color: var(--sub); font-size: 15px; padding-top: 2px; }',
-    '.v { flex: 1 1 auto; min-width: 0; }',
-    '.tag { display: inline-block; font-weight: 600; border-radius: 6px; padding: 0 6px; }',
-    '.ok .tag { color: var(--ok); background: var(--okbg); }',
-    '.warn .tag { color: var(--warn); background: var(--warnbg); }',
-    '.err .tag { color: var(--err); background: var(--errbg); }',
-    '.wait .tag { color: var(--sub); background: transparent; padding: 0; }',
-    '.note { display: block; font-size: 15px; color: var(--sub); margin-top: 2px; }',
-    'ol, ul { margin: 0 0 12px; padding-left: 1.4em; }',
-    'li { margin: 4px 0; }',
-    '.btns { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 4px; justify-content: flex-end; }',
-    'button { font: inherit; font-size: 17px; font-weight: 600; min-height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--acc); background: var(--acc); color: #fff; cursor: pointer; }',
-    '@media (prefers-color-scheme: dark) { button { color: #10172e; } }',
-    'button.sub { background: transparent; color: var(--acc); }',
-    '.msg { min-height: 1.7em; font-size: 15px; text-align: right; margin: 0; }',
-    '.msg.ok { color: var(--ok); } .msg.err { color: var(--err); font-weight: 600; }',
-    'code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; word-break: break-all; }',
-    '.box { border-left: 4px solid var(--line); padding: 2px 0 2px 12px; margin: 12px 0; }',
-    '.box.warn { border-color: var(--warn); }'
+    '.w { --ground: #F3F5F8; --panel: #FFFFFF; --ink: #14181F; --muted: #5A6372; --line: #E3E7ED; --soft: #E8EBFF; --soft-ink: #2A38B0; --key: #3D4EDB; --key-ink: #FFFFFF;',
+    '  --warn-bg: #FDECEA; --warn-ink: #A5281B; --ok: #0B6E49; --logo-a: #3D4EDB; --logo-b: #0FA36B;',
+    '  background: var(--ground); color: var(--ink); min-height: 100vh; box-sizing: border-box; -webkit-text-size-adjust: 100%; text-size-adjust: 100%;',
+    '  font: 500 16px/1.5 "Hiragino Sans", "Hiragino Kaku Gothic ProN", -apple-system, BlinkMacSystemFont, "Yu Gothic UI", "Meiryo", sans-serif;',
+    '  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 32px env(safe-area-inset-left, 0px); }',
+    '@media (prefers-color-scheme: dark) { .w { --ground: #1A1D23; --panel: #22252C; --ink: #ECEEF2; --muted: #A3AAB7; --line: #363B45; --soft: #2B3166; --soft-ink: #C5CBFF; --key: #5565EC; --key-ink: #FFFFFF;',
+    '  --warn-bg: #4A1F1B; --warn-ink: #FFB4A8; --ok: #7FDDB4; --logo-a: #6C7BFF; --logo-b: #2CC48A; } }',
+    '.w *, .w *::before, .w *::after { box-sizing: border-box; }',
+    '[hidden] { display: none !important; }',
+    '.in { max-width: 560px; margin: 0 auto; padding: 0 16px; }',
+    '.top { min-height: 64px; display: flex; align-items: center; padding: 0 4px; }',
+    '.brand { display: flex; align-items: center; gap: 8px; font: 500 20px/1.3 ui-serif, "Iowan Old Style", Georgia, serif; }',
+    '.brand .a { fill: var(--logo-a); } .brand .b { fill: var(--logo-b); fill-opacity: 0.88; }',
+    'p, h2, h3, ol { margin: 0; }',
+    'p, li { font-weight: 400; }',   /* 読む文はふつうの太さ(見出し・ボタンは太く) */
+    'main { display: flex; flex-direction: column; gap: 16px; padding-top: 4px; }',
+    '.wait { padding: 16px 4px; color: var(--muted); }',
+    /* 案内の囲みは、色の面と印で目立たせる(線の色だけにしない=工程W1 で、線だけの囲みが見落とされた) */
+    '.box { border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 12px; background: var(--soft); color: var(--soft-ink); }',
+    '.box.warn { background: var(--warn-bg); color: var(--warn-ink); }',
+    '.ttl { display: flex; align-items: flex-start; gap: 8px; font-size: 18px; font-weight: 700; line-height: 1.5; }',
+    '.ttl svg { flex: none; margin-top: 3px; }',
+    '.box ol { padding-left: 24px; display: flex; flex-direction: column; gap: 8px; }',
+    '.box li { font-weight: 700; }',
+    '.box li span { display: block; font-size: 14px; line-height: 1.5; font-weight: 400; }',
+    'button { font: inherit; color: inherit; margin: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }',
+    'button:focus-visible, a:focus-visible { outline: 2px solid var(--key); outline-offset: 2px; }',
+    '.go { min-height: 56px; border-radius: 28px; border: 0; background: var(--key); color: var(--key-ink); font-weight: 700; line-height: 1.3; padding: 8px 20px; }',
+    '.link { min-height: 44px; border: 0; background: none; color: var(--soft-ink); font-size: 14px; font-weight: 700; line-height: 1.3; text-decoration: underline; padding: 0 12px; align-self: center; }',
+    '.acts { display: flex; flex-direction: column; gap: 8px; }',
+    '.sub { min-height: 44px; border-radius: 999px; border: 1px solid currentColor; background: none; font-size: 14px; font-weight: 700; line-height: 1.3; padding: 0 16px; align-self: flex-start; }',
+    '.msg { font-size: 14px; line-height: 1.5; }',
+    '.msg:empty { display: none; }',
+    '.msg.ok { color: var(--ok); } .msg.err { color: var(--warn-ink); font-weight: 700; }',
+    '.howto { background: var(--panel); border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }',
+    '.howto h2 { font-size: 20px; line-height: 1.3; }',
+    '.howto h3 { font-size: 16px; line-height: 1.3; margin-top: 8px; }',
+    '.howto ol { padding-left: 24px; display: flex; flex-direction: column; gap: 4px; line-height: 1.7; }',
+    '.howto .note { font-size: 14px; line-height: 1.7; color: var(--muted); }',
+    '.howto a { color: var(--soft-ink); font-weight: 700; word-break: break-all; }',
+    '.foot { display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 8px; }',
+    '.foot .sub { align-self: center; color: var(--muted); }'
   ].join('\n');
+  var LOGO = '<svg viewBox="0 0 26 26" width="28" height="28" aria-hidden="true"><path class="a" d="M5 3h9v17l-4.5-3.4L5 20V3z"/><path class="b" d="M12 6h9v17l-4.5-3.4L12 23V6z"/></svg>';
+  var INFO = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>';
+  var ALERT = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4.5l8.5 15h-17z"/><path d="M12 10.5v4M12 17.2v.3"/></svg>';
   var HTML = [
     '<div class="w"><div class="in">',
-    '<h1>学ぶ画面(確かめ用)</h1>',
-    '<p class="lead">ここに、単語帳と復習の画面を置く予定です。今は、このページで Blendio が動くかを確かめるためのページです。</p>',
-    '<ul class="rows">',
-    '  <li class="row" data-row="open"><span class="k">開き方</span><span class="v"></span></li>',
-    '  <li class="row" data-row="net"><span class="k">電波</span><span class="v"></span></li>',
-    '  <li class="row" data-row="sw"><span class="k">ページの控え</span><span class="v"></span></li>',
-    '  <li class="row" data-row="yomu"><span class="k">Blendio</span><span class="v"></span></li>',
-    '</ul>',
-    '<div class="btns"><button type="button" data-act="copy">結果をコピー</button></div>',
-    '<p class="msg" data-msg="copy" aria-live="polite"></p>',
-    '<h2>Blendio が動いているかの確かめ方</h2>',
-    '<ol>',
-    '  <li>Tampermonkey のメニューを開きます(iPhone は、Safari の住所の欄にある、拡張機能のボタン → Tampermonkey)。</li>',
-    '  <li>「このページをブレンド / 日本語に戻す」の 1 行があれば、このページで Blendio が動いています。</li>',
-    '  <li>その 1 行を押すと、Blendio が「日本語の文が、見つかりませんでした」と知らせます。このページでは、それで正しい動きです(AI との通信はしません)。押したあと、上の「Blendio」の行が「動いています」に変わります。</li>',
-    '</ol>',
-    '<h2>動いていないとき</h2>',
-    '<div class="box warn" data-box="app" hidden>',
-    '  <p><b>いまは、Safari の外の窓(Webアプリ)で開いています。</b>この窓では、Blendio が動きません。Safari で開き直してください。</p>',
-    '  <div class="btns"><button type="button" class="sub" data-act="addr">住所をコピー</button></div>',
+    '<header class="top"><span class="brand">' + LOGO + '<span>Blendio</span></span></header>',
+    '<main>',
+    '<p class="wait" data-box="wait" role="status">学ぶ画面を用意しています…</p>',
+    // Safari の外の窓(ホーム画面の Webアプリ)。ここでは Tampermonkey が動かない(工程W1)
+    '<section class="box warn" data-box="app" hidden>',
+    '  <p class="ttl">' + ALERT + '<span>Webアプリの窓で開いています</span></p>',
+    '  <p>この窓では、Blendio が動きません。住所をコピーして、Safari で開き直してください。</p>',
+    '  <button type="button" class="sub" data-act="addr">住所をコピー</button>',
     '  <p class="msg" data-msg="addr" aria-live="polite"></p>',
-    '  <p>コピーした住所を、Safari の住所の欄に貼って開きます。ホーム画面のアイコンを作り直すときは、Safari で開いてから、共有のボタン →「ホーム画面に追加」で、「Webアプリとして開く」をオフにします。</p>',
+    '  <p>ホーム画面のアイコンを作り直すときは、Safari で開いてから、共有のボタン →「ホーム画面に追加」で、「Webアプリとして開く」をオフにします。</p>',
+    '</section>',
+    // 数秒たっても学ぶ画面が出ない(Blendio が入っていない・オフ・古い、はページから見分けられない=確かめることを 3 つ)
+    '<section class="box" data-box="guide" hidden>',
+    '  <p class="ttl">' + INFO + '<span>学ぶ画面が出ていません</span></p>',
+    '  <p>学ぶ画面は、Tampermonkey の Blendio が描きます。次の 3 つを確かめてください。</p>',
+    '  <ol>',
+    '    <li>Safari のタブで開いていますか<span>ホーム画面のアイコンは、「Webアプリとして開く」をオフにして作ったものを使います</span></li>',
+    '    <li>Tampermonkey で、Blendio がオンになっていますか<span>住所の欄の左のボタン → Tampermonkey で、このサイトを「常に許可」にしているかも見ます。PC の Edge は、拡張機能の画面の Tampermonkey の「詳細」で、「ユーザー スクリプトを許可する」をオンにします</span></li>',
+    '    <li>Blendio を新しくしてください<span>住所の欄の左のボタン → Tampermonkey →「ユーティリティ」→「ユーザー スクリプトの更新を確認」</span></li>',
+    '  </ol>',
+    '</section>',
+    '<div class="acts" data-box="acts" hidden>',
+    '  <button type="button" class="go" data-act="reload">読み込み直す</button>',
+    '  <button type="button" class="link" data-act="howto" aria-expanded="false" aria-controls="howto">入れ方の手順を見る</button>',
     '</div>',
-    '<p><b>Safari のタブで開いているのに、メニューに 1 行が出ないとき</b></p>',
-    '<ul>',
-    '  <li>Safari で Tampermonkey がオンになっているか(iPhone の「設定」→「アプリ」→「Safari」→「機能拡張」→ Tampermonkey)。</li>',
-    '  <li>このサイトを許可しているか(住所の欄の拡張機能のボタン → Tampermonkey で、このサイトを「許可」)。</li>',
-    '  <li>Tampermonkey の中で、Blendio がオンになっているか。</li>',
-    '  <li>PC の Edge では、拡張機能の画面の Tampermonkey の「詳細」で、「ユーザー スクリプトを許可する」がオンか。</li>',
-    '</ul>',
-    '<p class="lead">住所: <code data-addr></code></p>',
+    // 入れ方の手順(同じページの中に開く。電波の無いときに控えから開けるのは、このページ 1 枚だけのため=2026-10-23 利用者「おすすめで」)
+    '<section class="howto" id="howto" data-box="howto" hidden>',
+    '  <h2>入れ方の手順</h2>',
+    '  <h3>iPhone</h3>',
+    '  <ol>',
+    '    <li>App Store で「Tampermonkey」を入れます(有料)。</li>',
+    '    <li>「設定」アプリ → アプリ → Safari → 機能拡張 → Tampermonkey で、「機能拡張を許可」をオンにし、「ほかの Web サイト」を「許可」にします。</li>',
+    '    <li>Safari で、下のスクリプトの住所を開き、「インストール」を押します。</li>',
+    '    <li>このページを読み込み直します。</li>',
+    '  </ol>',
+    '  <h3>PC の Edge</h3>',
+    '  <ol>',
+    '    <li>Edge のアドオンのストアで「Tampermonkey」を入れます。</li>',
+    '    <li>拡張機能の画面(edge://extensions)の Tampermonkey の「詳細」で、「ユーザー スクリプトを許可する」をオンにします。</li>',
+    '    <li>Edge で、下のスクリプトの住所を開き、「インストール」を押します。</li>',
+    '  </ol>',
+    '  <h3>スクリプトの住所</h3>',
+    '  <p><a data-script></a></p>',
+    '  <button type="button" class="sub" data-act="script">住所をコピー</button>',
+    '  <p class="msg" data-msg="script" aria-live="polite"></p>',
+    '  <h3>新しい版が出たとき</h3>',
+    '  <p>住所の欄の左のボタン(PC は Tampermonkey のボタン)→ Tampermonkey →「ユーティリティ」→「ユーザー スクリプトの更新を確認」。そのあと、このページを読み込み直します。</p>',
+    '  <p class="note">はじめての設定(API キー)は、なろうかカクヨムの本文ページで、右下の「ブレンド」を押すと出ます。</p>',
+    '</section>',
+    // 困ったときに送ってもらう 1 行(端末・開き方・電波・控え・Blendio。iOS の版は名乗りが当てにならないので入れない=設計メモ 4章)
+    '<div class="foot" data-box="foot" hidden>',
+    '  <button type="button" class="sub" data-act="copy">様子をコピー</button>',
+    '  <p class="msg" data-msg="copy" aria-live="polite"></p>',
+    '</div>',
+    '</main>',
     '</div></div>'
   ].join('\n');
 
@@ -97,65 +138,44 @@
   var root = host.attachShadow({ mode: 'open' });
   root.innerHTML = '<style>' + CSS + '</style>' + HTML;
   var $ = function(s){ return root.querySelector(s); };
-  $('[data-addr]').textContent = HERE;
+  var a = $('[data-script]'); a.textContent = SCRIPT; a.href = SCRIPT;
 
-  var state = { open: '', net: '', sw: '', yomu: '' };
-  function put(name, tone, tag, note, short){
-    var row = $('[data-row="' + name + '"]');
-    row.className = 'row ' + tone;
-    var v = row.querySelector('.v');
-    v.textContent = '';
-    var t = document.createElement('span'); t.className = 'tag'; t.textContent = tag; v.appendChild(t);
-    if (note){ var n = document.createElement('span'); n.className = 'note'; n.textContent = note; v.appendChild(n); }
-    state[name] = short || tag;
-  }
-
-  // 開き方: ホーム画面の Webアプリの窓(Safari の外)か、ブラウザのタブか
+  var marked = function(){ return document.documentElement.hasAttribute(MARK); };
   var standalone = navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  if (standalone){
-    put('open', 'warn', '⚠ Webアプリの窓(Safari の外)', 'この窓では Blendio が動きません(下の「動いていないとき」)', 'Webアプリの窓');
-    $('[data-box="app"]').hidden = false;
-  } else {
-    put('open', 'ok', '✓ ブラウザのタブ', '', 'ブラウザのタブ');
-  }
+  var sw = 'まだ';
 
-  // 電波
-  function net(){
-    if (navigator.onLine) put('net', 'ok', '✓ つながっている', '', 'つながっている');
-    else put('net', 'warn', '⚠ つながっていない', 'このページは、ページの控えから開きました', 'つながっていない(控えから開いた)');
+  // 案内を出す(Webアプリの窓なら、すぐ。ふつうは WAIT たっても学ぶ画面が出なかったとき)
+  function guide(){
+    if (marked()) return;
+    $('[data-box="wait"]').hidden = true;
+    if (standalone) $('[data-box="app"]').hidden = false;
+    else { $('[data-box="guide"]').hidden = false; $('[data-act="reload"]').hidden = false; }
+    $('[data-box="acts"]').hidden = false;
+    $('[data-box="foot"]').hidden = false;
   }
-  net();
-  window.addEventListener('online', net);
-  window.addEventListener('offline', net);
+  if (standalone){ $('[data-act="reload"]').hidden = true; guide(); }
+  else setTimeout(guide, WAIT);
 
-  // ページの控え(電波の無いときも開けるように。sw.js)
-  function swFail(e){ put('sw', 'err', '✗ 作れませんでした', '電波のある所で、開き直してください(' + String(e && e.name || e) + ')', '作れなかった ' + String(e && e.name || e)); }
-  if (!('serviceWorker' in navigator)){
-    put('sw', 'err', '✗ このブラウザでは作れません', '電波の無い所では開けません', '作れない');
-  } else {
-    put('sw', 'wait', '… 用意しています', '', '用意中');
-    navigator.serviceWorker.register('sw.js').then(function(reg){
-      return navigator.serviceWorker.ready.then(function(){
-        if (navigator.serviceWorker.controller) put('sw', 'ok', '✓ 用意できた', '電波の無い所でも、このページを開けます', '用意できた');
-        else put('sw', 'ok', '✓ 用意できた', '次に開いたときから、電波の無い所でも開けます', '用意できた(次から)');
-      });
-    }).catch(swFail);
-  }
+  $('[data-act="reload"]').addEventListener('click', function(){ location.reload(); });
+  $('[data-act="howto"]').addEventListener('click', function(){
+    var box = $('[data-box="howto"]'), btn = $('[data-act="howto"]');
+    box.hidden = !box.hidden;
+    btn.setAttribute('aria-expanded', box.hidden ? 'false' : 'true');
+    if (!box.hidden && box.scrollIntoView) box.scrollIntoView({ block: 'start', behavior: 'auto' });
+  });
 
-  // Blendio: 動き出すと、html に印(版)を書く。ページを開いただけでは書かない(メニューの 1 行を押したときなど)
-  function yomu(){
-    var v = document.documentElement.getAttribute(MARK);
-    if (v) put('yomu', 'ok', '✓ 動いています(版 ' + v + ')', '', '動いている 版 ' + v);
-    else put('yomu', 'wait', 'まだ分かりません', 'Tampermonkey のメニューの 1 行を押すと、分かります(下の「確かめ方」)', 'まだ分からない');
-  }
-  yomu();
-  new MutationObserver(yomu).observe(document.documentElement, { attributes: true, attributeFilter: [MARK] });
+  // ページの控え(電波の無いときも、このページを開けるように。sw.js)
+  if ('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').then(function(){
+      return navigator.serviceWorker.ready.then(function(){ sw = navigator.serviceWorker.controller ? '用意できた' : '用意できた(次から)'; });
+    }).catch(function(e){ sw = '作れなかった ' + String(e && e.name || e); });
+  } else sw = '作れない';
 
-  // コピー
+  // コピー(写せなければ、写真を頼む=行き止まりにしない)
   function copy(text, msg){
     var m = $('[data-msg="' + msg + '"]');
     var done = function(){ m.className = 'msg ok'; m.textContent = '✓ コピーしました'; };
-    var fail = function(){ m.className = 'msg err'; m.textContent = '✗ コピーできませんでした。この画面の写真を撮って送ってください'; };
+    var fail = function(){ m.className = 'msg err'; m.textContent = '✗ コピーできませんでした。この画面の写真を撮ってください'; };
     var old = function(){
       try {
         var ta = document.createElement('textarea');
@@ -169,8 +189,9 @@
   }
   function device(){
     var u = navigator.userAgent, m;
-    if ((m = /iPhone OS ([0-9_]+)/.exec(u))) return 'iPhone iOS ' + m[1].replace(/_/g, '.');
-    if ((m = /Edg[/]([0-9.]+)/.exec(u))) return 'Edge ' + m[1].split('.')[0] + (/Windows/.test(u) ? '(Windows)' : '');
+    if (/iPhone/.test(u)) return 'iPhone';
+    if (/iPad/.test(u) || (/Macintosh/.test(u) && (navigator.maxTouchPoints || 0) > 1)) return 'iPad';
+    if ((m = /Edg[/]([0-9]+)/.exec(u))) return 'Edge ' + m[1] + (/Windows/.test(u) ? '(Windows)' : '');
     if (/Windows/.test(u)) return 'Windows';
     return 'その他';
   }
@@ -179,9 +200,11 @@
     return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + z(d.getHours()) + ':' + z(d.getMinutes());
   }
   $('[data-act="copy"]').addEventListener('click', function(){
-    copy('確かめの結果 ' + stamp() + ' / ' + device() + ' / 開き方: ' + state.open + ' / 電波: ' + state.net + ' / 控え: ' + state.sw + ' / Blendio: ' + state.yomu, 'copy');
+    copy('学ぶ画面の様子 ' + stamp() + ' / ' + device() + ' / 開き方: ' + (standalone ? 'Webアプリの窓' : 'ブラウザのタブ') + ' / 電波: ' + (navigator.onLine ? 'あり' : 'なし')
+      + ' / 控え: ' + sw + ' / Blendio: ' + (marked() ? '動いている 版 ' + document.documentElement.getAttribute(MARK) : '動いていない'), 'copy');
   });
   $('[data-act="addr"]').addEventListener('click', function(){ copy(HERE, 'addr'); });
+  $('[data-act="script"]').addEventListener('click', function(){ copy(SCRIPT, 'script'); });
 })();
 </script>
 </body>
