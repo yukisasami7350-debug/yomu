@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.35
+// @version      0.1.36
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.35 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.36 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -162,7 +162,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.35',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.36',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 2,                     // 保存の形の版(§8-2)。2 = 端末ごとの設定 local を分けた(工程W3b-1。§8-11 の 6)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -366,7 +366,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       grid: 4,                     // 余白の刻み(px。細かい合わせに限り、半分の 2 も使える)
       lineMax: 40,                 // 1行の長さの上限(全角の字数)
       motion: { sheet: 220, bay: 220, tip: 150, fill: 200 },   // 動きの長さ(ms。§9-9。100〜400 の間。板が出る・操作部が隠れる出る・割合の数字・進み具合の帯)
-      chip: { font: 12, pad: 4, gap: 8 }   // 本文の中の「あ/A」と文の終わりの 🔊: 字の大きさと、押せる範囲を、丸のまわりへ見えない形で広げる幅(px。行の中に入るので、tap.min は当てはめない)・「あ」と 🔊 の押せる範囲の間の、どちらも受けない幅(px。工程W4a)
+      chip: { font: 12, pad: 4, gap: 0 }   // 本文の中の「あ/A」と文の終わりの 🔊: 字の大きさと、押せる範囲を、丸のまわりへ見えない形で広げる幅(px。行の中に入るので、tap.min は当てはめない)・「あ」と 🔊 の押せる範囲の間の、どちらも受けない幅(px。工程W4a は 8=見える間 16px。工程W5a で 0=見える間 8px・押せる範囲がくっつく。2026-10-25 利用者が iPhone で見て「間があきすぎ」・写真の案 A を選んだ)
     }
   };
 })();
@@ -1574,12 +1574,15 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'rv.noteAgain': 'ここで分からなくても、|次の日に、|また出ます',
     'rv.saveFail': '答えを保存できませんでした。もう一度押してください',
     'rv.stuck': 'この端末の保存に書くのを、待ったままになっています。それまでに答えた分は、消えていません',
-    'rv.end': 'この回は、おしまい',
-    'rv.f.words': '出した語',
-    'rv.f.right': '1 回目で分かった',
-    'rv.f.fixed': '終わりのもう一度で分かった',
-    'rv.f.soon': 'あしたも出る',
-    'rv.f.learned': '覚えた語(日をあけて {n} 回続けて分かった)',
+    'rv.end': 'おつかれさまでした',                 // 回のおわり(工程W5a。できばえはほめず、やったことをねぎらう)
+    'rv.endSub': '今日の {n} 語、おしまいです。',
+    'rv.endBye': 'また あした。',
+    'rv.f.words': '見た語',
+    'rv.f.right': 'すぐ分かった',
+    'rv.f.fixed': '最後に思い出せた',
+    'rv.f.soon': 'あしたも、もう一度',
+    'rv.f.learned': '覚えた語',
+    'rv.f.learnedNote': '日をあけて {n} 回続けて分かった語',
     'rv.left': '今日の分が、まだ {n} 語あります',
     'rv.home': 'ホームへ',
     'rv.more': 'もう {n} 語',
@@ -7703,7 +7706,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const BASE = { sans: 0.92, serif: 1.03, site: 1 }, MUL = { s: 0.9, m: 1, l: 1.12 };
   // 「あ/A」の字の大きさと、押せる範囲(画面の物差し=§9-9。行の中に入るので、44px にはできない)。丸は 23px ほど。見えない所を上下左右に足して、押せる範囲を 30px 四方ほどに広げる
   const CHIP_RULE = Y.config.ui.chip, CHIP_PAD = CHIP_RULE.pad;
-  // 文の終わりの 🔊(工程W4a): 「あ」と同じ大きさの丸。「あ」の右の余白(3px)と合わせて、2 つの押せる範囲の間に、どちらも受けない幅 chip.gap をあける
+  // 文の終わりの 🔊(工程W4a): 「あ」と同じ大きさの丸。「あ」の右の余白(3px)と合わせて、2 つの押せる範囲の間に、どちらも受けない幅 chip.gap をあける(工程W5a から 0=押せる範囲がくっつく・見える間 8px)
   const CHIP_RIGHT = 3, SAY_LEFT = CHIP_RULE.gap + 2 * CHIP_PAD - CHIP_RIGHT;
   // 離れた熟語の間の語の破線の刻み [線, すき間](px。工程T-5a の写真で利用者が見た形に合わせた。線の太さは熟語の実線と同じ 2px)
   const GAP_DASH = [4, 3];
@@ -9408,7 +9411,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.learn .rcol { position: relative; display: flex; align-items: flex-end; justify-content: center; border-radius: 4px 4px 0 0; }',
       '.learn .rcol[data-on] { background: ' + v('well') + '; }',
       '.learn .rcol[data-on]::after { content: ""; position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%); width: 12px; height: 4px; border-radius: 2px; background: ' + v('panelInk') + '; }',
-      '.learn .rbar { display: block; width: 60%; max-width: 20px; min-height: 4px; border-radius: 4px 4px 0 0; background: ' + v('go') + '; }',
+      '.learn .rcol > .rbar { display: block; width: 60%; max-width: 20px; min-height: 4px; border-radius: 4px 4px 0 0; background: ' + v('go') + '; }',   // 記録の棒だけ(.rcol の中)。復習の進み具合の帯 .rv .rbar と名前が同じなので、入れ物で絞る(工程W4c-2 から、帯が 20px に縮んでいた=工程W5a で直した)
       '.learn .rcol[data-on] .rbar { background: ' + v('accent') + '; }',
       '.learn .rnobar { position: absolute; left: 48px; right: 0; top: 50%; transform: translateY(-50%); text-align: center; ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
       '.learn .rxs { display: flex; justify-content: space-between; padding-left: 48px; font-family: ' + FE + '; ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; font-variant-numeric: tabular-nums; }',
@@ -9430,7 +9433,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.learn .ltab[aria-current="page"] .ic { background: ' + v('soft') + '; }',
       // 復習の流れ(ui/learn.js。§9-10 の「復習」。工程W4b-2)。並びと字は W2a の案のページ: 頭(‹・題・何語目か)・進み具合の帯・中身・下に固定したボタンの段。
       //   復習の間と、単語帳の 1 語の画面(data-one。工程W4c-1)は、頭(ロゴと設定)と下のタブを隠し、地は札の色(見本の 1 語の画面と同じ)
-      '.learn[data-run], .learn[data-one] { background: ' + v('panel') + '; }',
+      '.learn[data-one] { background: ' + v('panel') + '; }',
+      '.learn[data-run] { background: ' + v('ground') + '; }',   // 復習の間は、ホームと同じ地に、カード(下の .rmain。工程W5a)
       '.learn[data-run] .ltop, .learn[data-run] .ltabs, .learn[data-one] .ltop, .learn[data-one] .ltabs { display: none; }',
       '.learn[data-run] .lbody, .learn[data-one] .lbody { padding: 0; gap: 0; }',
       // 広い画面(ui.learnSideMin 以上。工程W4c-2): 頭(ロゴと名前・設定)と下のタブを、左の行き先の一覧(幅 ui.learnSide。札の色・右に線)にまとめる。キャンバスの PC 版(design/round3/gen.js の pcHome)の形。
@@ -9459,6 +9463,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.rv .rbar i { display: block; height: 100%; background: ' + v('key') + '; }',
       '.rv .rmain { flex: 1 0 auto; display: flex; flex-direction: column; gap: 16px; padding: 20px 16px 24px; }',
       '.rv .rmain.center { align-items: center; justify-content: center; gap: 12px; text-align: center; }',
+      // 復習の見た目(工程W5a。2026-10-25 利用者「真っ白に単語だけで、ものさみしい」→ 写真 design/shots_W5a/rv_look_*.png で、答える前は案 1・答えたあとは案 2 を選んだ):
+      //   中身は足さず、ホームの「今日の復習」と同じカード(.lcard の形=面・角 24・余白 20)に載せる。答えたあとは、見出しの所をやわらかい藍の面に(答えが出た合図にもなる)。
+      //   わけ: 学ぶことに関係の無い飾りは覚える量を減らす(誘惑的な細部の効果)が、中身を変えずに色と丸みで気持ちに働きかけると、楽しさと覚える量が少し上がる(感情に働きかけるデザインの研究のまとめ。確かさ中)。
+      //   字の比: 藍の面の上の灰色の字 5.1(白)・5.2(暗い)、藍の字 7.7。単語帳の 1 語の画面(data-one)は変えない
+      '.learn[data-run] .rv .rmain { margin: 4px 16px 16px; background: ' + v('panel') + '; border-radius: 24px; padding: 20px; }',
+      '.learn[data-run] .rv .rmain:not(.center) .rhead { margin: -20px -20px 0; padding: 20px 20px 16px; background: ' + v('soft') + '; border-radius: 24px 24px 0 0; }',
+      '.learn[data-run] .rv .rmain:not(.center) .rhead .rword { color: ' + v('softInk') + '; }',
+      '.learn[data-run] .rv .rfoot { background: ' + v('ground') + '; border-top: none; }',
       '.rv .rkind { border-radius: ' + PILL + '; background: ' + v('well') + '; color: ' + v('panelMuted') + '; padding: 0 12px; ' + t(CAP, 700, LOOSE) + ' }',
       '.rv .rword { margin: 0; font-family: ' + FE + '; ' + t(HEAD, 800, TIGHT) + ' letter-spacing: -0.01em; overflow-wrap: anywhere; }',
       '.rv .rword.long { font-size: ' + TITLE + 'px; }',
@@ -9491,7 +9503,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '@media (max-width: 359px) { .rv .rtwo .rbtn { padding: 0 8px; } .rv .rtwo .rbtn svg { display: none; } }',   // 幅 320: 絵を外して、字を 1 行に(見本と同じ)
       '.rv .rnote { ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; text-align: center; }',
       // 回のおわり(数えた事実だけ)
-      '.rv .rend { margin: 0; ' + t(TITLE, 700, TIGHT) + ' }',
+      // 頭は、まん中に印(緑の丸にチェック=ホームの「今日の分は、おしまい」と同じ印)・ねぎらいの見出し・1〜2 行(工程W5a)
+      '.rv .rendbox { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0 4px; text-align: center; }',
+      '.rv .rmark { width: 64px; height: 64px; border-radius: 50%; background: ' + v('enBg') + '; color: ' + v('accent') + '; display: flex; align-items: center; justify-content: center; margin-bottom: 4px; }',
+      '.rv .rend { margin: 0; ' + t(TITLE, 800, TIGHT) + ' }',
+      '.rv .rendsub { margin: 0; display: flex; flex-direction: column; ' + t(CAP, 400, LOOSE) + ' color: ' + v('panelMuted') + '; }',
+      '.rv .rfact small { display: block; ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
       '.rv .rfacts { display: flex; flex-direction: column; }',
       '.rv .rfact { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid ' + v('line') + '; ' + t(BODY, 400, BASE) + ' }',
       '.rv .rfact b { flex: none; font-family: ' + FE + '; ' + t(LEAD, 700, TIGHT) + ' font-variant-numeric: tabular-nums; }',
@@ -12539,14 +12556,23 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     let h = null;
     try { h = await Y.review.home(); } catch (e){}             // 読めなければ「覚えた語」と「もう ○ 語」を出さない
     if (run !== mine) return;
-    const fact = (key, n, vars) => ui.el('div', { class: 'rfact', 'data-fact': key }, [ui.el('span', { text: ui.t('rv.f.' + key, vars) }), ui.el('b', { class: 'en', text: String(n) })]);
+    const fact = (key, n, vars) => ui.el('div', { class: 'rfact', 'data-fact': key }, [
+      ui.el('span', {}, [ui.t('rv.f.' + key), key === 'learned' ? ui.el('small', { text: ui.t('rv.f.learnedNote', vars) }) : null]),
+      ui.el('b', { class: 'en', text: String(n) })
+    ]);
     const facts = [fact('words', sum.words), fact('right', sum.right)];
     if (sum.wrong) facts.push(fact('fixed', sum.fixed));
     facts.push(fact('soon', sum.soon));
     if (h) facts.push(fact('learned', h.learned, { n: cfg.review.learned }));
     const left = h ? h.size + h.left : 0;
+    // 頭(工程W5a。2026-10-25 利用者「機械的な印象・もう少し温かみのある言葉遣いで」→ 写真 design/shots_W5a/end_look.png の案 1):
+    //   できばえはほめず、やったことをねぎらう(全部分からなかった日も同じ字=判定しない・能力や結果をほめると、まちがえたときにやる気が下がりやすい)
     const main = ui.el('div', { class: 'rmain' }, [
-      ui.el('h3', { class: 'rend', tabindex: '-1', 'data-focus': '', text: ui.t('rv.end') }),
+      ui.el('div', { class: 'rendbox' }, [
+        ui.el('span', { class: 'rmark', 'aria-hidden': 'true' }, [ui.icon('check', 32, 2.6)]),
+        ui.el('h3', { class: 'rend', tabindex: '-1', 'data-focus': '', text: ui.t('rv.end') }),
+        ui.el('p', { class: 'rendsub' }, [ui.el('span', { text: ui.t('rv.endSub', { n: sum.words }) }), ui.el('span', { text: ui.t('rv.endBye') })])
+      ]),
       ui.el('div', { class: 'rfacts' }, facts),
       left ? ui.el('p', { class: 'rleft', text: ui.t('rv.left', { n: left }) }) : null
     ]);

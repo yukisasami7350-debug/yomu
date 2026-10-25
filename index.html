@@ -87,14 +87,17 @@
     '  <p class="msg" data-msg="addr" aria-live="polite"></p>',
     '  <p>ホーム画面のアイコンを作り直すときは、Safari で開いてから、共有のボタン →「ホーム画面に追加」で、「Webアプリとして開く」をオフにします。</p>',
     '</section>',
-    // 数秒たっても学ぶ画面が出ない(Blendio が入っていない・オフ・古い、はページから見分けられない=確かめることを 3 つ)
+    // 数秒たっても学ぶ画面が出ない(このサイトの許可が無い・Blendio が入っていない・オフ・古い、はページから見分けられない=確かめることを 4 つ。
+    //   いちばん上は、このサイトの許可=工程W5a で、iPhone の Safari がこのページで Tampermonkey を許可していなくて出なかった。2026-10-25 利用者「良いと思う」。
+    //   Safari のタブかは、いちばん下=Webアプリの窓なら、この案内でなく上の知らせが出る)
     '<section class="box" data-box="guide" hidden>',
     '  <p class="ttl">' + INFO + '<span>学ぶ画面が出ていません</span></p>',
-    '  <p>学ぶ画面は、Tampermonkey の Blendio が描きます。次の 3 つを確かめてください。</p>',
+    '  <p>学ぶ画面は、Tampermonkey の Blendio が描きます。次の 4 つを確かめてください。</p>',
     '  <ol>',
-    '    <li>Safari のタブで開いていますか<span>ホーム画面のアイコンは、「Webアプリとして開く」をオフにして作ったものを使います</span></li>',
-    '    <li>Tampermonkey で、Blendio がオンになっていますか<span>住所の欄の左のボタン → Tampermonkey で、このサイトを「常に許可」にしているかも見ます。PC の Edge は、拡張機能の画面の Tampermonkey の「詳細」で、「ユーザー スクリプトを許可する」をオンにします</span></li>',
+    '    <li>このページで、Tampermonkey を許可していますか<span>住所の欄の左のボタン → Tampermonkey で、このサイトを「常に許可」にします。そのあと、このページを読み込み直します</span></li>',
+    '    <li>Tampermonkey で、Blendio がオンになっていますか<span>PC の Edge は、拡張機能の画面の Tampermonkey の「詳細」で、「ユーザー スクリプトを許可する」もオンにします</span></li>',
     '    <li>Blendio を新しくしてください<span>住所の欄の左のボタン → Tampermonkey →「ユーティリティ」→「ユーザー スクリプトの更新を確認」</span></li>',
+    '    <li>Safari のタブで開いていますか<span>ホーム画面のアイコンは、「Webアプリとして開く」をオフにして作ったものを使います</span></li>',
     '  </ol>',
     '</section>',
     '<div class="acts" data-box="acts" hidden>',
