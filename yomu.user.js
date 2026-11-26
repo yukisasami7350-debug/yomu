@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.41
+// @version      0.1.42
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.41 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.42 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -131,9 +131,14 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     shared: raw ? gmKV() : lazyKV('yomu-shared'),                     // GM の保存が無い入れ物では、ページの保存(サイトごとになる。設定の「この版」に出る)
     site: lazyKV('yomu-site'),
     http,
+    // 同期の置き場へ送る(§8-12 の 5。工程W6b-1)。本体は JSON の字を text/plain で(前もっての問い合わせを出さない)・行き先を変える返事についていかない・クッキーを送らない
+    post(url, text, opt){
+      return win.fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: text, redirect: 'error', credentials: 'omit', cache: 'no-store', signal: opt && opt.signal })
+        .then(res => res.text().then(t => ({ status: res.status, text: t })));
+    },
     apiBase: null,
     dict: { load: dictLoad },
-    info: { handler: String((gmInfo && gmInfo.scriptHandler) || 'userscript'), ios: /iP(hone|ad|od)/.test(ua) || (/Macintosh/.test(ua) && touch), touch },
+    info: { handler: String((gmInfo && gmInfo.scriptHandler) || 'userscript'), kind: /iPhone|iPod/.test(ua) ? 'iphone' : /iPad/.test(ua) || (/Macintosh/.test(ua) && touch) ? 'ipad' : /Android/.test(ua) ? 'android' : 'pc', ios: /iP(hone|ad|od)/.test(ua) || (/Macintosh/.test(ua) && touch), touch },
     // Tampermonkey のメニューに 1 行(§2-2。v1.50 工程8c-1)。PC の Tampermonkey では、拡張機能のメニューに出る見込み。
     //   iPhone でも出る(工程8c-1。版 0.1.26 で確かめた=§11-1。工程1 では、前の版の項目が出なかった)。
     //   入口は、今までどおりページの上にもある(メニューに出なくても、困らない)
@@ -162,7 +167,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.41',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.42',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 2,                     // 保存の形の版(§8-2)。2 = 端末ごとの設定 local を分けた(工程W3b-1。§8-11 の 6)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -272,7 +277,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       evictShare: 0.1, evictMin: 3,   // 保存がいっぱいのとき、1回に捨てる割合と、最少の件数(§8-1)
       drawLateMs: 250,             // 届いた文を描くのを、画面の1コマの合図が来なくても、これだけ待ったら描く(ms。裏に回っている間は、合図が来ない)
       saveEveryMs: 3000,
-      busyWaitSec: [10, 20, 30],   // Google の側の混雑で、1 文も届かずに止まったあと、回数を使う操作を送らない秒数。続けて 1 文も届かないたびに次の値へ(最後の値で止める。工程S-1。目分量)
+      busyWaitSec: [5],            // Google の側の混雑で、1 文も届かずに止まったあと、回数を使う操作を送らない秒数。並べれば、続けて届かないたびに次の値へ(最後の値で止める)。2026-11-26 利用者「20 秒待ちは遅すぎる。延長せずに全部 5 秒」=のばさない(工程S-1 の 10・20・30 から)
       busyGotSec: 5,               // 混雑で止まったが、少しでも届いたときの待ち(二度押しよけ。2026-11-26 利用者「案A」)
       busyResetMin: 10,            // 前の待ちが終わってから、これだけ(分)たてば、待つ秒数をはじめの値に戻す
       quietMiss: { rate: 0.05, min: 3 }   // 未訳が少ないとき(対象の文の rate 以下、または min 文以下)は、「残り ○ 文は未訳です」の知らせを出さない(設計メモ 2-5。操作部のつまみの下の小さな字と、メニューには出す)
@@ -314,7 +319,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       secPerWord: [10, 15],        // ホームの「○〜○ 分くらい」: 1 語にかかる秒の見積もり(短い方・長い方。§9-10)
       lockMs: 500,                 // 復習: 「答えを見る」と答えのボタンは、ほぼ同じ場所に出る。出してからこの間は、次のボタンを効かせない(二度押しで、見ずに答えない。iPhone が 2 回たたいたと見なす間隔 0.3〜0.35 秒より少し長く。工程W4b-2)
       weekDays: 7,                 // 記録の「この 7 日」(今日を含む学習日の数)
-      chartDays: 14                // 記録の、日ごとの棒グラフの日数
+      chartDays: 14,               // 記録の、日ごとの棒グラフの日数
+      devColors: 3                 // 記録の棒の、端末ごとの色の数(色覚の違いがあっても見分けられると確かめた組=3 つ。4 台目からは「ほかの端末」=灰色。工程W7a)
     },
     seen: { show: 2, recent: 8, keepDays1: 180 },   // 調べた回数(§8-11 の 4。工程W3b-1): 単語の板に出すのは、合わせた数がこれ以上のとき(工程W4a)・同じ文と見分ける印を、新しい方から残す数・1 回きりの語を捨てるまでの日数
     review: {                      // 復習(§8-11 の 2・3。工程W3a)。20・10 は目分量=使いながら直す
@@ -327,6 +333,16 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       fuzz: true,                  // 次の間をゆらす(py-fsrs と同じ幅。乱数は語の id と答えの数から作る決まった値)
       // FSRS-6 のはじめの値 21 個(py-fsrs 6.3.2 の DEFAULT_PARAMETERS。Anki の利用者 約 1 万人の中央値)。人ごとに合わせる(最適化)は、しない
       w: [0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542]
+    },
+    sync: {                        // 自動の同期(§8-12。工程W6b-1)。数は目分量
+      parts: ['settings', 'vocab', 'seen', 'work', 'log', 'lsum', 'quota'],   // 同じにする区画。読んだ記録 log も同じにする(2026-11-26 工程W7a 利用者: 記録の画面の大きい数字は全部の端末の合計・棒は端末ごとに色を分けて積む)
+      rounds: 3,                   // 1 回の同期で送る回数の上限(合わせた結果を送り返す分を含む。残りは次の「時」)
+      pulls: 30,                   // 1 回の同期で置き場と話す回数の上限(受ける分が多いとき)
+      bodyMax: 900000,             // 1 回に送る本体の字数(置き場の上限 1,000,000 より少し下)
+      timeoutMs: 20000,            // 1 回の通信を待つ時間
+      saveMs: 2000,                // 書き込みの印を、まとめて覚えに書くまでの待ち
+      soonSec: 30,                 // 単語帳に入れた・外したあと、まとめて送るまでの待ち(秒。§8-12 の 4。工程W6b-2。0 = まとめて送らない=検査用)
+      pageMin: 10                  // 読むページを開いた・戻ったとき、前の同期からこれだけあいていれば送る(分。送っていない印があれば、あいていなくても)
     },
     links: { geminiKey: 'https://aistudio.google.com/apikey' },   // 設定の「AI につなぐ」から開く、API キーを作るページ(Google AI Studio)
     plan: { kind: 'own' },         // つなぎ方(core/plan.js)。own = 各自が、自分の API キーで使う(通信の数・モデルの名前を見せる)
@@ -1649,6 +1665,97 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'rec.pickName': '日を選ぶ',                     // 棒グラフ(左右の矢印・押す・なぞるで日を選ぶ。読み上げの名前)
     'rec.md': '{m}/{d}',
     'rec.noBars': 'この 14 日に、画面に出た英語はありません',
+    'rec.pickBy': '{date}{sep}{n} 語({list})',     // 端末が 2 台から(工程W7a)
+    'rec.byDev': '{name} {n}',
+    'rec.devSep': '・',
+    'rec.dev.iphone': 'iPhone',
+    'rec.dev.ipad': 'iPad',
+    'rec.dev.android': 'Android',
+    'rec.dev.pc': 'PC',
+    'rec.dev.none': '端末',                         // 種類の分からない端末(この版より前の記録だけの端末)
+    'rec.self': '(この端末)',
+    'rec.devOther': 'ほかの端末',
+    // 設定の「同期」(工程W7a。ui/settings_sync.js)
+    'set.sync': '同期(iPhone と PC)',
+    'set.sync.short': '同期',
+    'set.syncOn': 'オン',
+    'set.syncOff': 'オフ',
+    'sync.lead': 'iPhone と PC で、単語帳・復習の進み・設定・読んだ記録を、自動で同じにします。',
+    'sync.what': '送るもの・送らないもの',
+    'sync.send': '単語帳・復習・設定・読んだ記録',
+    'sync.sendV': '送る',
+    'sync.keep': '訳した英文・API キー・AI の答え',
+    'sync.keepV': '送らない',
+    'sync.devOnly': '声・英文の書体・文字の大きさ',
+    'sync.devOnlyV': '端末ごと',
+    'sync.lock': '送る中身は、この端末で鍵をかけてから送ります。置き場(あなたの Cloudflare)の画面から見ても、単語も作品の名前も読めません。',
+    'sync.connect': 'つなぐ',
+    'sync.start': 'この端末から始める',
+    'sync.join': 'ほかの端末とつなぐ',
+    'sync.which': 'はじめの 1 台は「この端末から始める」。2 台目からは、つないである端末に出る QR か「つなぐ字」で、つなぎます。',
+    'sync.on': 'オン',
+    'sync.at': '前に同じにした',
+    'sync.never': 'まだ',
+    'sync.host': '置き場',
+    'sync.run': '今すぐ同じにする',
+    'sync.running': '同じにしています…',
+    'sync.done': '同じにしました(受けた {got}・送った {sent})',
+    'sync.auto': 'ふだんは押さなくても、学ぶ画面を開いたとき・単語帳に入れたとき・読むページを開いたときに、自動で同じにします。',
+    'sync.others': 'ほかの端末',
+    'sync.more': 'もう 1 台をつなぐ',
+    'sync.settingsNote': 'あとからつないだ端末は、先の端末の設定(目標・割合など)になります。声・英文の書体・文字の大きさは、端末のままです。',
+    'sync.stop': '止める',
+    'sync.off': 'この端末の同期をやめる',
+    'sync.offArmed': 'もう一度押すと、やめます',
+    'sync.offDone': 'この端末の同期をやめました',
+    'sync.offNote': 'この端末の単語帳と記録は、そのまま残ります。',
+    'sync.drop': '置き場の中身を消す',
+    'sync.dropArmed': 'もう一度押すと、消します',
+    'sync.dropping': '置き場の中身を消しています…',
+    'sync.dropDone': '置き場の中身を消しました',
+    'sync.dropNote': '置き場に預けた分を全部消して、この端末の同期もやめます。それぞれの端末の単語帳と記録は残ります。ほかの端末がつないだままなら、その端末を次に開いたときに、その端末の分を送り直します(全部やめるときは、先にほかの端末で「この端末の同期をやめる」を押してください)。',
+    'sync.url': '置き場の住所',
+    'sync.startGo': '確かめて、始める',
+    'sync.checking': '置き場を確かめています…',
+    'sync.first': 'はじめの同期をしています(この端末の分を全部送ります)…',
+    'sync.startLead': 'Cloudflare で作った置き場の住所(https:// から)を貼ってください。',
+    'sync.startNote': 'はじめに、この端末の単語帳などを全部送ります。読む・復習するのは、その間も続けられます。',
+    'sync.linkField': 'つなぐ字',
+    'sync.pass': '合言葉',
+    'sync.passNote': '合言葉は 27 字です。区切りの「-」・大文字と小文字・O と 0・I と 1 は、どちらで打っても受けます。',
+    'sync.oneField': 'つなぐ字を貼る',
+    'sync.twoFields': '住所と合言葉を別々に入れる',
+    'sync.joinGo': 'つなぐ',
+    'sync.joining': 'この端末の分と合わせています…',
+    'sync.joinLead': 'つないである端末の「同期」→「もう 1 台をつなぐ」に出た、つなぐ字を貼ってください。',
+    'sync.joinQr': 'カメラで写した、つなぐ字です。この端末をつなぐなら「つなぐ」を押してください。',
+    'sync.joinNote': 'つないだあと、置き場の単語帳などを受けて、この端末の分と合わせます。どちらの端末で入れた語も残ります。この端末の設定(目標・割合など)は、先の端末のものになります。',
+    'sync.qrName': 'もう 1 台をつなぐ QR コード',
+    'sync.qrLead': 'もう 1 台(スマホ・タブレット)のカメラで、この四角を写してください。学ぶ画面が開いて「つなぐ」が出ます。',
+    'sync.noCamera': 'カメラで写せないとき(PC など)',
+    'sync.typeNote': 'もう 1 台の「ほかの端末とつなぐ」→「住所と合言葉を別々に入れる」に、この 2 つを打つか、下のつなぐ字を、自分あてのメールなどで送って貼ってください。',
+    'sync.copy': 'つなぐ字をコピー',
+    'sync.copied': 'コピーしました',
+    'sync.copyFail': 'コピーできませんでした。上の欄の字を選んで写してください',
+    'sync.secret': 'この四角・合言葉・つなぐ字を知った人は、あなたの単語帳と記録を読めます。人に見せない・人に送らないでください。メモなどに貼って運んだら、運んだあとに消してください。',
+    'sync.still': 'それでも、読む・復習するのは、このまま続けられます。',
+    'sync.err.off': 'この端末は、まだつないでいません。',
+    'sync.err.nocrypto': 'このブラウザでは、同期を使えません(鍵をかける道具がありません)。',
+    'sync.err.nopost': 'この入れ方では、同期を使えません(Tampermonkey で入れてください)。',
+    'sync.err.net': '置き場につながりませんでした。電波のある所で、もう一度押してください。',
+    'sync.err.auth': '置き場に断られました。つなぐ字を入れ直してください。',
+    'sync.err.spaces': '置き場の部屋の数が上限です。Cloudflare の設定の SPACES を増やすか、使っていない合言葉の部屋を消してください。',
+    'sync.err.big': '送る中身が大きすぎて、送れませんでした。',
+    'sync.err.full': '置き場の大きさの上限です。Cloudflare の設定の SPACE_MB を増やしてください。',
+    'sync.err.db': '置き場の保存の所(D1)が使えませんでした。Cloudflare で D1 を「DB」の名前でつないだかを見てください。1 日の上限のときは、次の日に直ります。',
+    'sync.err.path': '置き場の住所が違うようです。住所をブラウザで開いて「ok」と出るかを見てください。',
+    'sync.err.version': '置き場のプログラムと、この版が合いません。手順書のとおりに、置き場のプログラムを貼り直してください。',
+    'sync.err.bad': '置き場に断られました(送った形が違う)。{app} を新しくして、もう一度押してください。',
+    'sync.err.server': 'うまくいきませんでした。少し時間をおいて、もう一度押してください。',
+    'sync.err.url': '住所の形が違います。https:// から始まる、置き場の住所を貼ってください。',
+    'sync.err.link': 'つなぐ字の形が違います。ys1: から始まる字を、全部貼ってください。',
+    'sync.err.pass': '住所か合言葉が違います。打ちまちがいが無いかを見てください。',
+    'sync.err.noRoom': '置き場に、この合言葉の分がありません。1 台目で「この端末から始める」が済んでいるか、字が合っているかを見てください。',
     'rec.note': '数えているのは、英語まじりで画面に出た分と、操作が途切れていなかった時間です。同じ所を読み返した分は、重ねて数えません(割合を上げたときは、増えた英語だけを足します)。読めたかどうかは数えていません。',
     'rec.off': '読んだ記録を残さない設定になっています。画面に出た英語と読んだ時間は、数えていません。',   // 2026-10-24 利用者「全部おすすめで」: 復習の数は出す
     'rec.openSet': '設定をひらく',
@@ -1763,6 +1870,7 @@ Yomu.rest = function(){
       accent: '#0B6E49', soft: '#E8EBFF', softInk: '#2A38B0',
       go: '#0B8457', goInk: '#FFFFFF', key: '#3D4EDB', keyInk: '#FFFFFF',
       warnBg: '#FDECEA', warnInk: '#A5281B',                    // うまくいかなかったことの知らせ(板の中。答えや意味と、見分けがつくように)
+      dev0: '#2A78D6', dev1: '#EB6834', dev2: '#1BAF7A', devX: '#8A909B',   // 記録の棒の、端末ごとの色(工程W7a。色覚の違いがあっても 3 つが見分けられると計算で確かめた組=dataviz の手本の 1〜3。4 台目からは devX)
       knob: '#FFFFFF', tip: '#14181F', tipInk: '#FFFFFF',
       scrim: 'rgba(20,24,31,0.28)',
       shadow: '0 10px 30px rgba(20,24,31,0.18),0 0 0 1px rgba(20,24,31,0.06)',
@@ -1782,6 +1890,7 @@ Yomu.rest = function(){
       accent: '#3F6622', soft: '#E4E3F3', softInk: '#2A38B0',
       go: '#3F6F22', goInk: '#FFFFFF', key: '#3D4EDB', keyInk: '#FFFFFF',
       warnBg: '#F8E1D8', warnInk: '#9C2A1C',
+      dev0: '#2A78D6', dev1: '#EB6834', dev2: '#1BAF7A', devX: '#8A909B',   // 記録の棒の、端末ごとの色(工程W7a。色覚の違いがあっても 3 つが見分けられると計算で確かめた組=dataviz の手本の 1〜3。4 台目からは devX)
       knob: '#FFFFFF', tip: '#2E261B', tipInk: '#FBF6E6',
       scrim: 'rgba(40,30,15,0.30)',
       shadow: '0 10px 30px rgba(40,30,15,0.18),0 0 0 1px rgba(40,30,15,0.08)',
@@ -1801,6 +1910,7 @@ Yomu.rest = function(){
       accent: '#7FDDB4', soft: '#2B3166', softInk: '#C5CBFF',
       go: '#0B8457', goInk: '#FFFFFF', key: '#5565EC', keyInk: '#FFFFFF',
       warnBg: '#4A1F1B', warnInk: '#FFB4A8',
+      dev0: '#3987E5', dev1: '#D95926', dev2: '#199E70', devX: '#7B818C',   // 記録の棒の、端末ごとの色(暗い地に合わせた同じ色。工程W7a)
       knob: '#FFFFFF', tip: '#ECEEF2', tipInk: '#14181F',
       scrim: 'rgba(0,0,0,0.45)',
       shadow: '0 10px 30px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.08)',
@@ -1820,6 +1930,7 @@ Yomu.rest = function(){
       accent: '#0B6E49', soft: '#DEE3FF', softInk: '#2A38B0',
       go: '#0B8457', goInk: '#FFFFFF', key: '#3D4EDB', keyInk: '#FFFFFF',
       warnBg: '#FBE4E1', warnInk: '#A5281B',
+      dev0: '#2A78D6', dev1: '#EB6834', dev2: '#1BAF7A', devX: '#8A909B',   // 記録の棒の、端末ごとの色(工程W7a。色覚の違いがあっても 3 つが見分けられると計算で確かめた組=dataviz の手本の 1〜3。4 台目からは devX)
       knob: '#FFFFFF', tip: '#14202A', tipInk: '#FFFFFF',
       scrim: 'rgba(15,30,45,0.30)',
       shadow: '0 10px 30px rgba(15,30,45,0.18),0 0 0 1px rgba(15,30,45,0.08)',
@@ -2670,6 +2781,7 @@ Yomu.rest = function(){
     V: { meta: 1, siteMeta: 1, settings: 1, secrets: 1, pgi: 1, page: 1, quota: 1, runs: 1, vocab: 1, log: 1, logx: 1, ai: 1,
       local: 1, seen: 1, work: 1,                   // 端末ごとの設定・調べた回数・作品ごとの記録(§8-11 の 4〜6。工程W3b-1)
       pgc: 1,                                       // 段落ごとの、もう数えた英語の量(§8-4。工程W3b-2)
+      lsum: 1,                                      // 丸めた読んだ記録(§8-8。工程W7b)
       run: 1, vitem: 1, sitem: 1, stretch: 1, detail: 1 },   // 下の5つは、かたまりの中の1件ごとの形
     // 読んだ記録の、操作の種類(§8-8 の Stretch.n)。足すときは、後ろに足す
     acts: ['tap', 'idiom', 'dict', 'ai', 'toJp', 'toEn', 'say', 'star', 'expand'],
@@ -2724,6 +2836,8 @@ Yomu.rest = function(){
     vocabChunk(){ return { v: schema.V.vocab, items: {}, x: {} }; },
     logDay(day){ return { v: schema.V.log, day, items: [], x: {} }; },
     logxDay(day){ return { v: schema.V.logx, day, items: {}, x: {} }; },
+    // 丸めた読んだ記録(§8-8。工程W7b)。鍵は p/{pid}/lsum/{年}。items = { [学習日]: { [端末の番号]: { en: 画面に出た英語の語数, act: 読んだ時間の秒, dk: 端末の種類 } } }
+    lsumYear(year){ return { v: schema.V.lsum, year: year || null, items: {}, x: {} }; },
     // ---- 1件ごとの形(§8-6・§8-7・§8-8) ----
     run(){
       return {
@@ -2742,7 +2856,7 @@ Yomu.rest = function(){
       const n = {};
       schema.acts.forEach(k => { n[k] = 0; });
       return {
-        v: schema.V.stretch, id: null, dev: null, visit: null, t0: null, t1: null,
+        v: schema.V.stretch, id: null, dev: null, dk: null, visit: null, t0: null, t1: null,
         page: null, work: null, site: null, level: null, tr: null, title: { work: '', ep: '' },
         ratio: 0, orig: 0, style: null, vis: 0, act: 0,
         all: { paras: 0, sents: 0, targets: 0, jpChars: 0, enSents: 0, enWords: 0, enJpChars: 0 },
@@ -2809,7 +2923,7 @@ Yomu.rest = function(){
   };
 
   // ---- 書き出しの区画(§8-9)。API キー(secrets)と、訳したページ(pg)は、ここに無い=書き出さない ----
-  const MONTH = /^\d{4}-\d{2}$/, DAY = /^\d{4}-\d{2}-\d{2}$/, INITIAL = /^[a-z_]$/;
+  const MONTH = /^\d{4}-\d{2}$/, DAY = /^\d{4}-\d{2}-\d{2}$/, YEAR = /^\d{4}$/, INITIAL = /^[a-z_]$/;
   const WORK = /^[a-z][a-z0-9_-]*:[^/\s]{1,200}$/;   // 作品の鍵 {site}:{作品}(§1-3。どのページでもは web:{ホスト名})
   schema.parts = {
     // omit = 書き出さない・読み込みで変えない欄(端末ごとの設定=§8-11 の 6。前の版の書き出しに入っていても使わない)
@@ -2820,6 +2934,7 @@ Yomu.rest = function(){
     quota:    { area: 'shared', prefix: 'quota/', kind: 'quota', name: MONTH,   merge: 'quota' },
     runs:     { area: 'shared', prefix: 'runs/',  kind: 'runs',  name: MONTH,   merge: 'union', sort: 'at' },
     log:      { area: 'shared', prefix: 'log/',   kind: 'log',   name: DAY,     merge: 'union', sort: 't0', prefer: 't1' },
+    lsum:     { area: 'shared', prefix: 'lsum/',  kind: 'lsum',  name: YEAR,    merge: 'lsum' },   // 丸めた読んだ記録(§8-8。工程W7b)。かたまり=1 年
     logx:     { area: 'site',   prefix: 'logx/',  kind: 'logx',  name: DAY,     merge: 'union', prefer: 't1' }
   };
 
@@ -2925,6 +3040,31 @@ Yomu.rest = function(){
       if (!isPlain(mine)) return { rec: util.clone(theirs), added: 1, changed: 0 };
       if (!(typeof theirs.at === 'string' && theirs.at > String(mine.at || ''))) return { rec: mine, added: 0, changed: 0 };
       return { rec: Object.assign(mine, util.clone(theirs)), added: 0, changed: 1 };
+    },
+    // 丸めた読んだ記録(§8-8。工程W7b): 日・端末ごとに、数(en・act)は大きい方。dk は手元に無ければ足す。
+    //   丸めるのは 400 日を過ぎた日=もう増えない数なので、大きい方で、2 台が別々に丸めても、同じ結果を 2 度読み込んでも、二重にならない
+    lsum(mine, theirs){
+      if (!isPlain(mine)) return { rec: util.clone(theirs), added: count(theirs.items), changed: 0 };
+      let added = 0, changed = 0;
+      if (!isPlain(mine.items)) mine.items = {};
+      Object.keys(isPlain(theirs.items) ? theirs.items : {}).forEach(day => {
+        const t = theirs.items[day];
+        if (!DAY.test(day) || !isPlain(t)) return;
+        const d = mine.items[day] = isPlain(mine.items[day]) ? mine.items[day] : {};
+        Object.keys(t).forEach(dev => {
+          const s = t[dev];
+          if (!util.safeKey(dev) || !isPlain(s)) return;
+          if (!isPlain(d[dev])){ d[dev] = util.clone(s); added++; return; }
+          let touched = false;
+          ['en', 'act'].forEach(f => {
+            const b = s[f], a = d[dev][f];
+            if (typeof b === 'number' && isFinite(b) && !(typeof a === 'number' && a >= b)){ d[dev][f] = b; touched = true; }
+          });
+          if (d[dev].dk == null && typeof s.dk === 'string' && s.dk){ d[dev].dk = s.dk; touched = true; }
+          if (touched) changed++;
+        });
+      });
+      return { rec: mine, added, changed };
     },
     // 回数: 端末ごとに分けて持ち、同じ端末・同じ日・同じモデルの数字は大きい方(回数は増えるだけ)
     //   opt.dev = この端末の番号。戻りは、いつも「この端末から見た形」
@@ -3257,6 +3397,8 @@ Yomu.rest = function(){
     const raw = path => (area === 'shared' && !root && path !== 'meta' ? pre() + path : String(path));
     // 同じ所への書き込み(update・set・del)は、呼んだ順に1つずつ
     const tails = new Map();
+    // 書いた合図(人の段の shared だけ。同期が、変わったかたまりに印を付ける=§8-12 の 6。工程W6b-1)。by = 書いた部品の印(opt.by。同期が自分で書いたものを見分ける)
+    const wrote = (path, opt, del) => { if (area === 'shared' && !root && path !== 'meta') emit('write', { path: String(path), by: (opt && opt.by) || null, del: !!del }); };
     function queue(key, job){
       const run = (tails.get(key) || Promise.resolve()).then(job);
       const tail = run.then(() => {}, () => {});   // 失敗しても、次の順番は進む
@@ -3270,11 +3412,11 @@ Yomu.rest = function(){
       set(path, value, opt){
         if (value === undefined) return Promise.reject(util.error('bad', 'undefined は保存できない(消すなら del): ' + path));
         const key = raw(path);
-        return queue(key, () => write(area, key, value, opt));
+        return queue(key, () => write(area, key, value, opt).then(() => wrote(path, opt, false)));
       },
-      del(path){
+      del(path, opt){
         const key = raw(path);
-        return queue(key, () => attempt(() => kv().del(key)).catch(e => { throw wrap(e); }));
+        return queue(key, () => attempt(() => kv().del(key)).then(() => wrote(path, opt, true), e => { throw wrap(e); }));
       },
       keys(prefix){
         const p = pre();
@@ -3289,6 +3431,7 @@ Yomu.rest = function(){
           const next = await fn(cur);
           if (next === undefined) return cur;
           await write(area, key, next, opt);
+          wrote(path, opt, false);
           return next;
         });
       }
@@ -6644,7 +6787,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         it.upd = now;
         out = util.clone(it);
         return chunk;
-      });
+      }, { by: 'answer' });                                         // 同期は、答えを回のおわりに送る(入れた・外したの「まとめて送る」に入れない=§8-12 の 4)
       return out;
     }),
     has: head => attempt(() => find(checkId(idOf(head)))).then(live),
@@ -6914,10 +7057,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 //   作品ごとの記録(§8-11 の 5。工程W3b-2): まとめを書くときに、同じく直す(続きを読む)
 (function(){
   'use strict';
+  const Y = Yomu;
   const util = Yomu.util, config = Yomu.config, schema = Yomu.schema, store = Yomu.store, settings = Yomu.settings;
   const isPlain = util.isPlain;
-  const LOG = 'log/', LOGX = 'logx/', WORK = 'work/';
-  const DAY = /^\d{4}-\d{2}-\d{2}$/;
+  const LOG = 'log/', LOGX = 'logx/', WORK = 'work/', SUM = 'lsum/';
+  const DAY = /^\d{4}-\d{2}-\d{2}$/, YEAR = /^\d{4}$/;
   const ROW = ['jc', 'sn', 'tg', 'se', 'ew', 'je'];   // 段落ごとの数(§8-8 の Row。p のほか)
 
   const bad = msg => util.error('bad', msg);
@@ -7086,7 +7230,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       const days = Array.from(new Set(jobs.map(j => j.day))).sort();
       for (const day of days){
         const mine = jobs.filter(j => j.day === day);
-        mine.forEach(j => { j.rec.dev = store.deviceId; });
+        mine.forEach(j => { j.rec.dev = store.deviceId; j.rec.dk = (Y.env && Y.env.info && typeof Y.env.info.kind === 'string' && Y.env.info.kind) || null; });   // dk = 端末の種類(記録の画面の、端末ごとの色の棒の名前。工程W7a)
         await putSummary(day, mine.map(j => j.rec));
         const pairs = mine.filter(j => j.full).map(j => [j.rec.id, j.detail]);
         if (pairs.length) await putDetail(day, pairs).catch(() => {});   // 詳しい分は、書けなければあきらめる(まとめは残る)
@@ -7116,6 +7260,55 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   const log = { kinds: schema.acts.slice() };
+
+  // 1 件の記録の、画面に出た英語 = 重ねずに数えた語数(fresh.enWords。fresh の無い記録=工程W3b-2 より前の版は seen.enWords)
+  log.enOf = s => (isPlain(s) && isPlain(s.fresh) ? num(s.fresh.enWords) : isPlain(s) && isPlain(s.seen) ? num(s.seen.enWords) : 0);
+  // 1 件の記録を書いた端末(dev の無い記録は '_')
+  log.devOf = s => (isPlain(s) && typeof s.dev === 'string' && s.dev ? s.dev : '_');
+  // その日のまとめを、端末ごとの合計に丸める → { [dev]: { en, act, dk } }(§8-8 の「丸めた記録」。工程W7b)
+  function sumOf(items){
+    const by = {};
+    items.forEach(s => {
+      if (!isPlain(s)) return;
+      const dv = log.devOf(s);
+      if (!util.safeKey(dv)) return;
+      const c = by[dv] || (by[dv] = { en: 0, act: 0, dk: null });
+      c.en += log.enOf(s); c.act += num(s.act);
+      if (typeof s.dk === 'string' && s.dk) c.dk = s.dk;   // 種類は、その日のいちばん新しい記録のもの(items は t0 の順)
+    });
+    return by;
+  }
+  // 丸めた記録に書く(lsum/{年}。同じ日・同じ端末は、大きい方=schema.merge.lsum)。書けなければ投げる(その日の細かい記録は消さない)
+  async function rollUp(day, items){
+    const by = sumOf(items);
+    if (!Object.keys(by).length) return;
+    const year = day.slice(0, 4);
+    await store.shared.update(SUM + year, cur => {
+      const chunk = schema.open('lsum', cur, () => schema.make.lsumYear(year));
+      const res = schema.merge.lsum(chunk, { items: { [day]: by } });
+      return res.added || res.changed || !isPlain(cur) ? res.rec : undefined;
+    });
+  }
+  // 丸めた記録(400 日より古い日の、端末ごとの合計)→ [{ day, dev, en, act, dk }](日の古い順)
+  log.sums = () => attempt(async () => {
+    await store.init();
+    const out = [];
+    for (const k of (await store.shared.keys(SUM)).sort()){
+      if (!YEAR.test(k.slice(SUM.length))) continue;
+      const chunk = await store.shared.get(k);
+      if (schema.newer('lsum', chunk)) throw tooNew(k);
+      const items = isPlain(chunk) && isPlain(chunk.items) ? chunk.items : {};
+      Object.keys(items).sort().forEach(day => {
+        if (!DAY.test(day) || !isPlain(items[day])) return;
+        Object.keys(items[day]).sort().forEach(dev => {
+          const s = items[day][dev];
+          if (!util.safeKey(dev) || !isPlain(s)) return;
+          out.push({ day, dev, en: num(s.en), act: num(s.act), dk: typeof s.dk === 'string' && s.dk ? s.dk : null });
+        });
+      });
+    }
+    return out;
+  });
 
   // ページを英語まじりで出したとき(page/watch.js が呼ぶ)→ handle
   //   opt.memo = { load(level) → Promise<{ [段落の番号]: [se, ew, je] } | null>, save(level, p) → Promise }(覚えの読み書き。ページの側。省くと、この visit の中だけで重ねずに数える)
@@ -7307,21 +7500,28 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return isPlain(chunk) && isPlain(chunk.items) ? chunk.items : null;
   });
   // 古い日を捨てる → 捨てた日の数。詳しい分を残す日数は、保存先で変わる(IndexedDB でなければ、短くする)
+  //   まとめ(log)は、捨てる前に、その日の端末ごとの合計を丸めた記録に残す(工程W7b。2026-11-26 利用者=「これまで」と日ごとの数を減らさない)。
+  //   形の版が新しい日は、丸められないので捨てない。丸めた記録に書けなければ、その日は捨てない(次に捨てるときに、やり直す)
   log.prune = async function(now){
     await store.init();
     const today = util.today(now == null ? util.nowISO() : now, config.dayBoundaryHour);
-    const sweep = async (area, pre, keep) => {
+    const sweep = async (area, pre, keep, roll) => {
       let n = 0;
       for (const k of await area.keys(pre)){
         const day = k.slice(pre.length);
         if (!DAY.test(day) || util.diffDays(day, today) <= keep) continue;
+        if (roll){
+          const chunk = await area.get(k);
+          if (schema.newer('log', chunk)) continue;
+          await rollUp(day, isPlain(chunk) && Array.isArray(chunk.items) ? chunk.items : []);
+        }
         await area.del(k);
         n++;
       }
       return n;
     };
     const xKeep = config.log.xKeepDays;
-    return { log: await sweep(store.shared, LOG, config.log.keepDays), logx: await sweep(store.site, LOGX, store.site.backend === 'idb' ? xKeep.idb : xKeep.ls) };
+    return { log: await sweep(store.shared, LOG, config.log.keepDays, true), logx: await sweep(store.site, LOGX, store.site.backend === 'idb' ? xKeep.idb : xKeep.ls) };
   };
 
   Yomu.log = log;
@@ -7387,10 +7587,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   // ---- 記録(§9-10 の「記録」)----
-  //   画面に出た英語 = 重ねずに数えた語数(fresh.enWords。fresh の無い記録=工程W3b-2 より前の版は seen.enWords)・読んだ時間 = 操作が途切れていなかった秒(act)
-  const enWordsOf = s => (isPlain(s.fresh) ? num(s.fresh.enWords) : isPlain(s.seen) ? num(s.seen.enWords) : 0);
+  //   画面に出た英語 = 重ねずに数えた語数(log.enOf)・読んだ時間 = 操作が途切れていなかった秒(act)
+  //   400 日より古い日は、丸めた記録(log.sums。工程W7b)。同じ日・同じ端末に細かい記録と丸めた記録の両方があれば、大きい方
+  //   (片方の端末が丸めて消した日の細かい記録が、同期でもう片方から戻ってきても、二重に数えない)
   const answerDay = t => util.today(new Date(t * 1000));
-  // → { on, today, week: { from, to, enWords, actSec, reviewDays, answers }, days: [{ day, enWords }…](古い順), total: { from, enWords, actSec, words, learned } }
+  // → { on, today, week: { from, to, enWords, actSec, reviewDays, answers }, days: [{ day, enWords, by: { [dev]: enWords } }…](古い順), total: { from, enWords, actSec, words, learned }, devs: [{ dev, kind, self, slot, enWords, actSec }…] }
+  //   devs = 読んだ記録を書いた端末ごと(工程W7a。はじめて記録した日の順。kind = iphone|ipad|android|pc|null・self = この端末・slot = 色の位置 0〜 か x)
   //   on = 読んだ記録を残しているか(false なら、画面は、そう出して設定への行き先)。復習した日・答えた回数は、単語帳の語の答えの記録から(外した語の答えは消えている=§8-11 の 1)
   async function record(opts){
     opts = opts || {};
@@ -7398,17 +7600,55 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const week = { from: util.addDays(today, -(cfg().weekDays - 1)), to: today, enWords: 0, actSec: 0, reviewDays: 0, answers: 0 };
     const chartFrom = util.addDays(today, -(cfg().chartDays - 1));
     const byDay = new Map();
-    for (let d = chartFrom; d <= today; d = util.addDays(d, 1)) byDay.set(d, 0);
+    for (let d = chartFrom; d <= today; d = util.addDays(d, 1)) byDay.set(d, { en: 0, by: {} });
     const total = { from: null, enWords: 0, actSec: 0, words: 0, learned: 0 };
+    // 端末ごと(工程W7a。同期で、ほかの端末の記録も届く)。読んだ記録の 1 件の dev(書いた端末)で分ける。dev の無い記録は '_'
+    const devMap = new Map();
+    // 日 → 端末 → { en, act, dk }(細かい記録の和。そのあと、丸めた記録と大きい方)
+    const cells = new Map();
+    const cellOf = (day, dv) => {
+      let m = cells.get(day);
+      if (!m) cells.set(day, (m = new Map()));
+      let c = m.get(dv);
+      if (!c) m.set(dv, (c = { en: 0, act: 0, dk: null }));
+      return c;
+    };
     for (const { day, items } of await log.days()){
       if (day > today) continue;                             // 時計が戻された端末の、先の日の記録は数えない
+      items.forEach(s => {
+        const c = cellOf(day, log.devOf(s));
+        c.en += log.enOf(s); c.act += num(s.act);
+        if (typeof s.dk === 'string' && s.dk) c.dk = s.dk;   // その日のいちばん新しい記録のもの(items は t0 の順)
+      });
+    }
+    for (const r of await log.sums()){
+      if (r.day > today) continue;
+      const c = cellOf(r.day, r.dev);
+      c.en = Math.max(c.en, r.en); c.act = Math.max(c.act, r.act);
+      if (!c.dk && r.dk) c.dk = r.dk;
+    }
+    for (const day of Array.from(cells.keys()).sort()){
       let en = 0, act = 0;
-      items.forEach(s => { en += enWordsOf(s); act += num(s.act); });
+      const col = byDay.get(day);
+      cells.get(day).forEach((c, dv) => {
+        const e = c.en, a = c.act;
+        en += e; act += a;
+        let d = devMap.get(dv);
+        if (!d){ d = { dev: dv, kind: null, first: day, last: '', enWords: 0, actSec: 0 }; devMap.set(dv, d); }
+        if (c.dk && day >= d.last){ d.kind = c.dk; d.last = day; }   // 種類は、いちばん新しい記録のもの
+        d.enWords += e; d.actSec += a;
+        if (col && e > 0) col.by[dv] = (col.by[dv] || 0) + e;
+      });
       if (!total.from) total.from = day;
       total.enWords += en; total.actSec += act;
       if (day >= week.from){ week.enWords += en; week.actSec += act; }
-      if (byDay.has(day)) byDay.set(day, byDay.get(day) + en);
+      if (col) col.en += en;
     }
+    // 並びは、はじめて記録した日の順(同じ日は番号の順)=どの端末で見ても、同じ端末は同じ色(色の位置 slot。cfg().devColors を超えたら 'x'=ほかの端末)
+    const self = store.deviceId || null;
+    const devs = Array.from(devMap.values()).filter(d => d.enWords > 0 || d.actSec > 0)
+      .sort((a, b) => (a.first < b.first ? -1 : a.first > b.first ? 1 : a.dev < b.dev ? -1 : a.dev > b.dev ? 1 : 0))
+      .map((d, i) => ({ dev: d.dev, kind: d.kind, self: d.dev === self, slot: i < cfg().devColors ? i : 'x', enWords: d.enWords, actSec: d.actSec }));
     const items = await vocab.all();
     const days = new Set();
     items.forEach(it => {
@@ -7421,7 +7661,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     week.reviewDays = days.size;
     total.words = items.length; total.learned = review.learned(items);
     const s = settings.get();
-    return { on: !(isPlain(s.log) && s.log.on === false), today, week, days: Array.from(byDay, ([day, enWords]) => ({ day, enWords })), total };
+    return { on: !(isPlain(s.log) && s.log.on === false), today, week, days: Array.from(byDay, ([day, c]) => ({ day, enWords: c.en, by: c.by })), total, devs };
   }
 
   // ---- 単語帳の一覧(§9-10 の「単語帳」)----
@@ -7443,6 +7683,786 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   Yomu.learn = { dest, works, recent, record, words };
+})();
+
+/* ---- core/sync.js ---- */
+// core/sync.js — 自動の同期(部品の約束 §8-12。工程W6b-1)
+//   置き場(sync/worker.mjs)は、預かるだけの箱。鍵をかける・名前を隠す・2 台の記録を合わせる計算は、ここ(端末)でする。
+//   同じにするのは、全サイト共通の保存の、今の人(p/{pid}/)の、決まったかたまり(§8-12 の 2。区画は config.sync.parts で切りかえる)。
+//   合言葉と置き場の住所は secrets の sync に置く(書き出し・通信の記録・調べるための記録・知らせに出さない)。
+//   覚え p/{pid}/sync(端末ごと。同期しない・書き出さない)= { v, e, since, base: { [道]: { r, h } }, dirty: [道…], newer: { [道]: r }, parts, at, last }
+//   Gemini の回数(§8-5)にも、通信の記録(§8-6)にも入れない。その場での自動の再試行はしない(§1-2。届かなかった分は次の「時」に)
+//   送る「時」(§8-12 の 4。工程W6b-2)= when(why)。学ぶ画面(ui/learn.js)と起動(shell/boot.js)が呼ぶ。単語帳に入れた・外したは、ここで保存の合図から決める
+(function(){
+  'use strict';
+  const Y = Yomu;   // 先頭で受けておく(検査で 2 つの端末を同時に動かしても混ざらないように)
+  const util = Y.util, config = Y.config, schema = Y.schema, store = Y.store;
+  const isPlain = util.isPlain;
+  const C = config.sync;
+  const diag = Y.diag || { mark(){} };
+  const MEMO = 'sync', SECRETS = 'secrets';
+  const API_V = 1;               // 置き場の口の版(sync/worker.mjs の V)
+  const ENV_V = 1;               // 中身(Env)の形の版
+  const MEMO_V = 1;
+  const SYNCABLE = ['settings', 'vocab', 'seen', 'work', 'log', 'lsum', 'quota'];   // 同じにしてよい区画(§8-12 の 2。runs・logx・local・secrets は送らない)
+  const ALPHA = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';                           // 合言葉の字(Crockford の 32 字。I・L・O・U を使わない)
+  const LINK = 'ys1';                                                        // つなぐ字の頭(アプリの名前は入れない)
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const attempt = fn => Promise.resolve().then(fn);
+  const err = (kind, msg, extra) => util.error(kind, msg || kind, extra);
+
+  // ---- 暗号と圧縮(WebCrypto・CompressionStream。iPhone の Tampermonkey でも使える=工程W6b の確かめ用スクリプト) ----
+  const cr = () => (Y.env && Y.env.crypto) || globalThis.crypto;
+  const subtle = () => cr().subtle;
+  const zipOk = () => typeof globalThis.CompressionStream === 'function' && typeof globalThis.DecompressionStream === 'function'
+    && typeof globalThis.Blob === 'function' && typeof globalThis.Response === 'function';
+  const cryptoOk = () => { const c = cr(); return !!(c && c.subtle && typeof c.getRandomValues === 'function') && zipOk(); };
+  function b64u(bytes){
+    const a = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let s = '';
+    for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000));
+    return btoa(s).split('+').join('-').split('/').join('_').replace(/=+$/, '');
+  }
+  function unb64u(str){
+    if (typeof str !== 'string' || !/^[A-Za-z0-9_-]*$/.test(str)) throw err('bad', '中身の字の形が違う');
+    let s = str.split('-').join('+').split('_').join('/');
+    while (s.length % 4) s += '=';
+    const b = atob(s), a = new Uint8Array(b.length);
+    for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
+    return a;
+  }
+  const cat = (a, b) => { const c = new Uint8Array(a.length + b.length); c.set(a, 0); c.set(b, a.length); return c; };
+  async function pipe(bytes, Stream){
+    const s = new Blob([bytes]).stream().pipeThrough(new Stream('gzip'));
+    return new Uint8Array(await new Response(s).arrayBuffer());
+  }
+  const gzip = b => pipe(b, globalThis.CompressionStream);
+  const gunzip = b => pipe(b, globalThis.DecompressionStream);
+  async function hkdf(secret, info){
+    const key = await subtle().importKey('raw', secret, 'HKDF', false, ['deriveBits']);
+    return new Uint8Array(await subtle().deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: enc.encode(info) }, key, 256));
+  }
+  // 指紋(前に送った・受けたときと同じ中身かを見る。暗号の強さは要らないが、どの端末でも同じ値=SHA-256 の頭)
+  const print = async text => b64u(new Uint8Array(await subtle().digest('SHA-256', enc.encode(text)))).slice(0, 16);
+
+  // ---- 合言葉(§8-12 の 3): 16 バイトの乱数 → 26 字+確かめの 1 字 ----
+  const checkChar = s26 => ALPHA[parseInt(util.hash53(s26), 36) % 32];
+  function passOf(bytes){
+    let bits = 0, n = 0, s = '';
+    for (const b of bytes){ n = (n << 8) | b; bits += 8; while (bits >= 5){ s += ALPHA[(n >>> (bits - 5)) & 31]; bits -= 5; } n &= (1 << bits) - 1; }
+    if (bits) s += ALPHA[(n << (5 - bits)) & 31];
+    return s + checkChar(s);
+  }
+  // 人が打った字をそろえる(小文字・まぎらわしい字・区切りの - と空白)
+  const tidy = s => String(s || '').toUpperCase().replace(/[\s-]+/g, '').split('O').join('0').split('I').join('1').split('L').join('1');
+  // 合言葉 → 16 バイト(形・確かめの字が違えば、失敗 'bad')
+  function passBytes(pass){
+    const s = tidy(pass);
+    if (s.length !== 27 || [...s].some(ch => ALPHA.indexOf(ch) < 0)) throw err('bad', '合言葉の形が違う');
+    if (checkChar(s.slice(0, 26)) !== s[26]) throw err('bad', '合言葉の確かめの字が合わない(打ちまちがい)');
+    const out = new Uint8Array(16);
+    let bits = 0, n = 0, i = 0;
+    for (const ch of s.slice(0, 26)){
+      n = (n << 5) | ALPHA.indexOf(ch); bits += 5;
+      if (bits >= 8){ if (i < 16) out[i++] = (n >>> (bits - 8)) & 255; bits -= 8; n &= (1 << bits) - 1; }
+    }
+    if (n !== 0) throw err('bad', '合言葉の形が違う');   // 終わりの余りは 0(同じ合言葉に、2 つの書き方を作らない)
+    return out;
+  }
+  const newPass = () => passOf(cr().getRandomValues(new Uint8Array(16)));
+
+  // ---- つなぐ字(§8-12 の 3。もう 1 台へ 1 回だけ渡す)= ys1:{合言葉}:{置き場の住所(https:// は省く)}。見せ方と渡し方は工程W7 ----
+  function cleanUrl(u){
+    let s = String(u || '').trim();
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) && !/^https?:\/\//i.test(s)) throw err('bad', '置き場の住所の形が違う');   // ほかの道(ftp:// など)
+    if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+    let url;
+    try { url = new URL(s); } catch (e){ throw err('bad', '置き場の住所の形が違う'); }
+    if (!/^https?:$/.test(url.protocol) || !url.hostname || url.username || url.password || url.search || url.hash) throw err('bad', '置き場の住所の形が違う');
+    return (url.origin + url.pathname).replace(/\/+$/, '');
+  }
+  const link = {
+    make(o){
+      const pass = tidy(o && o.pass);
+      passBytes(pass);
+      return LINK + ':' + pass + ':' + cleanUrl(o && o.url).replace(/^https:\/\//, '');
+    },
+    read(str){
+      const s = String(str || '').trim().replace(/\s+/g, '');
+      const i = s.indexOf(':'), j = s.indexOf(':', i + 1);
+      if (i < 0 || j < 0 || s.slice(0, i).toLowerCase() !== LINK) throw err('bad', 'つなぐ字の形が違う');
+      const pass = tidy(s.slice(i + 1, j));
+      passBytes(pass);
+      return { pass, url: cleanUrl(s.slice(j + 1)) };
+    }
+  };
+
+  // ---- 鍵(§8-12 の 3)。合言葉ごとに 1 回だけ作って持つ ----
+  let keyCache = null;
+  async function keysOf(pass){
+    if (keyCache && keyCache.pass === pass) return keyCache.keys;
+    const S = passBytes(pass);
+    const keys = {
+      t: b64u(await hkdf(S, 'yomu-sync/auth/1')),
+      ek: await subtle().importKey('raw', await hkdf(S, 'yomu-sync/enc/1'), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']),
+      nk: await subtle().importKey('raw', await hkdf(S, 'yomu-sync/name/1'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']),
+      names: new Map()
+    };
+    keyCache = { pass, keys };
+    return keys;
+  }
+  async function nameOf(K, path){
+    let k = K.names.get(path);
+    if (!k){ k = b64u(new Uint8Array(await subtle().sign('HMAC', K.nk, enc.encode(path)))).slice(0, 22); K.names.set(path, k); }
+    return k;
+  }
+  // 中身 d = base64url(12 バイトの iv ‖ AES-GCM(gzip(JSON の Env)))。付け足しの印(AAD)は名前 k
+  async function seal(K, path, rec){
+    const k = await nameOf(K, path);
+    const z = await gzip(enc.encode(JSON.stringify({ v: ENV_V, n: path, dev: store.deviceId, at: util.nowISO(), rec })));
+    const iv = cr().getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await subtle().encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(k) }, K.ek, z));
+    return { k, d: b64u(cat(iv, ct)) };
+  }
+  // 開ける → Env | { newer: true }。鍵が合わない・壊れている・名前と中身が合わない(行を入れかえた)は、失敗 'unread'
+  async function unseal(K, k, d){
+    let env;
+    try {
+      const a = unb64u(d);
+      if (a.length < 12 + 16) throw err('bad');
+      const z = await subtle().decrypt({ name: 'AES-GCM', iv: a.subarray(0, 12), additionalData: enc.encode(k) }, K.ek, a.subarray(12));
+      env = JSON.parse(dec.decode(await gunzip(new Uint8Array(z))));
+    } catch (e){ throw err('unread', '置き場の中身を開けない'); }
+    if (!isPlain(env) || typeof env.v !== 'number') throw err('unread', '置き場の中身の形が違う');
+    if (env.v > ENV_V) return { newer: true };
+    if (typeof env.n !== 'string' || !isPlain(env.rec) || (await nameOf(K, env.n)) !== k) throw err('unread', '置き場の中身の名前が合わない');
+    return env;
+  }
+
+  // ---- 区画(§8-12 の 2) ----
+  const enabled = () => (Array.isArray(C.parts) ? C.parts : []).filter(n => SYNCABLE.includes(n));
+  // 道(p/{pid}/ の下)→ { name, p } | null(同じにする区画でなければ null)
+  function partOf(path){
+    path = String(path || '');
+    for (const name of enabled()){
+      const p = schema.parts[name];
+      if (!p || p.area !== 'shared') continue;
+      if (p.path){ if (path === p.path) return { name, p }; continue; }
+      if (path.startsWith(p.prefix) && p.name.test(path.slice(p.prefix.length))) return { name, p };
+    }
+    return null;
+  }
+  // 送る形(設定の端末ごとの欄は除く=§8-11 の 6)
+  function sendForm(part, value){
+    const v = util.clone(value);
+    if (isPlain(v)) (part.p.omit || []).forEach(k => { delete v[k]; });
+    return v;
+  }
+  // 設定の「変えた時刻」: 一度も変えていない設定(作った時刻のまま)は、いちばん古いとみなす(新しい端末の初期値で、使ってきた設定を上書きしない)
+  const setStamp = s => (isPlain(s) && typeof s.updatedAt === 'string' && s.updatedAt !== s.createdAt ? s.updatedAt : '');
+  // 受けた中身を、手元に合わせる → { rec, covered }(covered = 置き場の中身が、合わせた結果を全部ふくむ=送り返さなくてよい)
+  function mergeOne(part, local, remote, first){
+    const p = part.p;
+    if (part.name === 'settings'){
+      const a = setStamp(local), b = setStamp(remote);
+      const take = !isPlain(local) || b > a || (b === a && first);
+      if (!take) return { rec: local, covered: a <= b, changed: false };
+      const rec = util.clone(remote);
+      (p.omit || []).forEach(k => { if (isPlain(local) && Object.prototype.hasOwnProperty.call(local, k)) rec[k] = util.clone(local[k]); else delete rec[k]; });
+      return { rec, covered: true, changed: JSON.stringify(rec) !== JSON.stringify(local) };
+    }
+    const opt = { dev: store.deviceId, sort: p.sort, prefer: p.prefer };
+    const before = local === undefined ? null : JSON.stringify(local);
+    const res = schema.merge[p.merge](isPlain(local) ? util.clone(local) : undefined, util.clone(remote), opt);
+    const rec = res.rec;
+    const back = schema.merge[p.merge](util.clone(remote), util.clone(rec), opt);   // 合わせた結果を、置き場の中身に重ねても、何も増えないか
+    return { rec, covered: back.added + back.changed === 0, changed: JSON.stringify(rec) !== before };
+  }
+
+  // 手元のかたまりのうち、送ったときから変わったもの・まだ送っていないもの(覚え m の base と比べる)→ 道の並び
+  async function stale(m){
+    const out = [];
+    for (const path of await localPaths()){
+      const part = partOf(path), v = await store.shared.get(path);
+      if (!part || !isPlain(v) || m.newer[path] !== undefined) continue;
+      const b = m.base[path];
+      if (!b || b.h !== await print(JSON.stringify(sendForm(part, v)))) out.push(path);
+    }
+    return out;
+  }
+  // 手元にある、同じにするかたまりの道(区画の順・名前の形の合うものだけ)
+  async function localPaths(){
+    const out = [];
+    for (const name of enabled()){
+      const p = schema.parts[name];
+      if (p.path){ if ((await store.shared.get(p.path)) !== undefined) out.push(p.path); continue; }
+      (await store.shared.keys(p.prefix)).forEach(x => { if (p.name.test(x.slice(p.prefix.length))) out.push(x); });
+    }
+    return out;
+  }
+
+  // ---- 覚え ----
+  const memoOf = cur => {
+    const m = isPlain(cur) && cur.v === MEMO_V ? util.clone(cur) : {};
+    return {
+      v: MEMO_V, e: typeof m.e === 'string' ? m.e : null, since: Number.isSafeInteger(m.since) && m.since >= 0 ? m.since : 0,
+      base: isPlain(m.base) ? m.base : {}, dirty: Array.isArray(m.dirty) ? m.dirty.filter(x => typeof x === 'string') : [],
+      newer: isPlain(m.newer) ? m.newer : {}, parts: Array.isArray(m.parts) ? m.parts : null, at: m.at || null, last: isPlain(m.last) ? m.last : null,
+      swept: typeof m.swept === 'string' ? m.swept : null    // 手元の全部を見直した学習日(1 日 1 回。工程W6b-2)
+    };
+  };
+  const readMemo = () => store.shared.get(MEMO).then(memoOf);
+  async function disconnect(){
+    await store.init();
+    await store.shared.update(SECRETS, cur => {
+      if (!isPlain(cur) || cur.sync === undefined) return undefined;
+      const s = util.clone(cur); delete s.sync; return s;
+    });
+    await store.shared.del(MEMO);
+    keyCache = null;
+  }
+  const readLink = () => store.shared.get(SECRETS).then(s => (isPlain(s) && isPlain(s.sync) && typeof s.sync.pass === 'string' && typeof s.sync.url === 'string' ? { pass: s.sync.pass, url: s.sync.url } : null));
+
+  // ---- 変わったかたまりの印(§8-12 の 6): 保存の書き込みの合図から ----
+  const marks = new Set();                // この画面で、まだ覚えに書いていない印
+  let soonTimer = null;                   // 単語帳に入れた・外したあとの、まとめて送るまでの待ち
+  const seq = new Map();                  // 道 → この画面での書き込みの数(送っている間に書かれたかを見る)
+  let flushTimer = null;
+  function onWrite(e){
+    if (!e || e.by === 'sync') return;    // 同期が自分で書いたものは、印を付けない(送り返すかは、合わせたときに決める)
+    if (!partOf(e.path)) return;
+    seq.set(e.path, (seq.get(e.path) || 0) + 1);
+    if (e.del) return;                    // 消したかたまりは送らない(置き場には、消す口が無い)
+    marks.add(e.path);
+    if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = null; flush().catch(() => {}); }, C.saveMs);
+    // 単語帳に入れた・外した(復習の答え=by 'answer' は除く。答えは回のおわりに送る): soonSec 秒まとめて 1 回(§8-12 の 4)
+    if (C.soonSec > 0 && e.by !== 'answer' && partOf(e.path).name === 'vocab' && !soonTimer) soonTimer = setTimeout(() => { soonTimer = null; when('soon').catch(() => {}); }, C.soonSec * 1000);
+  }
+  // 印を覚えに書く(つないでいないときは、書かない=つないだときに全部を見直す)
+  async function flush(){
+    if (!marks.size) return;
+    if (!(await readLink())){ marks.clear(); return; }
+    const add = [...marks];
+    marks.clear();
+    await store.shared.update(MEMO, cur => { const m = memoOf(cur); const set = new Set(m.dirty); add.forEach(x => set.add(x)); m.dirty = [...set].sort(); return m; }, { by: 'sync' });
+  }
+  if (store.on) store.on('write', onWrite);
+
+  // ---- 置き場への通信(Yomu.env.post。text/plain・行き先を変えない・クッキーを送らない) ----
+  async function post(url, path, body){
+    const env = Y.env;
+    if (!env || typeof env.post !== 'function') throw err('nopost', 'この入れ物には、置き場へ送る口が無い');
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), C.timeoutMs) : null;
+    let res;
+    try { res = await env.post(url + path, JSON.stringify(body), { signal: ctl ? ctl.signal : undefined }); }
+    catch (e){ throw err('net', '置き場につながらない'); }
+    finally { if (timer) clearTimeout(timer); }
+    let obj = null;
+    try { obj = JSON.parse(res && res.text); } catch (e){}
+    if (res && res.status === 200 && isPlain(obj) && obj.ok === true) return obj;
+    const status = res ? res.status : 0;
+    const code = isPlain(obj) && typeof obj.error === 'string' ? obj.error : '';
+    if (status === 409 && code === 'epoch') throw err('epoch', '置き場の部屋が変わった', { e: isPlain(obj) ? obj.e : null });
+    const kind = { 401: 'auth', 403: 'spaces', 413: 'big', 507: 'full', 503: 'db', 404: 'path', 405: 'path' }[status]
+      || (status === 400 ? (isPlain(obj) && obj.want !== undefined ? 'version' : 'bad') : 'server');
+    throw err(kind, '置き場が断った: ' + status + (code ? ' ' + code : ''), { status });
+  }
+
+  // ---- 1 回の同期(§8-12 の 6) ----
+  let running = null;
+  const subs = new Set();
+  const tell = data => subs.forEach(fn => { try { fn(data); } catch (e){} });
+
+  async function go(){
+    await store.init();
+    const ln = await readLink();
+    if (!ln) return { ok: false, error: 'off' };
+    if (!cryptoOk()) return finish(null, { ok: false, error: 'nocrypto' });
+    await flush().catch(() => {});
+    const K = await keysOf(ln.pass);
+    const memo = await readMemo();
+    const parts = enabled();
+    const dirty = new Set(memo.dirty);
+    const startDirty = new Set(memo.dirty);          // 始めの印(覚えに書くとき、これに無い印=その間にほかのタブが足した印は残す)
+    if (JSON.stringify(memo.parts) !== JSON.stringify(parts)){ memo.since = 0; memo.parts = parts; }   // 区画を変えた=全部を受け直して、見直す
+    const n = { sent: 0, got: 0, wrote: 0, unread: 0, newer: 0, big: 0, skip: 0 };
+    const changed = new Set();
+    let first = memo.since === 0, more = true, pulls = 0, pushes = 0, resets = 0, error = null;
+
+    // 受けた 1 つを、手元に合わせる
+    async function absorb(k, r, d, knownPath){
+      let env;
+      try { env = await unseal(K, k, d); }
+      catch (e){
+        n.unread++;
+        if (knownPath){ memo.base[knownPath] = { r, h: null }; dirty.add(knownPath); }   // 手元にある道の中身が壊れている=手元の中身で書き直す
+        return;
+      }
+      if (env.newer){ n.newer++; if (knownPath){ memo.newer[knownPath] = r; dirty.delete(knownPath); } return; }
+      const path = env.n;
+      const part = partOf(path);
+      if (!part){ n.skip++; return; }
+      if (schema.newer(part.p.kind, env.rec)){ n.newer++; memo.newer[path] = r; dirty.delete(path); return; }
+      delete memo.newer[path];
+      const isFirst = !memo.base[path];
+      let out = null;
+      await store.shared.update(path, cur => {
+        out = mergeOne(part, cur, env.rec, isFirst);
+        return out.changed ? out.rec : undefined;
+      }, { by: 'sync' });
+      n.got++;
+      if (out.changed){ n.wrote++; changed.add(path); }
+      // 置き場の中身が、合わせた結果を全部ふくむ=送ったときと同じとみなす(指紋)。ふくまない=送り返す(指紋なし=必ず送る)
+      memo.base[path] = { r, h: out.covered ? await print(JSON.stringify(sendForm(part, out.rec))) : null };
+      if (out.covered) dirty.delete(path);
+      else dirty.add(path);
+    }
+    // 手元のかたまりを、全部見直す(送ったときから変わったもの・まだ送っていないものに印)
+    const today = util.today(util.nowISO());
+    const sweep = async () => { (await stale(memo)).forEach(x => dirty.add(x)); memo.swept = today; };
+    if (!first && memo.swept !== today) await sweep();   // 1 日 1 回、その日の初めの同期の前に、手元の全部を見直す(印の取りこぼし=タブを閉じた など)
+    // 名前 k → 手元にある道(知らない名前のときだけ、手元の道と覚えの道に、1 回の同期で 1 回だけ名前を付けて探す)。無ければ null
+    let indexed = false;
+    async function knownOf(k){
+      const hit = () => { for (const [path, x] of K.names) if (x === k) return path; return null; };
+      if (hit() || indexed) return hit();
+      indexed = true;
+      for (const path of (await localPaths()).concat(Object.keys(memo.base))) await nameOf(K, path);
+      return hit();
+    }
+    // 送るものを作る(MAX_BODY に入る所まで)
+    async function build(){
+      const items = [], meta = [];
+      let size = 200;
+      for (const path of [...dirty].sort()){
+        const part = partOf(path);
+        if (!part || memo.newer[path] !== undefined){ dirty.delete(path); continue; }
+        const at = seq.get(path) || 0;
+        const v = await store.shared.get(path);
+        if (!isPlain(v)){ dirty.delete(path); continue; }
+        const form = sendForm(part, v);
+        const h = await print(JSON.stringify(form));
+        const b = memo.base[path];
+        if (b && b.h === h){ dirty.delete(path); continue; }   // 送ったときと同じ
+        const box = await seal(K, path, form);
+        const cost = box.d.length + 80;
+        if (cost + 200 > C.bodyMax){ n.big++; dirty.delete(path); continue; }   // 1 つで大きすぎる(次に変わったら、また見る)
+        if (size + cost > C.bodyMax) break;
+        size += cost;
+        items.push({ k: box.k, b: b && Number.isSafeInteger(b.r) ? b.r : 0, d: box.d });
+        meta.push({ path, h, at });
+      }
+      return { items, meta };
+    }
+
+    try {
+      for (;;){
+        if (pulls >= C.pulls) break;
+        const wantPut = !first && dirty.size > 0 && pushes < C.rounds;
+        const put = wantPut ? await build() : { items: [], meta: [] };
+        if (!more && !put.items.length) break;
+        if (put.items.length) pushes++;
+        pulls++;
+        const body = { t: K.t, v: API_V, since: memo.since, put: put.items };
+        if (memo.e) body.e = memo.e;
+        let res;
+        try { res = await post(ln.url, '/v1/sync', body); }
+        catch (e){
+          if (e.kind === 'epoch' && resets < 1){   // 部屋を作り直した・別の置き場: 覚えを捨てて、はじめから(全部を受けて、全部を見直す)
+            resets++;
+            memo.e = null; memo.since = 0; memo.base = {}; memo.newer = {};
+            first = true; more = true;
+            continue;
+          }
+          throw e;
+        }
+        memo.e = typeof res.e === 'string' ? res.e : null;
+        const byK = new Map(put.meta.map((m, i) => [put.items[i].k, m]));
+        for (const x of (Array.isArray(res.done) ? res.done : [])){
+          const m = byK.get(x.k);
+          if (!m || !Number.isSafeInteger(x.r)) continue;
+          memo.base[m.path] = { r: x.r, h: m.h };
+          n.sent++;
+          if ((seq.get(m.path) || 0) === m.at) dirty.delete(m.path);   // 送っている間に書かれていなければ、印を外す
+        }
+        for (const x of (Array.isArray(res.miss) ? res.miss : [])){
+          const m = byK.get(x.k);
+          if (m && Number.isSafeInteger(x.r) && typeof x.d === 'string') await absorb(x.k, x.r, x.d, m.path);
+        }
+        for (const x of (Array.isArray(res.got) ? res.got : [])){
+          if (!x || typeof x.k !== 'string' || !Number.isSafeInteger(x.r) || typeof x.d !== 'string') continue;
+          await absorb(x.k, x.r, x.d, await knownOf(x.k));
+        }
+        if (Number.isSafeInteger(res.next) && res.next >= 0) memo.since = res.next;
+        more = res.more === true;
+        if (first && !more){ first = false; await sweep(); }
+      }
+    } catch (e){ error = e.kind || 'error'; }
+    memo.dirty = [...dirty].sort();
+    const result = { ok: !error, error, at: util.nowISO(), n, dirty: memo.dirty.length };
+    await finish(memo, result, startDirty);
+    if (changed.size){
+      if (changed.has('settings') && Y.settings && typeof Y.settings.load === 'function') await Y.settings.load().catch(() => {});
+      tell({ changed: [...changed].sort(), result });
+    }
+    return result;
+  }
+  // 覚えを書く(ほかのタブが、その間に足した印は残す)
+  async function finish(memo, result, startDirty){
+    diag.mark('sync', result.ok ? 'ok' : result.error);
+    await store.shared.update(MEMO, cur => {
+      const now = memoOf(cur);
+      const m = memo || now;
+      if (memo){
+        const set = new Set(m.dirty);
+        now.dirty.forEach(x => { if (!startDirty.has(x)) set.add(x); });
+        m.dirty = [...set].sort();
+      }
+      m.at = result.at || util.nowISO();
+      m.last = { ok: !!result.ok, at: m.at, error: result.error || null, n: result.n || null };
+      return m;
+    }, { by: 'sync' }).catch(() => {});
+    return result;
+  }
+
+  // ---- 送る「時」(§8-12 の 4。工程W6b-2) ----
+  //   始めてよいか: ページを離れている間(保存の取引を止めている=§8-1 の hold)・裏に回っている間は、始めない(印は覚えに残る=次の「時」に送る)
+  function idle(){
+    try { if (store.kv && store.kv.state && store.kv.state().held) return false; } catch (e){}
+    try { if (typeof document !== 'undefined' && document && document.visibilityState === 'hidden') return false; } catch (e){}
+    return true;
+  }
+  // why = 'open'(学ぶ画面を開いた)・'back'(そのタブに戻った)・'end'(復習の回のおわり)・'soon'(単語帳に入れた・外した)・'page'(読むページを開いた・戻った)
+  //   'page' だけは、前の同期から pageMin 分以上あいたとき・送っていない印があるとき(前の回がうまくいったときだけ)に限る
+  //   → run() の結果 | null(始めなかった)。つないでいなければ、通信しない
+  async function when(why){
+    await new Promise(r => setTimeout(r, 0));          // 呼んだ合図の、ほかの受け手(離れたあとの保存の再開=shell/boot.js)を先に済ませる
+    if (!idle()) return null;
+    await store.init();
+    if (!(await readLink())) return null;
+    if (why === 'page'){
+      const m = await readMemo();
+      const gap = m.at ? Date.parse(util.nowISO()) - Date.parse(m.at) : Infinity;
+      const owe = (m.dirty.length > 0 || marks.size > 0) && !(m.last && m.last.ok === false);
+      if (!(gap >= C.pageMin * 60000) && !owe) return null;
+    }
+    diag.mark('sync.when', why);
+    return sync.run();
+  }
+
+  const sync = {
+    // 合言葉を作る(26 字+確かめの 1 字)/つなぐ字を作る・読む
+    newPass,
+    link,
+    // つなぐ: 住所と合言葉を secrets に置き、覚えを初めに戻す(同期はしない。次の run で、全部を受けてから送る)
+    connect: o => attempt(async () => {
+      const ln = typeof o === 'string' ? link.read(o) : { pass: tidy(o && o.pass), url: cleanUrl(o && o.url) };
+      passBytes(ln.pass);
+      await store.init();
+      await store.shared.update(SECRETS, cur => {
+        const s = isPlain(cur) ? cur : schema.make.secrets();
+        s.sync = { url: ln.url, pass: ln.pass, at: util.nowISO() };
+        return s;
+      });
+      await store.shared.set(MEMO, memoOf(null), { by: 'sync' });
+      return { url: ln.url };
+    }),
+    // つなぎを外す(この端末の住所と合言葉と覚えを消す。置き場の中身は消さない=消すのは drop)
+    disconnect: () => attempt(disconnect),
+    // 置き場に預けた分を全部消して、この端末のつなぎも外す(工程W7a。設定の「置き場の中身を消す」。ほかの端末は、次の同期で部屋が無くなったと分かる=はじめからやり直して、自分の分を送り直す)
+    //   → { ok: true, dropped } | { ok: false, error }(つながらない など。そのときは、この端末のつなぎも外さない)
+    drop: () => attempt(async () => {
+      await store.init();
+      const ln = await readLink();
+      if (!ln) return { ok: false, error: 'off' };
+      if (!cryptoOk()) return { ok: false, error: 'nocrypto' };
+      const K = await keysOf(ln.pass);
+      let r;
+      try { r = await post(ln.url, '/v1/drop', { t: K.t }); } catch (e){ return { ok: false, error: e.kind || 'error' }; }
+      await disconnect();
+      return { ok: true, dropped: r.dropped };
+    }),
+    // 今のつなぐ字(もう 1 台をつなぐ画面に出す。つないでいなければ null)→ { link, pass, url } | null
+    current: () => attempt(async () => { await store.init(); const ln = await readLink(); return ln ? { link: link.make(ln), pass: ln.pass, url: ln.url } : null; }),
+    // 1 回の同期(同じ画面で重ねて呼ぶと、走っている回を返す)→ { ok, error, at, n: { sent, got, wrote, unread, newer, big, skip }, dirty }
+    run(){ if (!running) running = go().finally(() => { running = null; }); return running; },
+    // 置き場が動いているか・同じ部屋か(工程W7 の画面の「確かめる」用。部屋は作らない)
+    check: () => attempt(async () => {
+      const ln = await readLink();
+      if (!ln) return { ok: false, error: 'off' };
+      if (!cryptoOk()) return { ok: false, error: 'nocrypto' };
+      const K = await keysOf(ln.pass);
+      try {
+        const r = await post(ln.url, '/v1/hello', { t: K.t });
+        return { ok: true, code: r.code, rev: r.rev, keys: r.keys, bytes: r.bytes, room: !!r.e };
+      } catch (e){ return { ok: false, error: e.kind || 'error' }; }
+    }),
+    // 様子(文言と出す所は工程W7)。住所は、ホスト名だけ
+    status: () => attempt(async () => {
+      await store.init();
+      const ln = await readLink();
+      const m = await readMemo();
+      let host = null;
+      try { host = ln ? new URL(ln.url).hostname : null; } catch (e){}
+      return { on: !!ln, host, at: m.at, last: m.last, dirty: new Set(m.dirty.concat([...marks])).size, crypto: cryptoOk() };
+    }),
+    // 手元の全部を見直して、印を付ける(印の取りこぼし=タブを閉じた など。1 日 1 回の見直しは工程W6b-2 がつなぐ)→ 印の数
+    sweep: () => attempt(async () => {
+      await store.init();
+      if (!(await readLink())) return 0;
+      const m = await readMemo();
+      const add = await stale(m);
+      add.forEach(x => marks.add(x));
+      await flush();
+      return add.length;
+    }),
+    // 同期で手元が変わったときの合図(学ぶ画面が描き直す。fn({ changed: [道…], result }))
+    on(fn){ subs.add(fn); return () => subs.delete(fn); },
+    // 送る「時」に呼ぶ(上の when。裏で行う=呼ぶ側は待たない)
+    when: why => attempt(() => when(why)).catch(() => null),
+    // 検査と工程W7 の調べ用(外へは出さない)
+    _: { partOf, enabled, passBytes, keysOf: pass => keysOf(tidy(pass)), nameOf, seal, unseal, cryptoOk, print, marks, pending: () => [...marks], soon: () => !!soonTimer, idle }
+  };
+
+  Y.sync = sync;
+})();
+
+/* ---- core/qr.js ---- */
+// core/qr.js — QR コードを作る(DOM を使わない。工程W7a。設計書 §8-12 の 3「つなぐ字」の渡し方)
+//   もう 1 台の端末(スマホ・タブレット)のカメラで写すための四角。中身は「専用のページの住所 # つなぐ字」(# から後ろはサーバーに送られない)。
+//   作りは ISO/IEC 18004 のとおり(8 ビットの字の形=byte モードだけ・誤りを直す強さ L/M/Q/H・版 1〜40・8 つの模様から罰点のいちばん少ないもの)。
+//   表と手順の組み立ては、Project Nayuki の QR Code generator library(MIT License。Copyright (c) Project Nayuki)の作りに倣った。
+//   外の部品は使わない(束に入れる物を増やさない)。描くのは ui の側(ui/settings_sync.js が SVG にする)。
+//   Yomu.qr.make(text, { ecl: 'M', mask: 0〜7(省くと罰点で選ぶ) }) → { version, size, ecl, mask, dark(x, y) → bool, rows: [[0|1…]…] }
+(function(){
+  'use strict';
+  const util = Yomu.util;
+
+  // 誤りを直す強さ: 書式の 2 ビット(L=01・M=00・Q=11・H=10)と、表の行
+  const ECL = { L: { bits: 1, row: 0 }, M: { bits: 0, row: 1 }, Q: { bits: 3, row: 2 }, H: { bits: 2, row: 3 } };
+  // 1 つの塊の、誤りを直す符号の数(版 1〜40。先頭は使わない)
+  const ECC_PER_BLOCK = [
+    [-1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+    [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28],
+    [-1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+    [-1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30]
+  ];
+  // 塊の数
+  const BLOCKS = [
+    [-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25],
+    [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49],
+    [-1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8, 8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68],
+    [-1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81]
+  ];
+
+  // データに使える升の数(機能の模様を除く。版ごと)
+  function rawModules(ver){
+    let r = (16 * ver + 128) * ver + 64;
+    if (ver >= 2){
+      const n = Math.floor(ver / 7) + 2;
+      r -= (25 * n - 10) * n - 55;
+      if (ver >= 7) r -= 36;
+    }
+    return r;
+  }
+  const dataCodewords = (ver, e) => Math.floor(rawModules(ver) / 8) - ECC_PER_BLOCK[e.row][ver] * BLOCKS[e.row][ver];
+
+  // ---- リード・ソロモン(GF(2^8)・0x11D) ----
+  function mul(x, y){
+    let z = 0;
+    for (let i = 7; i >= 0; i--){ z = (z << 1) ^ ((z >>> 7) * 0x11D); z ^= ((y >>> i) & 1) * x; }
+    return z & 0xFF;
+  }
+  function divisor(deg){
+    const r = new Array(deg).fill(0);
+    r[deg - 1] = 1;
+    let root = 1;
+    for (let i = 0; i < deg; i++){
+      for (let j = 0; j < deg; j++){ r[j] = mul(r[j], root); if (j + 1 < deg) r[j] ^= r[j + 1]; }
+      root = mul(root, 0x02);
+    }
+    return r;
+  }
+  function remainder(data, div){
+    const r = div.map(() => 0);
+    data.forEach(b => {
+      const f = b ^ r.shift();
+      r.push(0);
+      div.forEach((c, i) => { r[i] ^= mul(c, f); });
+    });
+    return r;
+  }
+
+  // ---- 字 → 符号の並び(byte モード) ----
+  function utf8(text){
+    const s = unescape(encodeURIComponent(String(text)));
+    const out = [];
+    for (let i = 0; i < s.length; i++) out.push(s.charCodeAt(i));
+    return out;
+  }
+  function codewords(bytes, ver, e){
+    const bits = [];
+    const put = (v, n) => { for (let i = n - 1; i >= 0; i--) bits.push((v >>> i) & 1); };
+    put(4, 4);                                         // byte モード 0100
+    put(bytes.length, ver <= 9 ? 8 : 16);              // 字数
+    bytes.forEach(b => put(b, 8));
+    const cap = dataCodewords(ver, e) * 8;
+    put(0, Math.min(4, cap - bits.length));            // 終わりの印
+    put(0, (8 - bits.length % 8) % 8);
+    const out = [];
+    for (let i = 0; i < bits.length; i += 8){ let b = 0; for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j]; out.push(b); }
+    for (let pad = 0xEC; out.length < cap / 8; pad ^= 0xEC ^ 0x11) out.push(pad);
+    return out;
+  }
+  // 塊に分けて誤りを直す符号を足し、互い違いに並べる
+  function interleave(data, ver, e){
+    const nb = BLOCKS[e.row][ver], el = ECC_PER_BLOCK[e.row][ver];
+    const raw = Math.floor(rawModules(ver) / 8);
+    const nShort = nb - raw % nb, shortLen = Math.floor(raw / nb);
+    const div = divisor(el);
+    const blocks = [];
+    for (let i = 0, k = 0; i < nb; i++){
+      const dat = data.slice(k, k + shortLen - el + (i < nShort ? 0 : 1));
+      k += dat.length;
+      const ecc = remainder(dat, div);
+      if (i < nShort) dat.push(0);
+      blocks.push(dat.concat(ecc));
+    }
+    const out = [];
+    for (let i = 0; i < blocks[0].length; i++) blocks.forEach((b, j) => { if (i !== shortLen - el || j >= nShort) out.push(b[i]); });
+    return out;
+  }
+
+  // ---- 升目 ----
+  function grid(ver){
+    const size = ver * 4 + 17;
+    const mods = [], fn = [];
+    for (let y = 0; y < size; y++){ mods.push(new Array(size).fill(false)); fn.push(new Array(size).fill(false)); }
+    const set = (x, y, d) => { mods[y][x] = d; fn[y][x] = true; };
+    return { size, mods, fn, set };
+  }
+  function alignPos(ver){
+    if (ver === 1) return [];
+    const n = Math.floor(ver / 7) + 2, size = ver * 4 + 17;
+    const step = ver === 32 ? 26 : Math.ceil((ver * 4 + 4) / (n * 2 - 2)) * 2;
+    const r = [6];
+    for (let p = size - 7; r.length < n; p -= step) r.splice(1, 0, p);
+    return r;
+  }
+  function drawFormat(g, e, mask){
+    const data = (e.bits << 3) | mask;
+    let rem = data;
+    for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    const bits = ((data << 10) | rem) ^ 0x5412;
+    const b = i => ((bits >>> i) & 1) !== 0;
+    for (let i = 0; i <= 5; i++) g.set(8, i, b(i));
+    g.set(8, 7, b(6)); g.set(8, 8, b(7)); g.set(7, 8, b(8));
+    for (let i = 9; i < 15; i++) g.set(14 - i, 8, b(i));
+    for (let i = 0; i < 8; i++) g.set(g.size - 1 - i, 8, b(i));
+    for (let i = 8; i < 15; i++) g.set(8, g.size - 15 + i, b(i));
+    g.set(8, g.size - 8, true);                         // いつも黒の 1 升
+  }
+  function drawFunctions(g, ver, e){
+    const S = g.size;
+    for (let i = 0; i < S; i++){ g.set(6, i, i % 2 === 0); g.set(i, 6, i % 2 === 0); }
+    [[3, 3], [S - 4, 3], [3, S - 4]].forEach(([cx, cy]) => {
+      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++){
+        const x = cx + dx, y = cy + dy, d = Math.max(Math.abs(dx), Math.abs(dy));
+        if (x >= 0 && x < S && y >= 0 && y < S) g.set(x, y, d !== 2 && d !== 4);
+      }
+    });
+    const ap = alignPos(ver), last = ap.length - 1;
+    ap.forEach((ax, i) => ap.forEach((ay, j) => {
+      if ((i === 0 && j === 0) || (i === 0 && j === last) || (i === last && j === 0)) return;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) g.set(ax + dx, ay + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }));
+    drawFormat(g, e, 0);                                // 場所をとっておく(模様を決めてから書き直す)
+    if (ver >= 7){
+      let rem = ver;
+      for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25);
+      const bits = (ver << 12) | rem;
+      for (let i = 0; i < 18; i++){
+        const d = ((bits >>> i) & 1) !== 0, a = S - 11 + i % 3, b = Math.floor(i / 3);
+        g.set(a, b, d); g.set(b, a, d);
+      }
+    }
+  }
+  function drawData(g, cw){
+    let i = 0;
+    const S = g.size;
+    for (let right = S - 1; right >= 1; right -= 2){
+      if (right === 6) right = 5;
+      for (let v = 0; v < S; v++) for (let j = 0; j < 2; j++){
+        const x = right - j, up = ((right + 1) & 2) === 0, y = up ? S - 1 - v : v;
+        if (!g.fn[y][x] && i < cw.length * 8){ g.mods[y][x] = ((cw[i >>> 3] >>> (7 - (i & 7))) & 1) !== 0; i++; }
+      }
+    }
+  }
+  const MASKS = [
+    (x, y) => (x + y) % 2 === 0,
+    (x, y) => y % 2 === 0,
+    (x, y) => x % 3 === 0,
+    (x, y) => (x + y) % 3 === 0,
+    (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
+    (x, y) => x * y % 2 + x * y % 3 === 0,
+    (x, y) => (x * y % 2 + x * y % 3) % 2 === 0,
+    (x, y) => ((x + y) % 2 + x * y % 3) % 2 === 0
+  ];
+  function applyMask(g, m){
+    const f = MASKS[m];
+    for (let y = 0; y < g.size; y++) for (let x = 0; x < g.size; x++) if (!g.fn[y][x] && f(x, y)) g.mods[y][x] = !g.mods[y][x];
+  }
+  // 罰点(読み取りにくい形ほど多い。ISO/IEC 18004 の 4 つの決まり)
+  const FINDER = [[1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1]];
+  function penalty(g){
+    const S = g.size, M = g.mods;
+    let p = 0, dark = 0;
+    const line = get => {
+      let run = 1;
+      for (let i = 1; i <= S; i++){
+        if (i < S && get(i) === get(i - 1)) run++;
+        else { if (run >= 5) p += 3 + (run - 5); run = 1; }
+      }
+      for (let i = 0; i + 11 <= S; i++) FINDER.forEach(f => { if (f.every((v, k) => (get(i + k) ? 1 : 0) === v)) p += 40; });
+    };
+    for (let y = 0; y < S; y++) line(x => M[y][x]);
+    for (let x = 0; x < S; x++) line(y => M[y][x]);
+    for (let y = 0; y + 1 < S; y++) for (let x = 0; x + 1 < S; x++){ const c = M[y][x]; if (c === M[y][x + 1] && c === M[y + 1][x] && c === M[y + 1][x + 1]) p += 3; }
+    M.forEach(r => r.forEach(c => { if (c) dark++; }));
+    const total = S * S;
+    p += (Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1) * 10;
+    return p;
+  }
+
+  function make(text, opts){
+    opts = opts || {};
+    const e = ECL[opts.ecl || 'M'];
+    if (!e) throw util.error('bad', '誤りを直す強さが違う: ' + opts.ecl);
+    const bytes = utf8(text);
+    let ver = 1;
+    for (; ver <= 40; ver++){ const head = 4 + (ver <= 9 ? 8 : 16); if (head + bytes.length * 8 <= dataCodewords(ver, e) * 8) break; }
+    if (ver > 40) throw util.error('big', 'QR に入りきらない長さ: ' + bytes.length);
+    const cw = interleave(codewords(bytes, ver, e), ver, e);
+    const g = grid(ver);
+    drawFunctions(g, ver, e);
+    drawData(g, cw);
+    let mask = opts.mask;
+    if (!(Number.isInteger(mask) && mask >= 0 && mask < 8)){
+      let best = Infinity;
+      for (let m = 0; m < 8; m++){
+        applyMask(g, m); drawFormat(g, e, m);
+        const s = penalty(g);
+        if (s < best){ best = s; mask = m; }
+        applyMask(g, m);                                // もとに戻す(同じ模様をもう一度かけると戻る)
+      }
+    }
+    applyMask(g, mask); drawFormat(g, e, mask);
+    const rows = g.mods.map(r => r.map(c => (c ? 1 : 0)));
+    return { version: ver, size: g.size, ecl: opts.ecl || 'M', mask, rows, dark: (x, y) => x >= 0 && y >= 0 && x < g.size && y < g.size && rows[y][x] === 1 };
+  }
+
+  Yomu.qr = { make, _: { rawModules, dataCodewords: (ver, ecl) => dataCodewords(ver, ECL[ecl]), divisor, remainder, alignPos, ECL } };
 })();
 
 /* ---- core/translate.js ---- */
@@ -9510,6 +10530,15 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.full [data-box="picked"] { margin-top: 12px; display: flex; flex-direction: column; }',
       '.full .result .link { margin-top: 4px; }',
       '.full .result .hint { margin: 4px 0 0; }',
+      // 同期(工程W7a): QR は白い地に黒(暗い表示でも。カメラが読めるように)・合言葉は 4 字ずつ
+      '.full .qrbox { margin-top: 20px; display: flex; justify-content: center; }',
+      '.full .qr { width: 216px; height: 216px; border-radius: 12px; display: block; }',
+      '.full .passrow { flex-wrap: wrap; }',
+      '.full .pass { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; ' + t(LEAD, 700, TIGHT) + ' letter-spacing: 0.04em; }',
+      '.full input.text.mono { margin-top: 12px; ' + t(CAP, 500, BASE) + ' }',
+      '.full .syncsplit { display: flex; flex-direction: column; }',
+      '.full .syncsplit[hidden] { display: none; }',
+      '.full .syncbody { display: flex; flex-direction: column; }',
       // 調べるための記録を、自動で写せなかったとき: 字をそのまま出す(長押しして、選べる。ui/settings_diag.js)
       '.full .dump { margin-top: 8px; border-radius: 16px; background: ' + v('well') + '; padding: 12px 16px; max-height: 160px; overflow: auto; overflow-wrap: anywhere; -webkit-user-select: all; user-select: all; ' + t(CAP, 400, BASE) + ' }',
       '.full .dump.lines { white-space: pre-wrap; }',   // 英文の点検(工程S-2)の字は、行に分けてあるので、改行を残す
@@ -9614,6 +10643,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.learn .rcol[data-on]::after { content: ""; position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%); width: 12px; height: 4px; border-radius: 2px; background: ' + v('panelInk') + '; }',
       '.learn .rcol > .rbar { display: block; width: 60%; max-width: 20px; min-height: 4px; border-radius: 4px 4px 0 0; background: ' + v('go') + '; }',   // 記録の棒だけ(.rcol の中)。復習の進み具合の帯 .rv .rbar と名前が同じなので、入れ物で絞る(工程W4c-2 から、帯が 20px に縮んでいた=工程W5a で直した)
       '.learn .rcol[data-on] .rbar { background: ' + v('accent') + '; }',
+      // 端末ごとに色を分けて積む棒(工程W7a。下から、はじめて記録した端末の順。間に地の色の 2px)
+      '.learn .rcol > .rstack { width: 60%; max-width: 20px; min-height: 4px; display: flex; flex-direction: column-reverse; gap: 2px; }',
+      '.learn .rseg { display: block; flex: 0 1 0; min-height: 2px; }',
+      '.learn .rseg:last-child { border-radius: 4px 4px 0 0; }',
+      '.learn .rlegend { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px; ' + t(CAP, 700, TIGHT) + ' }',
+      '.learn .rlegend li { display: flex; align-items: center; gap: 8px; }',
+      '.learn .rlegend i { width: 12px; height: 12px; border-radius: 4px; flex: none; }',
+      ['0', '1', '2', 'x'].map(k => '.learn .rseg[data-slot="' + k + '"], .learn .rlegend [data-slot="' + k + '"] i { background: ' + v(k === 'x' ? 'devX' : 'dev' + k) + '; }').join(' '),
       '.learn .rnobar { position: absolute; left: 48px; right: 0; top: 50%; transform: translateY(-50%); text-align: center; ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
       '.learn .rxs { display: flex; justify-content: space-between; padding-left: 48px; font-family: ' + FE + '; ' + t(CAP, 500, TIGHT) + ' color: ' + v('panelMuted') + '; font-variant-numeric: tabular-nums; }',
       '.learn .rnote2 { padding: 0 4px; ' + t(CAP, 400, BASE) + ' color: ' + v('panelMuted') + '; }',
@@ -11507,7 +12544,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const more = [];
     const voiceRow = row('voice', ui.t('set.voice'), to('voice'));
     if (has('voice')) voiceRow.val.textContent = Y.settings.get().voice.name || ui.t(Y.env && Y.env.info && Y.env.info.ios ? 'set.voiceAuto' : 'set.voiceAuto.pick');   // iPhone は、端末の設定の声。ほかは、こちらが選ぶ(端末に、決める所が無い)
-    more.push(voiceRow.b, row('data', ui.t('set.data'), to('data')).b);
+    const syncRow = row('sync', ui.t('set.sync'), to('sync'));   // 同期(工程W7a。ui/settings_sync.js)
+    if (has('sync') && Y.sync) Y.sync.status().then(st => { if (my === gen) syncRow.val.textContent = ui.t(st && st.on ? 'set.syncOn' : 'set.syncOff'); }, () => {});
+    more.push(has('sync') ? syncRow.b : null, voiceRow.b, row('data', ui.t('set.data'), to('data')).b);
     if (Y.plan.shows('runs')) more.push(row('runs', ui.t('set.runs'), to('runs')).b);   // 通信の記録は、いちばん下(ふだんは見ない。調べるときのもの=工程5b-2c)
     const modelsRow = row('models', ui.t('set.models'), to('models'));
     if (has('models') && Y.plan.shows('model')) modelsRow.val.textContent = short(Y.settings.modelFor(ui.status().level).m);
@@ -11786,7 +12825,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     open(params){
       const s = ui.status();
       if (!s || s.state === 'none') return;
-      go((params && params.page) || 'top');
+      go((params && params.page) || 'top', params && params.arg);
     },
     close,
     page: () => page
@@ -12400,6 +13439,285 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   S.add('data', data);
 })();
 
+/* ---- ui/settings_sync.js ---- */
+// ui/settings_sync.js — 設定の「同期」(部品の約束 §8-12・§9-6。工程W7a。写真の案は design/W7a/)
+//   画面の型と部品は ui/settings.js のもの(Yomu.uiSettings)を使う。ここは、画面を足すだけ(add)。
+//   sync       = つないでいない: 送るもの・送らないもの → 「この端末から始める」「ほかの端末とつなぐ」/つないである: 様子・「今すぐ同じにする」・もう 1 台をつなぐ・止める 2 つ(2 回押し)
+//   sync-start = 1 台目: 置き場の住所 → 合言葉を作ってつなぎ、置き場を確かめてから、はじめの同期
+//   sync-join  = 2 台目から: つなぐ字を貼る(または、住所と合言葉を別々に打つ=PC で、スマホの画面を見ながら)。置き場に部屋が無ければ、つながない
+//   sync-link  = もう 1 台をつなぐ: QR(スマホ・タブレットのカメラで写す=専用のページの住所 # つなぐ字)・合言葉を 4 字ずつ・つなぐ字のコピー
+//   専用のページを「# つなぐ字」で開いたとき(QR を写したとき)は、学ぶ画面が Yomu.uiSync.fromHash を呼び、sync-join を、字を入れた形で出す。
+//   知らせは行き止まりにしない(直し方と、それでも読める・復習できること)。合言葉は、画面のほか、どこにも出さない(記録・知らせ・読み上げの知らせ)。
+(function(){
+  'use strict';
+  const Y = Yomu;
+  const ui = Yomu.ui, S = Yomu.uiSettings;
+  const doc = () => ui.root().ownerDocument;
+  const clip = () => doc().defaultView.navigator.clipboard;
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const sync = () => Y.sync;
+
+  const alertBox = text => ui.el('div', { class: 'alert' }, [ui.icon('alert', 18, 2), ui.el('span', { text })]);
+  const okLine = text => ui.el('div', { class: 'okline' }, [ui.icon('check', 18, 2.6), ui.el('span', { text })]);
+  const stateLine = text => ui.el('div', { class: 'state', text });
+  const hint = text => ui.el('p', { class: 'hint', text });
+  const stat = (name, label, val) => ui.el('div', { class: 'rowstat', 'data-line': name }, [ui.el('span', { text: label }), ui.el('span', { class: 'val host', text: val })]);
+  const p2 = n => (n < 10 ? '0' : '') + n;
+  const when = iso => { const d = new Date(iso); return isNaN(d) ? '' : (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()); };
+  // 失敗の種類 → 直し方つきの文(§8-12 の 6 の「失敗」)。どれにも「それでも読める・復習できる」を添える
+  const failText = kind => ui.t(Y.msg.has('sync.err.' + kind) ? 'sync.err.' + kind : 'sync.err.server') + ui.t('sync.still');
+  const okText = r => ui.t('sync.done', { got: (r && r.n && r.n.got) || 0, sent: (r && r.n && r.n.sent) || 0 });
+  // 結果の枠(ボタンのすぐ下)。kind = ok|wait|fail
+  function result(){
+    const box = ui.el('div', { class: 'result', 'data-result': '', hidden: true });
+    return {
+      box,
+      show(kind, text){
+        box.hidden = false; box.setAttribute('data-result', kind);
+        S.fill(box, [kind === 'ok' ? okLine(text) : kind === 'wait' ? stateLine(text) : alertBox(text)]);
+        ui.announce(text, kind === 'fail');
+      },
+      hide(){ box.hidden = true; }
+    };
+  }
+  // 字の欄(貼るボタンつき)
+  function field(id, label, o){
+    o = o || {};
+    const input = ui.el('input', { class: 'text', id, type: 'text', autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', inputmode: o.inputmode || 'url', 'data-act': o.act || id, value: o.value || '' });
+    const canPaste = !!(clip() && clip().readText);
+    const paste = canPaste ? ui.el('button', { class: 'side', 'data-act': 'paste', onclick: () => {
+      clip().readText().then(t => { if (t) input.value = String(t).trim(); }, () => ui.toast(ui.t('con.pasteFail')));
+    } }, [ui.t('con.paste')]) : null;
+    return { input, box: ui.el('div', { class: 'field' }, [ui.el('label', { for: id, text: label }), ui.el('div', { class: 'keyrow' }, [input, paste])]) };
+  }
+
+  // ---- 同期(入口)----
+  function main(){
+    const alive = S.alive();
+    const body = ui.el('div', { class: 'syncbody' }, [stateLine(ui.t('learn.loading'))]);
+    sync().status().then(st => { if (alive()) S.fill(body, st.on ? onKids(st, alive) : offKids()); }, () => { if (alive()) S.fill(body, [alertBox(ui.t('err.other'))]); });
+    return S.shell({ name: 'sync', title: ui.t('set.sync'), back: 'top', body: [body] });
+  }
+  function offKids(){
+    return [].concat(
+      [ui.el('p', { class: 'lead', text: ui.t('sync.lead') })],
+      S.group(ui.t('sync.what'), [stat('send', ui.t('sync.send'), ui.t('sync.sendV')), stat('keep', ui.t('sync.keep'), ui.t('sync.keepV')), stat('dev', ui.t('sync.devOnly'), ui.t('sync.devOnlyV'))]),
+      [hint(ui.t('sync.lock'))],
+      S.group(ui.t('sync.connect'), [S.row('sync-start', ui.t('sync.start'), () => S.go('sync-start')).b, S.row('sync-join', ui.t('sync.join'), () => S.go('sync-join')).b]),
+      [hint(ui.t('sync.which'))]
+    );
+  }
+  function onKids(st, alive){
+    let busy = false;
+    const res = result();
+    const atVal = ui.el('span', { class: 'val host', text: st.at ? when(st.at) : ui.t('sync.never') });
+    const runBtn = ui.el('button', { class: 'primary', 'data-act': 'run', onclick: async () => {
+      if (busy) return;
+      busy = true; runBtn.disabled = true;
+      res.show('wait', ui.t('sync.running'));
+      try {
+        const r = await sync().run();
+        if (!alive()) return;
+        if (r && r.ok){ res.show('ok', okText(r)); atVal.textContent = when(r.at); }
+        else res.show('fail', failText(r && r.error));
+      } catch (e){ if (alive()) res.show('fail', failText('server')); }
+      finally { if (alive()){ busy = false; runBtn.disabled = false; } }
+    } }, [ui.el('span', { text: ui.t('sync.run') })]);
+    if (st.last && st.last.ok === false) res.show('fail', failText(st.last.error));     // 前の回(裏で送った回)がうまくいかなかった
+    // 止める 2 つ(どちらも 2 回押し)
+    const offLabel = ui.el('span', { text: ui.t('sync.off') });
+    const offBtn = ui.el('button', { class: 'textbtn', 'data-act': 'off' }, [offLabel]);
+    const dropLabel = ui.el('span', { text: ui.t('sync.drop') });
+    const dropBtn = ui.el('button', { class: 'textbtn', 'data-act': 'drop' }, [dropLabel]);
+    const stopRes = result();
+    const d1 = ui.twoTap(offBtn, { label: offLabel, armed: ui.t('sync.offArmed'), fn: async () => {
+      await sync().disconnect().catch(() => null);
+      if (!alive()) return;
+      ui.toast(ui.t('sync.offDone'));
+      S.go('sync');
+    } });
+    const d2 = ui.twoTap(dropBtn, { label: dropLabel, armed: ui.t('sync.dropArmed'), fn: async () => {
+      stopRes.show('wait', ui.t('sync.dropping'));
+      const r = await sync().drop().catch(() => ({ ok: false, error: 'server' }));
+      if (!alive()) return;
+      if (r && r.ok){ ui.toast(ui.t('sync.dropDone')); S.go('sync'); }
+      else stopRes.show('fail', failText(r && r.error));
+    } });
+    S.onLeave(() => { d1(); d2(); });
+    return [].concat(
+      [ui.el('div', { class: 'rows', 'data-box': 'state' }, [
+        stat('on', ui.t('set.sync.short'), ui.t('sync.on')),
+        ui.el('div', { class: 'rowstat', 'data-line': 'at' }, [ui.el('span', { text: ui.t('sync.at') }), atVal]),
+        stat('host', ui.t('sync.host'), st.host || '')
+      ])],
+      [runBtn, res.box, hint(ui.t('sync.auto'))],
+      S.group(ui.t('sync.others'), [S.row('sync-link', ui.t('sync.more'), () => S.go('sync-link')).b]),
+      [hint(ui.t('sync.settingsNote'))],
+      [ui.el('div', { class: 'label', text: ui.t('sync.stop') }), offBtn, hint(ui.t('sync.offNote')), dropBtn, hint(ui.t('sync.dropNote')), stopRes.box]
+    );
+  }
+
+  // ---- 1 台目: 置き場の住所から始める ----
+  function start(){
+    const alive = S.alive();
+    let busy = false;
+    const url = field('y-sync-url', ui.t('sync.url'), { act: 'url' });
+    const res = result();
+    const btn = ui.el('button', { class: 'primary', 'data-act': 'start', onclick: () => go() }, [ui.el('span', { text: ui.t('sync.startGo') })]);
+    url.input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+    async function go(){
+      if (busy) return;
+      const u = url.input.value.trim();
+      if (!/^https?:\/\/[^\s/?#]+/i.test(u)){ res.show('fail', ui.t('sync.err.url')); return; }
+      busy = true; btn.disabled = true;
+      res.show('wait', ui.t('sync.checking'));
+      try {
+        await sync().connect({ pass: sync().newPass(), url: u });
+        const c = await sync().check();
+        if (!alive()) return;
+        if (!c || !c.ok){ await sync().disconnect().catch(() => null); if (alive()) res.show('fail', failText(c && c.error)); return; }
+        res.show('wait', ui.t('sync.first'));
+        const r = await sync().run();
+        if (!alive()) return;
+        if (r && r.ok){ ui.toast(okText(r)); S.go('sync'); }
+        else S.go('sync');                                // つないだまま(様子の画面に、うまくいかなかったわけが出る)
+      } catch (e){
+        await sync().disconnect().catch(() => null);
+        if (alive()) res.show('fail', failText(e && e.kind === 'bad' ? 'url' : 'server'));
+      } finally { if (alive()){ busy = false; btn.disabled = false; } }
+    }
+    return S.shell({ name: 'sync-start', title: ui.t('sync.start'), back: 'sync', body: [
+      ui.el('p', { class: 'lead', text: ui.t('sync.startLead') }), url.box, btn, res.box, hint(ui.t('sync.startNote'))
+    ] });
+  }
+
+  // ---- 2 台目から: つなぐ字を入れる(または、住所と合言葉を別々に)----
+  const tidyLink = v => { v = String(v || '').trim(); try { v = decodeURIComponent(v); } catch (e){} const i = v.indexOf('ys1:'); return i > 0 ? v.slice(i) : v; };
+  function join(arg){
+    arg = arg || {};
+    const alive = S.alive();
+    let busy = false, split = false;
+    const one = field('y-sync-link', ui.t('sync.linkField'), { act: 'link', value: arg.link || '', inputmode: 'text' });
+    const url = field('y-sync-url2', ui.t('sync.url'), { act: 'url' });
+    const pass = field('y-sync-pass', ui.t('sync.pass'), { act: 'pass', inputmode: 'text' });
+    const two = ui.el('div', { class: 'syncsplit', hidden: true }, [url.box, pass.box, hint(ui.t('sync.passNote'))]);
+    const swap = ui.el('button', { class: 'textbtn gap', 'data-act': 'split', onclick: () => {
+      split = !split; one.box.hidden = split; two.hidden = !split;
+      swap.textContent = ui.t(split ? 'sync.oneField' : 'sync.twoFields');
+    } }, [ui.t('sync.twoFields')]);
+    const res = result();
+    const btn = ui.el('button', { class: 'primary', 'data-act': 'join', onclick: () => go() }, [ui.el('span', { text: ui.t('sync.joinGo') })]);
+    async function go(){
+      if (busy) return;
+      let target;
+      try {
+        target = split ? { pass: pass.input.value, url: url.input.value.trim() } : sync().link.read(tidyLink(one.input.value));
+      } catch (e){ res.show('fail', ui.t(split ? 'sync.err.pass' : 'sync.err.link')); return; }
+      busy = true; btn.disabled = true;
+      res.show('wait', ui.t('sync.checking'));
+      try {
+        await sync().connect(target);
+        const c = await sync().check();
+        if (!alive()) return;
+        if (!c || !c.ok || !c.room){
+          await sync().disconnect().catch(() => null);
+          if (alive()) res.show('fail', c && c.ok ? ui.t('sync.err.noRoom') + ui.t('sync.still') : failText(c && c.error));
+          return;
+        }
+        res.show('wait', ui.t('sync.joining'));
+        const r = await sync().run();
+        if (!alive()) return;
+        if (r && r.ok) ui.toast(okText(r));
+        S.go('sync');
+      } catch (e){
+        await sync().disconnect().catch(() => null);
+        if (alive()) res.show('fail', ui.t(split ? 'sync.err.pass' : 'sync.err.link'));
+      } finally { if (alive()){ busy = false; btn.disabled = false; } }
+    }
+    return S.shell({ name: 'sync-join', title: ui.t('sync.join'), back: 'sync', body: [
+      ui.el('p', { class: 'lead', text: ui.t(arg.fromQr ? 'sync.joinQr' : 'sync.joinLead') }), one.box, two, swap, btn, res.box, hint(ui.t('sync.joinNote'))
+    ] });
+  }
+
+  // ---- もう 1 台をつなぐ ----
+  function qrSvg(text){
+    const q = Y.qr.make(text, { ecl: 'M' });
+    const Q = 4, n = q.size + Q * 2;                          // まわりに 4 升の白(読み取りに要る)
+    let d = '';
+    q.rows.forEach((r, y) => r.forEach((c, x) => { if (c) d += 'M' + (x + Q) + ' ' + (y + Q) + 'h1v1h-1z'; }));
+    const D = doc();
+    const svg = D.createElementNS(SVGNS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + n + ' ' + n);
+    svg.setAttribute('class', 'qr');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', ui.t('sync.qrName'));
+    svg.setAttribute('shape-rendering', 'crispEdges');
+    const bg = D.createElementNS(SVGNS, 'rect'); bg.setAttribute('width', String(n)); bg.setAttribute('height', String(n)); bg.setAttribute('fill', '#FFFFFF');
+    const p = D.createElementNS(SVGNS, 'path'); p.setAttribute('d', d); p.setAttribute('fill', '#000000');
+    svg.appendChild(bg); svg.appendChild(p);
+    return svg;
+  }
+  const groups = pass => String(pass || '').match(/.{1,4}/g) || [];
+  function more(){
+    const alive = S.alive();
+    const body = ui.el('div', { class: 'syncbody' }, [stateLine(ui.t('learn.loading'))]);
+    sync().current().then(cur => {
+      if (!alive()) return;
+      if (!cur){ S.fill(body, [alertBox(ui.t('sync.err.off'))]); return; }
+      const base = Y.env && Y.env.siteUrl;
+      const kids = [];
+      if (base){
+        kids.push(ui.el('p', { class: 'lead', text: ui.t('sync.qrLead') }), ui.el('div', { class: 'qrbox', 'data-box': 'qr' }, [qrSvg(String(base).replace(/#.*$/, '') + '#' + cur.link)]));
+      }
+      const full = ui.el('input', { class: 'text mono', type: 'text', readonly: '', 'data-act': 'linktext', value: cur.link, 'aria-label': ui.t('sync.linkField'), onfocus: e => { try { e.target.select(); } catch (x){} } });
+      const copy = ui.el('button', { class: 'side wide', 'data-act': 'copy', onclick: () => {
+        const c = clip();
+        if (!c || !c.writeText){ full.focus(); ui.toast(ui.t('sync.copyFail')); return; }
+        c.writeText(cur.link).then(() => ui.toast(ui.t('sync.copied')), () => { full.focus(); ui.toast(ui.t('sync.copyFail')); });
+      } }, [ui.el('span', { text: ui.t('sync.copy') })]);
+      kids.push(
+        S.group(ui.t(base ? 'sync.noCamera' : 'sync.linkField'), [])[0],
+        ui.el('div', { class: 'rows', 'data-box': 'pass' }, [
+          ui.el('div', { class: 'rowstat' }, [ui.el('span', { text: ui.t('sync.host') }), ui.el('span', { class: 'val host', text: (() => { try { return new URL(cur.url).hostname; } catch (e){ return cur.url; } })() })]),
+          ui.el('div', { class: 'rowstat passrow' }, [ui.el('span', { text: ui.t('sync.pass') }), ui.el('span', { class: 'pass en', 'data-pass': '' }, groups(cur.pass).map(g => ui.el('span', { text: g })))])
+        ]),
+        hint(ui.t('sync.typeNote')),
+        full, copy,
+        hint(ui.t('sync.secret'))
+      );
+      S.fill(body, kids);
+    }, () => { if (alive()) S.fill(body, [alertBox(ui.t('err.other'))]); });
+    return S.shell({ name: 'sync-link', title: ui.t('sync.more'), back: 'sync', body: [body] });
+  }
+
+  S.add('sync', main);
+  S.add('sync-start', start);
+  S.add('sync-join', join);
+  S.add('sync-link', more);
+
+  // 専用のページを「# つなぐ字」で開いたとき(QR を写した)。住所から # のうしろを消して(履歴にも残さない)、つなぐ画面を出す
+  Yomu.uiSync = {
+    fromHash(win){
+      try {
+        let h = String(win.location.hash || '');
+        try { h = decodeURIComponent(h); } catch (e){}             // ブラウザによっては : を %3A にする
+        if (!/^#ys1:/i.test(h)) return false;
+        const link = tidyLink(h.slice(1));
+        win.history.replaceState(null, '', win.location.pathname + win.location.search);
+        // 学ぶ画面を描いた直後は、まだ土台の様子が無いことがある(設定は、様子があるときだけ開く)=少し待ってから開く
+        let n = 0;
+        const open = () => {
+          const s = ui.status();
+          if ((!s || s.state === 'none') && n++ < 40){ win.setTimeout(open, 100); return; }
+          ui.show('settings', { page: 'sync-join', arg: { link, fromQr: true } });
+        };
+        open();
+        return true;
+      } catch (e){ return false; }
+    }
+  };
+})();
+
 /* ---- ui/settings_diag.js ---- */
 // ui/settings_diag.js — うまく動かないときの画面(部品の約束 §9-6・§9-8。工程5b-2b)
 //   「直し方」(部品の名前は fix): 知らせ stuck(起動の途中で、保存を読むのが終わらない)の「直し方を見る」から出す、画面いっぱいの1枚。
@@ -12564,7 +13882,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 //   広い画面(ui.learnSideMin 以上)は、CSS だけで、頭と下のタブを左の行き先の一覧にまとめる(工程W4c-2。ui/style.js)。
 //   ホームの「はじめる」の先=復習の流れ(工程W4b-2)は、答えを Yomu.review.start() の Session に書く。単語帳の「外す」は Yomu.vocab.remove。
 //   ほかは保存を読むだけ(Yomu.review.home・Yomu.learn.recent・Yomu.learn.words・Yomu.learn.record。見るのは shared だけ=§8-10)。通信しない。
-//   外から来た文字(作品と話の題・サイトの名前)は textContent だけ。開き直した・ほかのタブから戻った・設定が変わったら、読み直す
+//   外から来た文字(作品と話の題・サイトの名前)は textContent だけ。開き直した・ほかのタブから戻った・設定が変わった・同期で手元が変わったら、読み直す
+//   自動の同期(§8-12 の 4。工程W6b-2): 開いたとき・そのタブに戻ったとき・復習の回のおわりに、裏で Yomu.sync.when を呼ぶ(待たない。つないでいなければ何もしない)
 (function(){
   'use strict';
   const Y = Yomu;
@@ -12845,6 +14164,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (!mine || mine.end) return;
     mine.end = true;
     hush();
+    syncWhen('end');
     const sum = mine.s.summary();
     let h = null;
     try { h = await Y.review.home(); } catch (e){}             // 読めなければ「覚えた語」と「もう ○ 語」を出さない
@@ -13197,13 +14517,48 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const p = Math.pow(10, Math.floor(Math.log10(max)));
     return [5 * p, 2 * p, p].find(x => x <= max) || p;
   }
-  function chart(days, today){
+  // 端末ごとの呼び名(工程W7a): 種類の名前(同じ種類が 2 台あれば、2 台目から番号)・この端末には「(この端末)」。色の位置が 'x' の端末は、まとめて「ほかの端末」
+  function devNames(devs){
+    const seen = {}, out = new Map();
+    devs.forEach(d => {
+      if (d.slot === 'x') return out.set(d.dev, ui.t('rec.devOther'));
+      const base = ui.t(Y.msg.has('rec.dev.' + d.kind) ? 'rec.dev.' + d.kind : 'rec.dev.none');
+      seen[base] = (seen[base] || 0) + 1;
+      out.set(d.dev, (seen[base] > 1 ? base + ' ' + seen[base] : base) + (d.self ? ui.t('rec.self') : ''));
+    });
+    return out;
+  }
+  // 日ごとの端末の数を、色の位置ごとにまとめる('x' はひとつに)→ [{ slot, name, n }…](並びは devs の順)
+  function groups(by, devs, names){
+    const out = [];
+    devs.forEach(d => {
+      const n = by && by[d.dev] || 0;
+      if (!n) return;
+      const g = out.find(x => x.slot === d.slot);
+      if (g && d.slot === 'x') g.n += n; else out.push({ slot: d.slot, name: names.get(d.dev), n });
+    });
+    return out;
+  }
+  function chart(days, today, devs){
+    const multi = Array.isArray(devs) && devs.length > 1;   // 端末が 2 台から: 色を分けて積む(1 台のうちは、今までの 1 色)
+    const names = multi ? devNames(devs) : null;
     const max = days.reduce((m, d) => Math.max(m, d.enWords), 0), tick = niceTick(max);
     let at = days.findIndex(d => d.day === rs.pick);
     if (at < 0) at = days.length - 1;
     const pick = ui.el('p', { class: 'rpick', 'aria-hidden': 'true' });
-    const cols = days.map(d => ui.el('span', { class: 'rcol' }, d.enWords > 0 ? [ui.el('i', { class: 'rbar', style: 'height: ' + (100 * d.enWords / max).toFixed(2) + '%' })] : []));
-    const valueText = i => ui.t('rec.pick', { date: dayLong(days[i].day, today), sep: sep(), n: fmt(days[i].enWords) });
+    const bar = d => {
+      const h = 'height: ' + (100 * d.enWords / max).toFixed(2) + '%';
+      if (!multi) return ui.el('i', { class: 'rbar', style: h });
+      const gs = groups(d.by, devs, names), sum = gs.reduce((s, g) => s + g.n, 0) || 1;
+      return ui.el('span', { class: 'rstack', style: h }, gs.map(g => ui.el('i', { class: 'rseg', 'data-slot': String(g.slot), style: 'flex-grow: ' + (g.n / sum).toFixed(4) })));
+    };
+    const cols = days.map(d => ui.el('span', { class: 'rcol' }, d.enWords > 0 ? [bar(d)] : []));
+    const textOf = d => {
+      const base = { date: dayLong(d.day, today), sep: sep(), n: fmt(d.enWords) };
+      const gs = multi ? groups(d.by, devs, names) : [];
+      return gs.length > 1 ? ui.t('rec.pickBy', Object.assign(base, { list: gs.map(g => ui.t('rec.byDev', { name: g.name, n: fmt(g.n) })).join(ui.t('rec.devSep')) })) : ui.t('rec.pick', base);
+    };
+    const valueText = i => textOf(days[i]);
     const colsBox = ui.el('span', { class: 'rcols', 'aria-hidden': 'true' }, cols);
     const plot = ui.el('div', { class: 'rplot', role: 'slider', tabindex: '0', 'aria-label': ui.t('rec.chart'), 'aria-valuemin': '0', 'aria-valuemax': String(days.length - 1) }, [
       tick ? ui.el('span', { class: 'rtick', style: 'bottom: ' + (100 * tick / max).toFixed(2) + '%', 'aria-hidden': 'true' }, [ui.el('b', { class: 'en', text: fmt(tick) })]) : null,
@@ -13237,8 +14592,15 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       pick,
       plot,
       ui.el('div', { class: 'rxs', 'aria-hidden': 'true' }, [ui.el('span', { class: 'en', text: dayShort(days[0].day) }), ui.el('span', { class: 'en', text: dayShort(days[days.length - 1].day) })]),
-      ui.el('ul', { class: 'sr' }, days.map(d => ui.el('li', { text: ui.t('rec.pick', { date: dayLong(d.day, today), sep: sep(), n: fmt(d.enWords) }) })))   // 表の形(読み上げ用)
+      multi ? legend(devs, names) : null,
+      ui.el('ul', { class: 'sr' }, days.map(d => ui.el('li', { text: textOf(d) })))   // 表の形(読み上げ用)
     ]);
+  }
+  // 色の見本と端末の名前(棒のすぐ下。色だけに頼らない=名前を字で)
+  function legend(devs, names){
+    const done = new Set();
+    return ui.el('ul', { class: 'rlegend', 'data-box': 'devs' }, devs.filter(d => { const k = String(d.slot); if (done.has(k)) return false; done.add(k); return true; })
+      .map(d => ui.el('li', { 'data-slot': String(d.slot) }, [ui.el('i', { 'aria-hidden': 'true' }), ui.el('span', { text: names.get(d.dev) })])));
   }
   const recHead = () => ui.el('div', { class: 'vhead' }, [ui.el('h2', { text: ui.t('tab.record') })]);
   function recordView(r){
@@ -13257,7 +14619,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const range = a && b ? ui.t('rec.range', { a, b }) : '';
     const since = r.on && tt.from && dayLong(tt.from, today) ? ui.t('rec.since', { date: dayLong(tt.from, today) }) : '';
     kids.push(
-      ui.el('section', { class: 'lcard rsec', 'data-box': 'week' }, [secHead(ui.t('rec.week'), range), ui.el('div', { class: 'rgrid' }, week), r.on && r.days.length ? chart(r.days, today) : null]),
+      ui.el('section', { class: 'lcard rsec', 'data-box': 'week' }, [secHead(ui.t('rec.week'), range), ui.el('div', { class: 'rgrid' }, week), r.on && r.days.length ? chart(r.days, today, r.devs) : null]),
       ui.el('section', { class: 'lcard rsec', 'data-box': 'total' }, [secHead(ui.t('rec.total'), since), ui.el('div', { class: 'rgrid' }, total)]),
       r.on ? ui.el('p', { class: 'rnote2', text: ui.t('rec.note') }) : null
     );
@@ -13282,6 +14644,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       clearTimeout(stuck);
     }
   }
+
+  // 自動の同期(裏で。待たない)
+  const syncWhen = why => { if (Y.sync && typeof Y.sync.when === 'function') Y.sync.when(why); };
 
   // ---- タブ ----
   function go(name){
@@ -13325,10 +14690,15 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       else if (tab === 'record') loadRecord();
       else if (tab === 'vocab' && list && !one){ const view = ui.view(); loadVocab({ count: true, top: view ? view.scrollTop : null }); }
     };
-    doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible') again(); });
-    win.addEventListener('pageshow', e => { if (e && e.persisted) again(); });
+    doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible'){ again(); syncWhen('back'); } });
+    win.addEventListener('pageshow', e => { if (e && e.persisted){ again(); syncWhen('back'); } });
     Y.settings.on(again);
+    // 同期で手元が変わった(ほかの端末で入れた語・答え など): 今のタブを読み直す(復習の途中・1 語の画面の間は読み直さない=again の決まり)。
+    //   設定だけが変わったときは、設定の合図(上)で読み直すので、ここでは重ねない
+    if (Y.sync && typeof Y.sync.on === 'function') Y.sync.on(e => { if (e && Array.isArray(e.changed) && e.changed.some(p => p !== 'settings')) again(); });
     go('home');
+    syncWhen('open');
+    if (Y.uiSync && win) Y.uiSync.fromHash(win);   // QR を写して「# つなぐ字」で開いた(工程W7a。ui/settings_sync.js)
   }
 
   // Yomu.ui.show('learn', { tab }) = そのタブへ(知らない名前ならホーム。工程W4b-2 の回のおわりの「ホームへ」も、ここから)
@@ -13339,7 +14709,9 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
 /* ---- shell/boot.js ---- */
 // shell/boot.js — 起動(部品の約束 §9-8)。束のいちばん最後で1回だけ呼ばれる(Yomu.boot)
-//   起動では、通信も、辞書の読み込みも、重い処理もしない(ページを開いただけでは何もしない=設計メモ 2-1)。
+//   起動では、AI への通信も、辞書の読み込みも、重い処理もしない(ページを開いただけでは何もしない=設計メモ 2-1)。
+//   自動の同期だけは、本文のページ(どのページでもは、記事と分かったページ)で、前の同期から間があいていれば、裏で送る(§8-12 の 4。工程W6b-2。
+//     つないでいなければ通信しない。Gemini の回数には入らない)。そのタブに戻ったときも同じ
 //   既知のサイト(なろう・カクヨム・見本ページ)は、今までどおり: 印・土台・見張り → 本文ページなら保存の起動 → 表示。本文ページでなければ、URL の見張りだけ。
 //   どのページでも(既知でないページ。v1.51 工程8c-1。2026-10-17 利用者=設計メモ 2-6): 記事と分かるまで、印を付けない・土台を作らない・
 //     見張りを始めない・離れるときの控えを書かない・保存にさわらない。記事と分かったら、残りの部品を動かして(Yomu.rest=§2-3)、今までの起動。
@@ -13379,8 +14751,18 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (Y.devPanel) Y.devPanel.mount();
     if (Y.watch) Y.watch.start({ doc });     // 読んだ時間の見張り(英語まじりで出ている間だけ動く。§8-8)
     diag.mark('ui');
-    if (win) leaving(doc, win);   // win を渡さない = 離れるときの控えを付けない(どのページでもの、知らせのためだけの土台)
+    if (win){ leaving(doc, win); back(doc, win); }   // win を渡さない = 離れるときの控えを付けない(どのページでもの、知らせのためだけの土台)
     return true;
+  }
+
+  // 読むページの自動の同期(§8-12 の 4): 本文のページと分かってから(進行役が保存を読んだ=status().page がある)。間があいていなければ、Yomu.sync.when が何もしない
+  function syncPage(){
+    try { if (Y.sync && typeof Y.sync.when === 'function' && Y.page.status().page) Y.sync.when('page'); } catch (e){}
+  }
+  // そのタブに戻った(裏から表へ・凍って取っておかれたページから戻った)
+  function back(doc, win){
+    doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible') syncPage(); });
+    win.addEventListener('pageshow', e => { if (e && e.persisted) syncPage(); });
   }
 
   // 調べるための控え(§9-8。工程5b-2b): ページを離れたときの様子を、全サイト共通の保存に1つ置く(次のページの「記録を写す」に出る)。動きは変えない。
@@ -13430,7 +14812,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // 今の版と同時に動かさない(今の版のボタンがあれば、動かずに知らせる)。今の版が、あとから動くこともあるので、少し待ってもう一度見る
     const legacy = () => !!doc.getElementById(LEGACY);
     const conflict = () => Y.page.halt('conflict', { with: 'legacy' });
-    const go = () => (legacy() ? conflict() : Y.page.start());
+    const go = () => (legacy() ? conflict() : Promise.resolve(Y.page.start()).then(st => { syncPage(); return st; }));
     // 今の版が残したものを、片づける(工程5c-2。利用者: 前の版の訳は要らない。安全に消えてくれればよい)。今の版が動いていないと分かってから(少し待ったあと)、
     //   このサイトの localStorage の、今の版の鍵だけを消す(API キーの控えが、サイトの側から読める所に残るため)。こちらの保存(IndexedDB・Tampermonkey の保存)には、さわらない
     const sweep = () => {
@@ -13513,7 +14895,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       } else if (!left && win){ left = true; leaving(doc, win); }   // 知らせのためだけに土台を作っていた(下の nojp): 離れるときの控えは、記事と分かってから
       Y.page.dismiss();                         // 「日本語の文が見つかりませんでした」が出ていたら、消す
       watchRedraw();
-      return Y.page.start({ info });
+      return Promise.resolve(Y.page.start({ info })).then(st => { syncPage(); return st; });
     };
     // ページの側が本文を作り直した(React などで作ったページ。工程8d: Yahoo!ニュースは、開いてすぐ覚えた段落を、あとで作り直していた=英文を、外れた古い段落に描いていた):
     //   覚えた段落か、描いた英文が、ページから外れたら、片づけて探し直す(保存した訳は、通信なしで戻る=開き直したときと同じ)。
