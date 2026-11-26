@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.38
+// @version      0.1.39
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.38 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.39 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -162,7 +162,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.38',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.39',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 2,                     // 保存の形の版(§8-2)。2 = 端末ごとの設定 local を分けた(工程W3b-1。§8-11 の 6)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -272,7 +272,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       evictShare: 0.1, evictMin: 3,   // 保存がいっぱいのとき、1回に捨てる割合と、最少の件数(§8-1)
       drawLateMs: 250,             // 届いた文を描くのを、画面の1コマの合図が来なくても、これだけ待ったら描く(ms。裏に回っている間は、合図が来ない)
       saveEveryMs: 3000,
-      busyWaitSec: [30, 60, 120],  // Google の側の混雑で止まったあと、回数を使う操作を送らない秒数。続けて混雑するたびに次の値へ(最後の値で止める。工程S-1。目分量)
+      busyWaitSec: [10, 20, 30],   // Google の側の混雑で、1 文も届かずに止まったあと、回数を使う操作を送らない秒数。続けて 1 文も届かないたびに次の値へ(最後の値で止める。工程S-1。目分量)
+      busyGotSec: 5,               // 混雑で止まったが、少しでも届いたときの待ち(二度押しよけ。2026-11-26 利用者「案A」)
       busyResetMin: 10,            // 前の待ちが終わってから、これだけ(分)たてば、待つ秒数をはじめの値に戻す
       quietMiss: { rate: 0.05, min: 3 }   // 未訳が少ないとき(対象の文の rate 以下、または min 文以下)は、「残り ○ 文は未訳です」の知らせを出さない(設計メモ 2-5。操作部のつまみの下の小さな字と、メニューには出す)
     },
@@ -1062,7 +1063,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'note.switched': '{from} が今日の上限のため、{to} で訳しました',
     'note.partial': '残り {n} 文は未訳です',
     // 途中で切れたときは、わけと、どうすればよいかを添える(設計メモ 2-5。工程5c-1)
-    'note.cutBusy': 'Google の側が混んでいて、途中で止まりました。残り {n} 文は、少し時間をおいてから訳せます。このまま読むときは「×」で閉じてください',
+    'note.cutBusy': 'Google の側が混んでいて、途中で止まりました。残り {n} 文は、少し時間をおいてから訳せます。上の英文は、そのまま読めます',
     'note.busyTr': 'Google の側が混み合っています。混む日は、しばらく続くことがあります。少し時間をおいてから、もう一度押してください',
     'note.waitSec': 'あと {sec} 秒で押せます',
     'note.cutNet': '通信がとぎれて、途中で止まりました。残り {n} 文は未訳です',
@@ -7113,13 +7114,15 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
     return {
       visit,
-      // 表示が変わった(変わった欄だけを渡す)
-      state(patch){
+      // 表示が変わった(変わった欄だけを渡す)。opt.grow = 同じ訳に文が届いただけ(続きを訳す): 段落の数が変わっても、訳・割合・レベル・見せ方・「原文」が
+      //   同じなら、ひと続きを分けずに、段落の数だけを新しくする(工程S-1。押し直すたびに記録が分かれないように。重ねずに数えるのは、今までどおり覚えと比べる)
+      state(patch, opt){
         if (closed || !isPlain(patch)) return;
         const now = nowMs();
         settle(now);
         const next = stateOf(want, patch);
-        if (next.sig === want.sig){                              // 表示は同じ(モデルの名前などだけが変わった)
+        const keySig = st => JSON.stringify([st.ratio, st.level, st.style, st.orig, st.tr]);
+        if (next.sig === want.sig || (isPlain(opt) && opt.grow && keySig(next) === keySig(want) && changedAt === null)){                              // 表示は同じ(モデルの名前などだけが変わった)
           if (changedAt === null) cur.state = next;
           want = next;
           return;
@@ -8170,8 +8173,19 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return list;
   }
   // 1回見る: 画面が見えていれば、その分を記録に渡す。操作が idleSec より長く途切れていれば、段落には配らない
+  //   訳が途中で止まって未訳が多い間(status().front)は、止まった所の段落が画面に入っている(か、それより下にいる)ときは数えない(工程S-1。
+  //   2026-11-26 利用者: 止まった所で待っている時間は、読んだ時間ではない。届いた英文を読み進めている間=止まった所が画面の下の先、だけを数える)
+  function atFront(){
+    const front = Y.page.status().front;
+    if (front == null) return false;
+    const hit = els.find(x => x[0] === front);
+    if (!hit) return false;
+    const vh = (win && win.innerHeight) || (doc.documentElement && doc.documentElement.clientHeight) || 0;
+    return hit[1].getBoundingClientRect().top < vh;
+  }
   function tick(){
     if (!h || pending || hidden() || cover) return;
+    if (atFront()) return;
     const now = nowMs();
     if (now < lastAct) lastAct = now;                        // 端末の時計が戻された
     h.dwell(visible(), { sec: config.log.tickMs / 1000, act: now - lastAct <= config.log.idleSec * 1000 });
@@ -8187,9 +8201,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     load: level => Y.store.pages.counted(page, level).then(rec => (rec ? rec.p : null)),
     save: (level, p) => Y.store.pages.addCounted(page, level, p)
   });
-  // 記録を始める。訳している最中(busy)は始めない(訳が出そろってから=利用者と決めた。2026-10-04)。
-  //   訳が途中で止まって、未訳が多いまま(stalled)も始めない(工程S-1。そろったとき・知らせを閉じたときの合図 'state' で始める)
-  const waitOf = st => st.state !== 'on' || !!st.stalled;
+  // 記録を始める。訳している最中(busy)は始めない(訳が出そろってから=利用者と決めた。2026-10-04。途中で止まったときは、止まった時点から=下の tick の front)
+  const waitOf = st => st.state !== 'on';
   function begin(){
     if (h || !want || !Y.page || waitOf(Y.page.status())) return;
     const r = Y.page.reading();
@@ -8217,13 +8230,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return old ? old.close() : Promise.resolve(true);
   }
   // 今の表示を、記録に知らせる。変わった欄だけでなく、まるごと渡す(同じなら、記録の部品が区切らない)
-  function sync(){
+  //   grow = 同じ訳に文が届いた(続きを訳す)。記録の部品は、同じ訳のあいだ、ひと続きを分けない(工程S-1。押し直すたびに記録が分かれないように)
+  function sync(grow){
     if (!h) return;
     const r = Y.page.reading();
     if (!r) return;
     const c = r.ctx;
     els = r.els;
-    h.state({ ratio: c.ratio, orig: c.orig, style: c.style, level: c.level, tr: c.tr, model: c.model, promptV: c.promptV, paras: c.paras });
+    h.state({ ratio: c.ratio, orig: c.orig, style: c.style, level: c.level, tr: c.tr, model: c.model, promptV: c.promptV, paras: c.paras }, grow ? { grow: true } : undefined);
   }
   // 進行役の合図 'log'(§6-7)
   function onLog(e){
@@ -8241,7 +8255,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       pending = true;                                      // 閉じるのは、この流れが済んでから(出し直しかどうかを見るため)
       Promise.resolve().then(() => { if (pending) end(); });
     }
-    else if (e.type === 'change') sync();
+    else if (e.type === 'change') sync(e.tr !== undefined);
     else if (e.type === 'act' && h && !pending) h.act(e.kind, e.sid);
   }
 
@@ -8320,10 +8334,18 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   //   訳している間(続きを訳す・訳し直す)は、その前に埋めていた文を、そのまま英語にしておく(訳し始めたときに、出ていた英文を消さない。終わったら決め直す=
   //   続きを訳すで未訳が埋まれば、代わりに英語にしていた文は日本語に戻る)。割合・レベル(順番)が変わったら、前に埋めた文は使わない
   let fillFor = null;
-  // 訳が途中で止まって、未訳が多いまま(知らせを出す線を超える)か。その間は、読んだ時間と語数を数えない(工程S-1。2026-11-26 利用者「おすすめで」=
-  //   訳が出そろってから記録を始める、の決め(2026-10-04)を、途中で止まったときにも広げる)。知らせを「×」で閉じたら、このまま読む、として数える(asIsTr = その訳の番号)
-  let asIsTr = null;
-  const stalled = () => state === 'on' && !!rec && have.size > 0 && !fewMissing(missingOf().length) && asIsTr !== rec.tr;
+  // 訳が途中で止まって、未訳が多いまま(知らせを出す線を超える)か(工程S-1)。その間、読んだ時間の見張り(page/watch.js)は、
+  //   「訳が止まった所」(front)が画面の下より先にあるときだけ数える(2026-11-26 利用者「その案で」。止まった所で待っている時間を数えないため)
+  const stalled = () => state === 'on' && !!rec && have.size > 0 && !fewMissing(missingOf().length);
+  // 訳が止まった所: 最後の訳のある対象の文より後ろの、最初の対象の文の段落の番号(未訳が少なければ null)
+  function frontOf(){
+    // 続きを訳している最中(busy)も見る(押して待っている間を数えないため。届くたびに、止まった所は下へ移る)
+    if (!model || !(state === 'on' || state === 'busy') || !rec || !have.size || fewMissing(missingOf().length)) return null;
+    let last = -1;
+    model.targets.forEach(sid => { if (have.has(sid) && sid > last) last = sid; });
+    const next = model.targets.find(sid => sid > last);
+    return next == null ? null : model.sents[next].p;
+  }
   const shownSet = () => {
     if (!ranks) return new Set();
     const base = order.shown(ranks, ratio);
@@ -8594,18 +8616,22 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
 
   // ---- 混雑のあとの待ち(工程S-1。2026-11-26 利用者「おすすめで」) ----
   //   Google の側の混雑(overload・server)で止まったら、しばらく、回数を使う操作(ブレンド・続きを訳す・訳し直す・熟語さがし)を送らない。
-  //   待つ秒数は、続けて混雑するたびに config.pages.busyWaitSec の順にのばす(最後の値で止める)。前の待ちが終わってから busyResetMin 分たてば、はじめから。
+  //   待つ秒数(2026-11-26 利用者「案A」。0.1.37・0.1.38 の 30・60・120 秒は「長すぎる・待っても 29 文 → 21 文で止まった・連打の方が早い」):
+  //     少しでも届いた(got > 0)なら config.pages.busyGotSec だけ(二度押しよけ)で、のばす段をはじめに戻す。1 文も届かなかったときだけ、
+  //     config.pages.busyWaitSec の順にのばす(最後の値で止める)。前の待ちが終わってから busyResetMin 分たてば、はじめから。
   //   自動では送り直さない(押したときだけ=工程3c-1)。待っている間に押されたら、送らずに、待つ秒数の出る知らせを出し直す(行き止まりにしない)。
   //   ページをまたいでも続く(混雑は Google の側のこと。leave では消さない)
   const nowMs = () => Date.parse(util.nowISO());
   const cool = { until: 0, step: 0, cause: null, tick: null };
   const coolLeft = () => Math.max(0, Math.ceil((cool.until - nowMs()) / 1000));
   const busyKind = err => !!err && (err.kind === 'overload' || err.kind === 'server');
-  function startCool(cause){
+  function startCool(cause, got){
     const w = config.pages.busyWaitSec, now = nowMs();
     if (now - cool.until > config.pages.busyResetMin * 60000) cool.step = 0;
-    const sec = w[Math.min(cool.step, w.length - 1)];
-    cool.step++; cool.cause = cause; cool.until = now + sec * 1000;
+    let sec;
+    if (got > 0){ sec = config.pages.busyGotSec; cool.step = 0; }
+    else { sec = w[Math.min(cool.step, w.length - 1)]; cool.step++; }
+    cool.cause = cause; cool.until = now + sec * 1000;
     if (cool.tick) return;
     // 1秒ごとに状態を知らせる(画面が「あと ○ 秒」を描き直す)。待ちが終わったら止める
     cool.tick = setInterval(() => { const left = coolLeft(); if (!left){ clearInterval(cool.tick); cool.tick = null; } if (model) emit('state', status()); }, 1000);
@@ -8714,7 +8740,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     flush();
     // 知らせ(1つ)。訳している間に出した古い知らせ(残り・縦組み)は、いったん消す
     // 混雑で止まったら、しばらく待たせる。混雑せずに終わったら、待ちの段をはじめに戻す(工程S-1)
-    if (busyKind(err)) startCool(err.kind); else if (!err) cool.step = 0;
+    if (busyKind(err)) startCool(err.kind, gotNow); else if (!err) cool.step = 0;
     const missing = missingOf().length;
     clearNotice(gotNow ? ['partial', 'vertical'] : ['partial', 'vertical', 'switched-lite']);
     if (suspect && j.held.length) tell('suspect', { dropped: j.held.length, act: kind });
@@ -8829,7 +8855,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     drawQ.length = 0;
     if (render.attached()){ render.detach(); logHook('close'); }
     unhook.splice(0).forEach(fn => { try { fn(); } catch (e){} });
-    info = null; model = null; ranks = null; rec = null; have = new Map(); view = false; lapsed = false; vertical = false; orig = false; saved = {}; asIsTr = null;
+    info = null; model = null; ranks = null; rec = null; have = new Map(); view = false; lapsed = false; vertical = false; orig = false; saved = {};
     clearNotice();                           // 知らせが出ていたら、消したことを知らせる(状態が none のままでも、画面が古い知らせを残さないように)
     setState('none');
     return done.then(() => status());
@@ -8854,7 +8880,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       n: { targets: model ? model.n.targets : 0, translated: have.size, missing: missingOf().length, shown: n },
       saved: Object.assign({}, saved),
       idioms: ijob ? 'busy' : rec ? rec.idioms || 'none' : 'none',
-      stalled: stalled(),                      // 未訳が多いまま止まっている(読んだ記録を始めない=page/watch.js。工程S-1)
+      stalled: stalled(),                      // 未訳が多いまま止まっている(工程S-1)
+      front: frontOf(),                        // 訳が止まった所の段落の番号(stalled でなければ null。page/watch.js が、画面に入ったら数えない。工程S-1)
       coolSec: coolLeft(),                     // 混雑のあとの待ちの、残りの秒数(0 = 待っていない。画面は、回数を使う所を押せなくして、秒数を出す。工程S-1)
       busy: working(),                         // 使用中(訳している・確かめている・熟語さがし・レベルの切り替え)。画面の側で、続き・訳し直す・レベルを押せなくする
       notice: notice ? util.clone(notice) : null
@@ -9048,8 +9075,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       return true;
     },
     // 知らせを閉じる(画面の「×」・「あとにする」)。表示も保存も変えない。未訳や、熟語さがしの失敗は、status() の n.missing・idioms に残っている
-    //   未訳が多いまま止まっているときに閉じたら、このまま読む、として、読んだ記録を始める(工程S-1)
-    dismiss(){ if (stalled()) asIsTr = rec.tr; clearNotice(); emit('state', status()); },
+    dismiss(){ clearNotice(); },
     status,
     reading,
     // 単語の板(ui/word.js)に渡すもの: 今、その文に描いてある英文と熟語・日本語の原文・例文に付けるページの情報。描いていなければ null(通信しない)
