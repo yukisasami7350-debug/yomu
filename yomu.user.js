@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.40
+// @version      0.1.41
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.40 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.41 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -162,7 +162,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.40',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.41',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 2,                     // 保存の形の版(§8-2)。2 = 端末ごとの設定 local を分けた(工程W3b-1。§8-11 の 6)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -5560,12 +5560,81 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return { cut: head };
   }
 
+  // ---- ④ 英文に残った字(工程S-2。2026-11-26 利用者の OK。設計メモ 2-2) ----
+  //   カクヨムの点検(300 ページ・32,534 文)で、英文に残った字は 29 文: 名前・地名の後ろ半分が字のまま(Friedeg+ルト・E+릭(ハングル)・ガル Forest)が 22 文、
+  //   漢字・ひらがなの単発(訳されなかった言い回し)が 7 文。名前は 1 話の中でそろって崩れるので、止めて訳し直しても止まり続ける → 機械でローマ字にする。
+  //   見るのは字の種類だけ(名前かどうかは分からない): カタカナ・ハングル → ローマ字(前の英字にくっついていれば、つなぐ)/漢字・ひらがな → その文は未訳。
+  //   ローマ字は表で決まる(本来のつづりにはならない。Erik は当たるが、ルト は ruto)。ラテン文字でないほかの字(other)は、見たことがないので触らない
+  const KANA1 = {}, KANA2 = {};
+  [['アイウエオ', ['a', 'i', 'u', 'e', 'o']], ['カキクケコ', ['ka', 'ki', 'ku', 'ke', 'ko']], ['ガギグゲゴ', ['ga', 'gi', 'gu', 'ge', 'go']],
+    ['サシスセソ', ['sa', 'shi', 'su', 'se', 'so']], ['ザジズゼゾ', ['za', 'ji', 'zu', 'ze', 'zo']], ['タチツテト', ['ta', 'chi', 'tsu', 'te', 'to']],
+    ['ダヂヅデド', ['da', 'ji', 'zu', 'de', 'do']], ['ナニヌネノ', ['na', 'ni', 'nu', 'ne', 'no']], ['ハヒフヘホ', ['ha', 'hi', 'fu', 'he', 'ho']],
+    ['バビブベボ', ['ba', 'bi', 'bu', 'be', 'bo']], ['パピプペポ', ['pa', 'pi', 'pu', 'pe', 'po']], ['マミムメモ', ['ma', 'mi', 'mu', 'me', 'mo']],
+    ['ヤユヨ', ['ya', 'yu', 'yo']], ['ラリルレロ', ['ra', 'ri', 'ru', 're', 'ro']], ['ワヰヱヲン', ['wa', 'i', 'e', 'o', 'n']], ['ヴ', ['vu']],
+    ['ァィゥェォャュョヮヵヶ', ['a', 'i', 'u', 'e', 'o', 'ya', 'yu', 'yo', 'wa', 'ka', 'ke']]
+  ].forEach(([ks, rs]) => Array.from(ks).forEach((k, i) => { KANA1[k] = rs[i]; }));
+  // 2 字で 1 音(キャ・ティ・ファ など)。前の字の子音と、小さい字の母音
+  [['キギシジチニヒビピミリ', ['ky', 'gy', 'sh', 'j', 'ch', 'ny', 'hy', 'by', 'py', 'my', 'ry'], 'ャュョ', ['a', 'u', 'o']],
+    ['シジチ', ['sh', 'j', 'ch'], 'ェ', ['e']], ['フヴ', ['f', 'v'], 'ァィェォ', ['a', 'i', 'e', 'o']], ['フヴ', ['fy', 'vy'], 'ュ', ['u']],
+    ['テデ', ['t', 'd'], 'ィ', ['i']], ['テデ', ['ty', 'dy'], 'ュ', ['u']], ['トド', ['t', 'd'], 'ゥ', ['u']], ['ウ', ['w'], 'ィェォ', ['i', 'e', 'o']],
+    ['ツ', ['ts'], 'ァィェォ', ['a', 'i', 'e', 'o']], ['イ', ['y'], 'ェ', ['e']], ['クグ', ['kw', 'gw'], 'ァィェォ', ['a', 'i', 'e', 'o']], ['スズ', ['s', 'z'], 'ィ', ['i']]
+  ].forEach(([ks, cs, ss, vs]) => Array.from(ks).forEach((k, i) => Array.from(ss).forEach((s, j) => { KANA2[k + s] = cs[i] + vs[j]; })));
+  // ハングル(1 字 = 初め・中・終わりの音。番号から分ける。読み方は韓国の国の決まり=Revised Romanization。字と字の間の音の変わり方は見ない)
+  const HG_L = ['g', 'kk', 'n', 'd', 'tt', 'r', 'm', 'b', 'pp', 's', 'ss', '', 'j', 'jj', 'ch', 'k', 't', 'p', 'h'];
+  const HG_V = ['a', 'ae', 'ya', 'yae', 'eo', 'e', 'yeo', 'ye', 'o', 'wa', 'wae', 'oe', 'yo', 'u', 'wo', 'we', 'wi', 'yu', 'eu', 'ui', 'i'];
+  const HG_T = ['', 'k', 'k', 'k', 'n', 'n', 'n', 't', 'l', 'k', 'm', 'l', 'l', 'l', 'p', 'l', 'm', 'p', 'p', 't', 't', 'ng', 't', 't', 'k', 't', 'p', 't'];
+  const MID = ch(0x30FB), SOKU = ch(0x30C3), CHOON = ch(0x30FC);   // ・ ッ ー
+  // カタカナ・ハングルの並び → ローマ字の部分の並び(中黒で区切る)。変えられない字があれば null
+  function toRoman(run){
+    const cs = Array.from(run.normalize('NFKC')), parts = [''];
+    let gem = false;
+    for (let i = 0; i < cs.length; i++){
+      const c = cs[i], code = c.codePointAt(0);
+      let r = null;
+      if (c === MID){ parts.push(''); gem = false; continue; }
+      if (c === CHOON){ continue; }                           // のばす音は書かない(フリーデ → furide)
+      if (c === SOKU){ gem = true; continue; }
+      if (code >= 0xAC00 && code <= 0xD7A3){ const s = code - 0xAC00; r = HG_L[Math.floor(s / 588)] + HG_V[Math.floor((s % 588) / 28)] + HG_T[s % 28]; }
+      else if (KANA2[c + (cs[i + 1] || '')]){ r = KANA2[c + cs[i + 1]]; i++; }
+      else if (KANA1[c] != null) r = KANA1[c];
+      if (r == null) return null;
+      if (gem && /^[bcdfghjkmnpqrstvwxz]/.test(r)) r = (r.startsWith('ch') ? 't' : r[0]) + r;   // ッ = 次の子音を重ねる(ッチ → tchi)
+      gem = false;
+      parts[parts.length - 1] += r;
+    }
+    return parts.filter(Boolean);
+  }
+  const LATIN_END = /\p{Script=Latin}$/u;
+  const cap = w => w.charAt(0).toUpperCase() + w.slice(1);
+  // 英文 → { en, runs: [[元の字, ローマ字]…] }(直せた・残っていない)/ { left: [残った字…] }(未訳に戻す)
+  function scripts(en){
+    const cs = Array.from(en), runs = [], left = [];
+    let out = '';
+    for (let k = 0; k < cs.length;){
+      const kind = T.charKind(cs[k]);
+      if (!kind || kind === 'other'){ out += cs[k]; k++; continue; }
+      let j = k;
+      const kinds = new Set();
+      while (j < cs.length){ const kk = T.charKind(cs[j]); if (!kk || kk === 'other') break; kinds.add(kk); j++; }
+      const run = cs.slice(k, j).join('');
+      k = j;
+      if (!T.foreign(run).length){ out += run; continue; }    // 中黒・長音だけの並びは、数えない(text.foreign と同じ)
+      const parts = kinds.has('kanji') || kinds.has('hira') ? null : toRoman(run);
+      if (!parts || !parts.length){ left.push(run); out += run; continue; }
+      const glued = LATIN_END.test(out);                       // 前の英字にくっついている = 名前の前半だけ英語にした形(Friedeg+ルト)
+      const word = parts.map((p, i) => (i === 0 && glued ? p : cap(p))).join(' ');
+      out += word;
+      runs.push([run, word]);
+    }
+    return left.length ? { left } : { en: out, runs };
+  }
+
   // ---- 届いた順の訳に当てる ----
   //   o = { model, sids: 送った文(文書の順), onItem(item) }。item = reader の 1 件 { sid, en, f?, nk? }
   //   → { push(item), end(rep) → rep(直した数と、未訳に戻した文を足したもの)}
   function stream(o){
     const model = o.model, S = model.sents, map = Array.isArray(o.sids) ? o.sids.slice() : [], sent = new Set(map), onItem = o.onItem;
-    const n = { title: 0, quote: 0, cut: 0, same: 0, split: 0 };
+    const n = { title: 0, quote: 0, cut: 0, same: 0, split: 0, roman: 0, left: 0 }, leftRuns = [];
     const held = new Map(), state = new Map(), out = new Map();   // state: sid → 'out'(渡した)/ 'drop'(未訳に戻した)
     let ended = null;
     const gapOk = (a, b) => { const p = model.paras[a.p]; return !!p && typeof p.text === 'string' && p.text.slice(a.b, b.a).trim() === ''; };
@@ -5588,6 +5657,17 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         let en = it.en;
         const q = quote(s, en); if (q.n){ n.quote++; en = q.en; }
         const t = title(s.text, en); if (t.n){ n.title++; en = t.en; }
+        // ④ 英文に残った字(工程S-2): 漢字・ひらがな・ローマ字にできない字が残った文は、未訳に戻す(「続きを訳す」で拾える)。
+        //   この文を待っていた前の文は、比べずに渡す
+        const z = scripts(en);
+        if (z.left){
+          n.left++; z.left.forEach(x => { if (leftRuns.length < 20) leftRuns.push(x); });
+          state.set(it.sid, 'drop');
+          const p0 = prevOf(it.sid);
+          if (p0 >= 0 && held.has(p0)){ const a = held.get(p0); held.delete(p0); emit(a); }
+          return;
+        }
+        if (z.runs.length){ n.roman++; en = z.en; it.r = z.runs; }
         if (en !== it.en){ it.en = en; reflag(it); }
         // 前の文が、この文を待っていたら、比べてから、前の文を渡す
         const p = prevOf(it.sid);
@@ -5627,12 +5707,14 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
         r.flagShort = all.filter(x => x.f === 's').length;
         r.flagLong = all.filter(x => x.f === 'l').length;
         r.fixTitle = c.title; r.fixQuote = c.quote; r.fixCut = c.cut; r.fixSame = c.same; r.fixSplit = c.split;   // 直した文の数(§8-6 の通信の記録には、0 でないものだけ残る)
+        r.fixRoman = c.roman; r.fixLeft = c.left;                  // ④ ローマ字にした文・字が残って未訳に戻した文の数(工程S-2)
+        if (leftRuns.length) r.leftRuns = leftRuns.slice();        // 未訳に戻した字(訳の保存の rep にだけ残る。通信の記録=書き出しには、数でないので入らない)
         return r;
       }
     };
   }
 
-  Yomu.fix = { title, quote, pair, stream, jpShare };
+  Yomu.fix = { title, quote, pair, stream, jpShare, scripts, toRoman };
 })();
 
 /* ---- core/tokens.js ---- */
@@ -7485,7 +7567,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     let got = 0;
     const give = it => {
       got++;
-      tell.call(on.item, [it.sid, it.en, it.f, it.nk]);      // nk = 1: 番号だけで決めた文(目印を1つも返してこない返事。rep.suspect を見てから使う=進行役)
+      tell.call(on.item, [it.sid, it.en, it.f, it.nk, it.r]);      // nk = 1: 番号だけで決めた文(目印を1つも返してこない返事。rep.suspect を見てから使う=進行役)
       tell.call(on.progress, [got, built.M]);
     };
     // 確かめ(§6-4)を通った文に、機械の直し(core/fix.js。工程T-2c)を当ててから渡す。o.fix が false なら、直さない(比べる台本が、AI の返事そのものを測るため)
@@ -8739,10 +8821,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     let out = null, err = null;
     try {
       out = await translate.page({ model, level, scene: sceneOf(work), rec: kind === 'more' ? work : null, use, page: info.pageKey, tr: work.tr, signal: j.ctrl.signal, on: {
-        item(sid, en, f, nk){
+        item(sid, en, f, nk, r){
           if (job !== j) return;
-          if (nk){ j.held.push({ sid, en, f }); return; }   // 番号だけで決めた文: rep.suspect を見てから使う(返事の終わりにまとめて来るので、待たせても遅れない)
-          accept(j, sid, en, f);
+          if (nk){ j.held.push({ sid, en, f, r }); return; }   // 番号だけで決めた文: rep.suspect を見てから使う(返事の終わりにまとめて来るので、待たせても遅れない)
+          accept(j, sid, en, f, r);
         },
         progress(got, total){ if (job === j) emit('progress', { got, total }); }
       } });
@@ -8754,7 +8836,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     const rep = out && isPlain(out.rep) ? out.rep : null;
     // 番号がずれた疑い(§6-4 の suspect): 番号だけで決めた文を、出さずに、保存せずに捨てて知らせる(利用者と決めた。2026-10-03)
     const suspect = !!(rep && rep.suspect === 1);
-    if (!suspect) j.held.forEach(x => accept(j, x.sid, x.en, x.f));
+    if (!suspect) j.held.forEach(x => accept(j, x.sid, x.en, x.f, x.r));
     drawNow();
     job = null;
     const gotNow = j.got.length;
@@ -8790,11 +8872,12 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return status();
   }
   // 届いた1文を、保存の記録と画面に入れる
-  function accept(j, sid, en, f){
+  function accept(j, sid, en, f, r){
     const s = model.sents[sid];
     if (!s || typeof en !== 'string') return;
     const e = { h: s.h, o: s.o, i: sid, en };
     if (f) e.f = f;
+    if (Array.isArray(r) && r.length) e.r = r;   // ローマ字にした字(工程S-2。[[元の字, ローマ字]…]。設定の「英文の点検」が数える)
     const old = have.get(sid);
     if (old){ const k = j.rec.s.indexOf(old); if (k >= 0) j.rec.s.splice(k, 1); }
     j.rec.s.push(e);
@@ -12377,18 +12460,24 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   const SC = { pages: 300, runs: 40, rows: 40, ex: 30, side: 4, exLen: 90 };
   async function scan(){
     const list = await Y.store.pages.list();
-    const rows = [], runs = new Map(), kinds = {};
-    let sents = 0, hitSents = 0, bad = 0;
+    const rows = [], runs = new Map(), kinds = {}, romans = new Map(), lefts = new Map();
+    let sents = 0, hitSents = 0, bad = 0, romanSents = 0, leftSents = 0;
+    const tally = (m, key, val, P) => { const r = m.get(key) || { val, sents: 0, pages: new Set() }; r.sents++; r.pages.add(P); m.set(key, r); };
     for (let i = 0; i < list.length && i < SC.pages; i++){
       let rec;
       try { rec = await Y.store.pages.get(list[i].page, list[i].level); } catch (e){ bad++; continue; }
       if (!rec || !Array.isArray(rec.s)){ bad++; continue; }
       const P = 'P' + (i + 1), hits = new Map(), ex = [];
-      let n = 0;
+      let n = 0, nr = 0;
+      // 機械の直し ④(工程S-2。版 0.1.41 から): ローマ字にした文(s[].r)と、字が残って未訳に戻した字(rep.leftRuns。最後の通信の分)
+      const rep = rec.rep && typeof rec.rep === 'object' ? rec.rep : {};
+      const nl = typeof rep.fixLeft === 'number' ? rep.fixLeft : 0;
+      if (nl){ leftSents += nl; (Array.isArray(rep.leftRuns) ? rep.leftRuns : []).forEach(x => tally(lefts, String(x), '', P)); }
       rec.s.forEach(s => {
         const en = s && typeof s.en === 'string' ? s.en : '';
         if (!en) return;
         sents++;
+        if (Array.isArray(s.r) && s.r.length){ nr++; romanSents++; s.r.forEach(x => { if (Array.isArray(x)) tally(romans, String(x[0]), String(x[1]), P); }); }
         const f = Y.text.foreign(en);
         if (!f.length) return;
         n++; hitSents++;
@@ -12399,22 +12488,28 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
           const r = runs.get(x.run) || { kinds: x.kinds, sents: 0, pages: new Set() };
           r.sents++; r.pages.add(P); runs.set(x.run, r);
           const at = en.indexOf(x.run);
-          const before = en.slice(0, at).trim().split(/\s+/).filter(Boolean).slice(-SC.side).join(' ');
-          const after = en.slice(at + x.run.length).trim().split(/\s+/).filter(Boolean).slice(0, SC.side).join(' ');
-          ex.push(P + ' [' + x.kinds.join('+') + '] ' + (before + ' ' + x.run + ' ' + after).trim().slice(0, SC.exLen));
+          // 前後の英語を、空白を足さずに切り出す(くっついた形 Friedeg+ルト が、そのまま分かるように。v0.1.40 は空白を足していた)
+          const before = (en.slice(0, at).match(/(?:\S+\s+){0,4}\S*$/) || [''])[0];
+          const after = (en.slice(at + x.run.length).match(/^\S*(?:\s+\S+){0,4}/) || [''])[0];
+          ex.push(P + ' [' + x.kinds.join('+') + '] ' + (before + x.run + after).trim().slice(0, SC.exLen));
         });
         seenKinds.forEach(k => { kinds[k] = (kinds[k] || 0) + 1; });
       });
-      if (n) rows.push({ P, line: P + ' ' + String(rec.at || '').slice(0, 10) + ' ' + rec.level + ' ' + (rec.model || '-') + ' think=' + (rec.think == null ? '-' : rec.think) + ' pV=' + (rec.promptV == null ? '-' : rec.promptV) + ' ' + (rec.state || '-') +
-        ': ' + n + '/' + rec.s.length + ' ' + Array.from(hits).map(([r, c]) => r + 'x' + c).join(' '), ex });
+      if (n || nr || nl) rows.push({ P, line: P + ' ' + String(rec.at || '').slice(0, 10) + ' ' + rec.level + ' ' + (rec.model || '-') + ' think=' + (rec.think == null ? '-' : rec.think) + ' pV=' + (rec.promptV == null ? '-' : rec.promptV) + ' ' + (rec.state || '-') +
+        ': ' + n + '/' + rec.s.length + ' ' + Array.from(hits).map(([r, c]) => r + 'x' + c).join(' ') + (nr ? ' roman=' + nr : '') + (nl ? ' left=' + nl : ''), ex });
     }
+    const listOf = m => Array.from(m).sort((a, b) => b[1].sents - a[1].sents || (a[0] < b[0] ? -1 : 1)).slice(0, SC.runs);
     const out = [SCAN + 'v' + cfg.version + ' ' + String(win().location.hostname),
       'pages=' + Math.min(list.length, SC.pages) + ' sents=' + sents + ' hitPages=' + rows.length + ' hitSents=' + hitSents + (bad ? ' unread=' + bad : ''),
-      'kinds: ' + ['kata', 'kanji', 'hangul', 'hira', 'other'].map(k => k + '=' + (kinds[k] || 0)).join(' ')];
+      'kinds: ' + ['kata', 'kanji', 'hangul', 'hira', 'other'].map(k => k + '=' + (kinds[k] || 0)).join(' '),
+      'fixed: roman=' + romanSents + ' left=' + leftSents];
+    if (romans.size){ out.push('roman:'); listOf(romans).forEach(([r, x]) => out.push('  ' + r + ' -> ' + x.val + ' sents=' + x.sents + ' pages=' + x.pages.size)); }
+    if (lefts.size){ out.push('left:'); listOf(lefts).forEach(([r, x]) => out.push('  ' + r + ' pages=' + x.pages.size)); }
     if (runs.size){
       out.push('runs:');
-      Array.from(runs).sort((a, b) => b[1].sents - a[1].sents || (a[0] < b[0] ? -1 : 1)).slice(0, SC.runs)
-        .forEach(([r, x]) => out.push('  ' + r + ' [' + x.kinds.join('+') + '] sents=' + x.sents + ' pages=' + x.pages.size));
+      listOf(runs).forEach(([r, x]) => out.push('  ' + r + ' [' + x.kinds.join('+') + '] sents=' + x.sents + ' pages=' + x.pages.size));
+    }
+    if (rows.length){
       out.push('pages:');
       rows.slice(0, SC.rows).forEach(r => out.push('  ' + r.line));
       out.push('examples:');
