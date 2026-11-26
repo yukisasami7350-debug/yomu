@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.37
+// @version      0.1.38
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.37 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.38 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -162,7 +162,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.37',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.38',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 2,                     // 保存の形の版(§8-2)。2 = 端末ごとの設定 local を分けた(工程W3b-1。§8-11 の 6)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -2313,11 +2313,16 @@ Yomu.rest = function(){
 
   const cleanModel = m => String(m == null ? '' : m).trim().replace(/^models\//, '');
   const cleanBase = b => String(b || BASE).replace(/\/+$/, '');
-  const isGemini3 = model => model.toLowerCase().includes('gemini-3');
+  // gemini の世代(gemini-3.5-flash-lite → 3・gemini-4-hydrogen → 4。読めなければ 0)
+  const genOf = model => { const m = /gemini-(\d+)/i.exec(model); return m ? Number(m[1]) : 0; };
+  // 思考を thinkingLevel で書くモデル: gemini-3 と、それより新しい世代(2026-11-26 工程S-1 で gemini-4 を足した。Google の文書: Gemini 4 も thinkingLevel)
+  const isGemini3 = model => genOf(model) >= 3;
+  // 思考「なし」を MINIMAL で書けないモデル: levels.js の例外の表と、gemini-4 から(Google の文書: Gemini 4 は MINIMAL を受け付けない=low から)
+  const noMinimal = model => !!levels.quirk(model).noMinimal || genOf(model) >= 4;
 
   // 思考の書き方(§5-3 の表。現行と同じ)。null = 書かない
   function thinking(model, think){
-    if (think === 'none') return isGemini3(model) ? { thinkingLevel: levels.quirk(model).noMinimal ? 'low' : 'MINIMAL' } : { thinkingBudget: 0 };
+    if (think === 'none') return isGemini3(model) ? { thinkingLevel: noMinimal(model) ? 'low' : 'MINIMAL' } : { thinkingBudget: 0 };
     if (think === 'light') return isGemini3(model) ? { thinkingLevel: 'low' } : { thinkingBudget: config.llm.lightBudget };
     if (think === 'mid') return isGemini3(model) ? { thinkingLevel: 'medium' } : { thinkingBudget: config.llm.midBudget };
     if (think === 'high') return isGemini3(model) ? { thinkingLevel: 'high' } : { thinkingBudget: config.llm.highBudget };
