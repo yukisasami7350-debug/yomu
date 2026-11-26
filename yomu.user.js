@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.39
+// @version      0.1.40
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.39 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.40 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -162,7 +162,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.39',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.40',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 2,                     // 保存の形の版(§8-2)。2 = 端末ごとの設定 local を分けた(工程W3b-1。§8-11 の 6)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -1522,6 +1522,10 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'diag.copy': '記録を写す',
     'diag.copied': '写しました。メッセージに貼り付けて、送ってください',
     'diag.copyFail': '自動では写せませんでした。下の字を長押しして、全部を選んで写してください',
+    // 英文の点検(工程S-2。ui/settings_diag.js の scanBox)
+    'scan.note': '英文の点検: このサイトに残っている訳の英文から、英語でない字(カタカナ・漢字・ハングルなど)を探して数えます。入るのは、見つけた字と、その前後の英語の数語・訳した日付とレベルだけです。題名と API キーは、入りません。',
+    'scan.copy': '英文の点検を写す',
+    'scan.wait': '数えています。少し待ってから、もう一度押してください',
     // 学ぶ画面(専用のページ。ui/learn.js。§9-10。工程W4b-1)。並びと字は W2b の案のページ
     'learn.settings': '設定',
     'learn.tabs': '学ぶ画面の行き先',
@@ -1923,6 +1927,36 @@ Yomu.rest = function(){
   // かな・漢字を含むか(中黒・長音・濁点の記号だけでは「含む」にしない)
   const JA = /[\u3041-\u3096\u30A1-\u30FA\uFF66-\uFF9D\u3400-\u4DBF\u4E00-\u9FFF\u3005\u3006]/;
   text.hasJa = s => JA.test(s);
+
+  // 英文の中の、英語でない字の並び(工程S-2 の点検。設定の「英文の点検」=ui/settings_diag.js)→ [{ run, kinds: ['kata'|'hira'|'kanji'|'hangul'|'other'] }]
+  //   字の種類は、字の番号の範囲で見る(番号で書く=engine/README.md の「書くときの注意」)。other = ラテン文字でない、ほかの文字(ロシア語・ギリシャ語など)。
+  //   記号・数字・全角のラテン文字は、数えない。となり合う字は、種類がちがっても 1 つの並びにする(「ギルド長」= kata と kanji)
+  const inR = (c, a, b) => c >= a && c <= b;
+  const LETTER = /\p{L}/u, LATIN = /\p{Script=Latin}/u;
+  text.charKind = function(ch){
+    const c = ch.codePointAt(0);
+    if (inR(c, 0x3041, 0x309F)) return 'hira';
+    if (inR(c, 0x30A0, 0x30FF) || inR(c, 0x31F0, 0x31FF) || inR(c, 0xFF66, 0xFF9F)) return 'kata';
+    if (inR(c, 0x3400, 0x4DBF) || inR(c, 0x4E00, 0x9FFF) || inR(c, 0xF900, 0xFAFF) || inR(c, 0x20000, 0x2FFFF) || inR(c, 0x3005, 0x3007)) return 'kanji';
+    if (inR(c, 0x1100, 0x11FF) || inR(c, 0x3130, 0x318F) || inR(c, 0xA960, 0xA97F) || inR(c, 0xAC00, 0xD7FF) || inR(c, 0xFFA0, 0xFFDC)) return 'hangul';
+    if (LETTER.test(ch) && !LATIN.test(ch)) return 'other';
+    return null;
+  };
+  text.foreign = function(s){
+    const out = [];
+    let run = '', kinds = [];
+    const flush = () => { if (run && kinds.length) out.push({ run, kinds }); run = ''; kinds = []; };
+    // 中黒・長音の記号(番号 30FB・30FC・FF65・FF70)は、並びの中では字として続けるが、それだけの並びは数えない
+    const MARK = c => c === 0x30FB || c === 0x30FC || c === 0xFF65 || c === 0xFF70;
+    for (const ch of String(s == null ? '' : s)){
+      const k = text.charKind(ch);
+      if (!k){ flush(); continue; }
+      run += ch;
+      if (!MARK(ch.codePointAt(0)) && kinds.indexOf(k) < 0) kinds.push(k);
+    }
+    flush();
+    return out;
+  };
 
   const isWs = ch => ch.trim() === '';   // String.prototype.trim と同じ空白の決まり(全角の空白・改行を含む)
 
@@ -9395,6 +9429,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       '.full .result .hint { margin: 4px 0 0; }',
       // 調べるための記録を、自動で写せなかったとき: 字をそのまま出す(長押しして、選べる。ui/settings_diag.js)
       '.full .dump { margin-top: 8px; border-radius: 16px; background: ' + v('well') + '; padding: 12px 16px; max-height: 160px; overflow: auto; overflow-wrap: anywhere; -webkit-user-select: all; user-select: all; ' + t(CAP, 400, BASE) + ' }',
+      '.full .dump.lines { white-space: pre-wrap; }',   // 英文の点検(工程S-2)の字は、行に分けてあるので、改行を残す
       '.full .steps.flat { border-top: 0; padding-bottom: 12px; }',
       '.full .hint.plain { ' + t(BODY, 400, BASE) + ' }',
       '.full .info { padding: 12px 16px; display: flex; flex-direction: column; gap: 4px; }',
@@ -12276,7 +12311,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       ]),
       // 調べるための記録(うまく動かないときに、写して送ってもらう。ui/settings_diag.js)
       ui.el('p', { class: 'hint', text: ui.t('diag.note') })
-    ].concat(Y.uiDiag ? Y.uiDiag.copyBox() : [])) });
+    ].concat(Y.uiDiag ? Y.uiDiag.copyBox() : [], Y.uiDiag && !onLearn ? Y.uiDiag.scanBox() : [])) });   // 英文の点検(工程S-2)は、訳を保存しているサイトのページだけ
   }
 
   S.add('data', data);
@@ -12334,6 +12369,77 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     return [btn, result];
   }
 
+  // ---- 英文の点検(工程S-2。設定の「記録と書き出しと読み込み」のいちばん下。読む画面だけ) ----
+  //   このサイトに残っている訳(store.pages)の英文から、英語でない字の並び(text.foreign)を探して数え、写す。
+  //   写すのは、見つけた字の並びと、その前後の英語の数語・訳した日付・レベル・モデル・指示文の版・文の数だけ(題名・ページの鍵・日本語の文・API キーは入れない)。
+  //   読むのは画面を作るとき(押したその場で写す=iPhone の Safari が受ける形。「記録を写す」と同じ)。読み終わる前に押したら、待ってもらう
+  const SCAN = 'yomu-scan ';
+  const SC = { pages: 300, runs: 40, rows: 40, ex: 30, side: 4, exLen: 90 };
+  async function scan(){
+    const list = await Y.store.pages.list();
+    const rows = [], runs = new Map(), kinds = {};
+    let sents = 0, hitSents = 0, bad = 0;
+    for (let i = 0; i < list.length && i < SC.pages; i++){
+      let rec;
+      try { rec = await Y.store.pages.get(list[i].page, list[i].level); } catch (e){ bad++; continue; }
+      if (!rec || !Array.isArray(rec.s)){ bad++; continue; }
+      const P = 'P' + (i + 1), hits = new Map(), ex = [];
+      let n = 0;
+      rec.s.forEach(s => {
+        const en = s && typeof s.en === 'string' ? s.en : '';
+        if (!en) return;
+        sents++;
+        const f = Y.text.foreign(en);
+        if (!f.length) return;
+        n++; hitSents++;
+        const seenKinds = new Set();
+        f.forEach(x => {
+          x.kinds.forEach(k => seenKinds.add(k));
+          hits.set(x.run, (hits.get(x.run) || 0) + 1);
+          const r = runs.get(x.run) || { kinds: x.kinds, sents: 0, pages: new Set() };
+          r.sents++; r.pages.add(P); runs.set(x.run, r);
+          const at = en.indexOf(x.run);
+          const before = en.slice(0, at).trim().split(/\s+/).filter(Boolean).slice(-SC.side).join(' ');
+          const after = en.slice(at + x.run.length).trim().split(/\s+/).filter(Boolean).slice(0, SC.side).join(' ');
+          ex.push(P + ' [' + x.kinds.join('+') + '] ' + (before + ' ' + x.run + ' ' + after).trim().slice(0, SC.exLen));
+        });
+        seenKinds.forEach(k => { kinds[k] = (kinds[k] || 0) + 1; });
+      });
+      if (n) rows.push({ P, line: P + ' ' + String(rec.at || '').slice(0, 10) + ' ' + rec.level + ' ' + (rec.model || '-') + ' think=' + (rec.think == null ? '-' : rec.think) + ' pV=' + (rec.promptV == null ? '-' : rec.promptV) + ' ' + (rec.state || '-') +
+        ': ' + n + '/' + rec.s.length + ' ' + Array.from(hits).map(([r, c]) => r + 'x' + c).join(' '), ex });
+    }
+    const out = [SCAN + 'v' + cfg.version + ' ' + String(win().location.hostname),
+      'pages=' + Math.min(list.length, SC.pages) + ' sents=' + sents + ' hitPages=' + rows.length + ' hitSents=' + hitSents + (bad ? ' unread=' + bad : ''),
+      'kinds: ' + ['kata', 'kanji', 'hangul', 'hira', 'other'].map(k => k + '=' + (kinds[k] || 0)).join(' ')];
+    if (runs.size){
+      out.push('runs:');
+      Array.from(runs).sort((a, b) => b[1].sents - a[1].sents || (a[0] < b[0] ? -1 : 1)).slice(0, SC.runs)
+        .forEach(([r, x]) => out.push('  ' + r + ' [' + x.kinds.join('+') + '] sents=' + x.sents + ' pages=' + x.pages.size));
+      out.push('pages:');
+      rows.slice(0, SC.rows).forEach(r => out.push('  ' + r.line));
+      out.push('examples:');
+      [].concat.apply([], rows.map(r => r.ex)).slice(0, SC.ex).forEach(x => out.push('  ' + x));
+    }
+    return out.join('\n');
+  }
+  // 「英文の点検を写す」のボタンと、その結果 → [添え書き, ボタン, 結果の置き場]
+  function scanBox(){
+    let done = null;
+    Promise.resolve().then(scan).then(t => { done = t; }, e => { done = SCAN + 'v' + cfg.version + ' err=' + String((e && e.message) || e).slice(0, 120); });
+    const result = ui.el('div', { class: 'result', 'data-result': 'scan', hidden: true });
+    const show = (kids, say, fail) => { S.fill(result, kids); result.hidden = false; ui.announce(say, !!fail); };
+    const dump = t => show([ui.el('p', { class: 'hint first', text: ui.t('diag.copyFail') }), ui.el('div', { class: 'dump lines', 'data-dump': '', text: t })], ui.t('diag.copyFail'), true);
+    const btn = ui.el('button', { class: 'textbtn gap', 'data-act': 'scan-copy', onclick: () => {
+      if (done == null){ show([ui.el('p', { class: 'hint first', text: ui.t('scan.wait') })], ui.t('scan.wait')); return; }
+      const t = done;
+      let p = null;
+      try { const c = win().navigator.clipboard; p = c && c.writeText ? c.writeText(t) : null; } catch (e){ p = null; }
+      if (!p){ dump(t); return; }
+      Promise.resolve(p).then(() => show([ui.el('div', { class: 'okline' }, [ui.icon('check', 18, 2.6), ui.el('span', { text: ui.t('diag.copied') })])], ui.t('diag.copied')), () => dump(t));
+    } }, [ui.el('span', { text: ui.t('scan.copy') })]);
+    return [ui.el('p', { class: 'hint', text: ui.t('scan.note') }), btn, result];
+  }
+
   // 「直し方」の1枚。手順は、絵の代わりに番号(最初の設定の「使い方」と同じ並べ方)
   function fix(){
     const ios = !!(Y.env && Y.env.info && Y.env.info.ios);
@@ -12351,7 +12457,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   }
 
   S.add('fix', fix);
-  Yomu.uiDiag = { copyBox, report, HEAD };
+  Yomu.uiDiag = { copyBox, report, HEAD, scanBox, scan, SCAN };
   // 知らせ stuck の「直し方を見る」から(Yomu.ui.show('fix'))。状態が none でも出す
   ui.part('fix', { open(){ S.go('fix'); }, close: () => ui.unsheet('settings') });
 })();
