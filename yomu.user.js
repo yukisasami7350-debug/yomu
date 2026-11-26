@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blendio
 // @namespace    urn:yomu-reader
-// @version      0.1.36
+// @version      0.1.37
 // @description  Web 小説を、英語まじりで読む(読むエンジン)
 // @match        *://*/*
 // @grant        GM_getValue
@@ -21,7 +21,7 @@
 // @updateURL    https://raw.githubusercontent.com/yukisasami7350-debug/yomu/main/yomu.user.js
 // ==/UserScript==
 
-/* yomu userscript 0.1.36 — tools/build.js が作る。手で直さない */
+/* yomu userscript 0.1.37 — tools/build.js が作る。手で直さない */
 (function(){
 'use strict';
 var Yomu = {};
@@ -162,7 +162,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
 (function(){
   'use strict';
   Yomu.config = {
-    version: '0.1.36',              // エンジンの版(@version と同じ。出すたびに上げる)
+    version: '0.1.37',              // エンジンの版(@version と同じ。出すたびに上げる)
     schema: 2,                     // 保存の形の版(§8-2)。2 = 端末ごとの設定 local を分けた(工程W3b-1。§8-11 の 6)
     dayBoundaryHour: 4,            // 「学習日」の境(端末の時刻で午前4時。§1-2)
     text: {
@@ -272,6 +272,8 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
       evictShare: 0.1, evictMin: 3,   // 保存がいっぱいのとき、1回に捨てる割合と、最少の件数(§8-1)
       drawLateMs: 250,             // 届いた文を描くのを、画面の1コマの合図が来なくても、これだけ待ったら描く(ms。裏に回っている間は、合図が来ない)
       saveEveryMs: 3000,
+      busyWaitSec: [30, 60, 120],  // Google の側の混雑で止まったあと、回数を使う操作を送らない秒数。続けて混雑するたびに次の値へ(最後の値で止める。工程S-1。目分量)
+      busyResetMin: 10,            // 前の待ちが終わってから、これだけ(分)たてば、待つ秒数をはじめの値に戻す
       quietMiss: { rate: 0.05, min: 3 }   // 未訳が少ないとき(対象の文の rate 以下、または min 文以下)は、「残り ○ 文は未訳です」の知らせを出さない(設計メモ 2-5。操作部のつまみの下の小さな字と、メニューには出す)
     },
     voice: { rate: 0.95, delayMs: 15 },   // 読み上げの速さの初期値(§8-3)・iPhone 以外で、鳴らし始めを遅らせる時間(止める処理とぶつからないように。§9-7)
@@ -1060,7 +1062,9 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'note.switched': '{from} が今日の上限のため、{to} で訳しました',
     'note.partial': '残り {n} 文は未訳です',
     // 途中で切れたときは、わけと、どうすればよいかを添える(設計メモ 2-5。工程5c-1)
-    'note.cutBusy': 'Google の側が混んでいて、途中で止まりました。残り {n} 文は、少し待ってから訳してください',
+    'note.cutBusy': 'Google の側が混んでいて、途中で止まりました。残り {n} 文は、少し時間をおいてから訳せます。このまま読むときは「×」で閉じてください',
+    'note.busyTr': 'Google の側が混み合っています。混む日は、しばらく続くことがあります。少し時間をおいてから、もう一度押してください',
+    'note.waitSec': 'あと {sec} 秒で押せます',
     'note.cutNet': '通信がとぎれて、途中で止まりました。残り {n} 文は未訳です',
     'note.needTranslate': 'この目標では、まだ訳していません',
     'note.blocked': 'この話は、AI が内容を理由に訳せませんでした(届いた分は出ています)',
@@ -1080,6 +1084,7 @@ Yomu.build = {"target":"userscript","dev":false,"name":"Blendio","dictUrl":"http
     'note.nojp': '英語まじりにできる日本語の文が、見つかりませんでした。本文が出てから、もう一度押してください',
     'act.settings': '設定をひらく',
     'act.more': '続きを訳す',
+    'act.retry': 'もう一度訳す',
     'act.translate': '訳す',
     'act.redo': '訳し直す',
     'act.idioms': 'やり直す',
@@ -2184,9 +2189,16 @@ Yomu.rest = function(){
   //   未訳の文ごとに(本文の順に)、すぐ後ろ(本文の順で次)の、英文があって(ok)、まだ英語にしていない対象の文を選ぶ。後ろに無ければ、すぐ前(工程T-2c 利用者:
   //   割合 N% を保つ・埋める文は、取り消した文より先の所に。読みながら訳を待つ人の目に入るように)。targets = 対象の文(本文の順)
   //   埋め方は、文と訳だけで決まる(同じ入力なら同じ結果。開き直しても同じ文が英語になる)
-  order.fill = function(shown, targets, ok){
+  //   opt.reach = true なら、届いた範囲(本文の順で、最後の訳のある文まで)の中の未訳だけを埋める(工程S-1。訳が途中で止まって未訳が多いとき、
+  //   上の方がまるごと英語にならないように=範囲の中だけで N% を保つ。2026-11-26 利用者「おすすめで」)
+  order.fill = function(shown, targets, ok, opt){
     const out = new Set(shown);
-    const lack = targets.filter(sid => shown.has(sid) && !ok(sid));
+    let last = Infinity;
+    if (opt && opt.reach){
+      last = -1;
+      targets.forEach(sid => { if (ok(sid) && sid > last) last = sid; });
+    }
+    const lack = targets.filter(sid => shown.has(sid) && !ok(sid) && sid < last);
     if (!lack.length) return out;
     const free = targets.filter(sid => !shown.has(sid) && ok(sid));   // 埋めに使える文(本文の順)
     const used = new Set();
@@ -8170,9 +8182,11 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     load: level => Y.store.pages.counted(page, level).then(rec => (rec ? rec.p : null)),
     save: (level, p) => Y.store.pages.addCounted(page, level, p)
   });
-  // 記録を始める。訳している最中(busy)は始めない(訳が出そろってから=利用者と決めた。2026-10-04)
+  // 記録を始める。訳している最中(busy)は始めない(訳が出そろってから=利用者と決めた。2026-10-04)。
+  //   訳が途中で止まって、未訳が多いまま(stalled)も始めない(工程S-1。そろったとき・知らせを閉じたときの合図 'state' で始める)
+  const waitOf = st => st.state !== 'on' || !!st.stalled;
   function begin(){
-    if (h || !want || !Y.page || Y.page.status().state !== 'on') return;
+    if (h || !want || !Y.page || waitOf(Y.page.status())) return;
     const r = Y.page.reading();
     if (!r) return;
     try { h = Y.log.open(r.ctx, { memo: memoOf(r.ctx.page) }); } catch (e){ h = null; return; }   // 記録の失敗で、読むのを止めない
@@ -8211,7 +8225,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (!e) return;
     if (e.type === 'open'){
       // close のすぐあとの open(出し直し: レベルを変えた など)で、訳している最中でなければ、同じ記録のまま続ける(同じ visit の、次のひと続き)
-      const keep = pending && !!h && Y.page.status().state === 'on';
+      const keep = pending && !!h && !waitOf(Y.page.status());
       if (pending && !keep) end();
       pending = false; want = true;
       if (keep) sync(); else begin();
@@ -8301,6 +8315,10 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   //   訳している間(続きを訳す・訳し直す)は、その前に埋めていた文を、そのまま英語にしておく(訳し始めたときに、出ていた英文を消さない。終わったら決め直す=
   //   続きを訳すで未訳が埋まれば、代わりに英語にしていた文は日本語に戻る)。割合・レベル(順番)が変わったら、前に埋めた文は使わない
   let fillFor = null;
+  // 訳が途中で止まって、未訳が多いまま(知らせを出す線を超える)か。その間は、読んだ時間と語数を数えない(工程S-1。2026-11-26 利用者「おすすめで」=
+  //   訳が出そろってから記録を始める、の決め(2026-10-04)を、途中で止まったときにも広げる)。知らせを「×」で閉じたら、このまま読む、として数える(asIsTr = その訳の番号)
+  let asIsTr = null;
+  const stalled = () => state === 'on' && !!rec && have.size > 0 && !fewMissing(missingOf().length) && asIsTr !== rec.tr;
   const shownSet = () => {
     if (!ranks) return new Set();
     const base = order.shown(ranks, ratio);
@@ -8309,7 +8327,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       if (fillFor && fillFor.ratio === ratio && fillFor.ranks === ranks && fillFor.model === model) fillFor.set.forEach(sid => { if (have.has(sid)) base.add(sid); });
       return base;
     }
-    const out = order.fill(base, model.targets, sid => have.has(sid));
+    // 未訳が多い(知らせを出す線を超える)ときは、届いた範囲の中だけを埋める(工程S-1。途中で止まって、上の方がまるごと英語にならないように)
+    const out = order.fill(base, model.targets, sid => have.has(sid), { reach: !fewMissing(missingOf().length) });
     fillFor = { ratio, ranks, model, set: new Set(Array.from(out).filter(sid => !base.has(sid))) };
     return out;
   };
@@ -8568,6 +8587,32 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     emit('state', status());
   }
 
+  // ---- 混雑のあとの待ち(工程S-1。2026-11-26 利用者「おすすめで」) ----
+  //   Google の側の混雑(overload・server)で止まったら、しばらく、回数を使う操作(ブレンド・続きを訳す・訳し直す・熟語さがし)を送らない。
+  //   待つ秒数は、続けて混雑するたびに config.pages.busyWaitSec の順にのばす(最後の値で止める)。前の待ちが終わってから busyResetMin 分たてば、はじめから。
+  //   自動では送り直さない(押したときだけ=工程3c-1)。待っている間に押されたら、送らずに、待つ秒数の出る知らせを出し直す(行き止まりにしない)。
+  //   ページをまたいでも続く(混雑は Google の側のこと。leave では消さない)
+  const nowMs = () => Date.parse(util.nowISO());
+  const cool = { until: 0, step: 0, cause: null, tick: null };
+  const coolLeft = () => Math.max(0, Math.ceil((cool.until - nowMs()) / 1000));
+  const busyKind = err => !!err && (err.kind === 'overload' || err.kind === 'server');
+  function startCool(cause){
+    const w = config.pages.busyWaitSec, now = nowMs();
+    if (now - cool.until > config.pages.busyResetMin * 60000) cool.step = 0;
+    const sec = w[Math.min(cool.step, w.length - 1)];
+    cool.step++; cool.cause = cause; cool.until = now + sec * 1000;
+    if (cool.tick) return;
+    // 1秒ごとに状態を知らせる(画面が「あと ○ 秒」を描き直す)。待ちが終わったら止める
+    cool.tick = setInterval(() => { const left = coolLeft(); if (!left){ clearInterval(cool.tick); cool.tick = null; } if (model) emit('state', status()); }, 1000);
+    if (cool.tick && cool.tick.unref) cool.tick.unref();     // 検査(node)では、これを待って終われなくならないように
+  }
+  // 待っている間に押された: 送らずに、知らせを出し直す(残りがあれば「途中で止まりました」、無ければ「混み合っています」)
+  function coolNotice(kind){
+    const missing = missingOf().length;
+    if (have.size && missing && kind !== 'redo' && kind !== 'idioms') tell('partial', { missing, why: 'drop', cause: cool.cause });
+    else tell('error', { cause: cool.cause, message: '', act: kind });
+  }
+
   // ---- 訳す(1回)と、熟語さがし(1回) ----
   // そのページの場面(PageRec.scene。無ければ小説=版 0.1.31 までに訳したページ。工程8e-2b)
   const sceneOf = r => (r && prompts.SCENES.includes(r.scene) ? r.scene : prompts.SCENES[0]);
@@ -8577,6 +8622,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   // kind = 'blend'(保存が無い・使える訳が無い)/ 'more'(続きを訳す)/ 'redo'(訳し直す)
   async function run(kind, use){
     if (working()) return status();
+    if (coolLeft()){ coolNotice(kind); return status(); }   // 混雑のあとの待ち(工程S-1)
     arming = true;
     emit('state', status());                 // 使用中になった(画面が、回数を使う所を押せなくする)
     const c0 = cancels, my = epoch;
@@ -8662,6 +8708,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     if (kind === 'redo' && !gotNow) repaint(); else paint();
     flush();
     // 知らせ(1つ)。訳している間に出した古い知らせ(残り・縦組み)は、いったん消す
+    // 混雑で止まったら、しばらく待たせる。混雑せずに終わったら、待ちの段をはじめに戻す(工程S-1)
+    if (busyKind(err)) startCool(err.kind); else if (!err) cool.step = 0;
     const missing = missingOf().length;
     clearNotice(gotNow ? ['partial', 'vertical'] : ['partial', 'vertical', 'switched-lite']);
     if (suspect && j.held.length) tell('suspect', { dropped: j.held.length, act: kind });
@@ -8699,7 +8747,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     }
     else if (k === 'limit-min') tell('limit-min', { model: err.model || ai.m, retrySec: err.retrySec == null ? null : err.retrySec });
     else if (k === 'no-key') tell('no-key');
-    else tell('error', { cause: k || 'error', message: String(err.message || k || '') });
+    else tell('error', Object.assign({ cause: k || 'error', message: String(err.message || k || '') }, busyKind(err) ? { act: kind } : {}));   // 混雑なら、押し直す所を出す(工程S-1)
   }
   // 熟語さがしで、送った文の半分以上(config.idioms.noteShare)が届かなかったか
   const lostMany = rep => !!(rep && rep.sent > 0 && Array.isArray(rep.missing) && rep.missing.length / rep.sent >= config.idioms.noteShare);
@@ -8776,7 +8824,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     drawQ.length = 0;
     if (render.attached()){ render.detach(); logHook('close'); }
     unhook.splice(0).forEach(fn => { try { fn(); } catch (e){} });
-    info = null; model = null; ranks = null; rec = null; have = new Map(); view = false; lapsed = false; vertical = false; orig = false; saved = {};
+    info = null; model = null; ranks = null; rec = null; have = new Map(); view = false; lapsed = false; vertical = false; orig = false; saved = {}; asIsTr = null;
     clearNotice();                           // 知らせが出ていたら、消したことを知らせる(状態が none のままでも、画面が古い知らせを残さないように)
     setState('none');
     return done.then(() => status());
@@ -8801,6 +8849,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       n: { targets: model ? model.n.targets : 0, translated: have.size, missing: missingOf().length, shown: n },
       saved: Object.assign({}, saved),
       idioms: ijob ? 'busy' : rec ? rec.idioms || 'none' : 'none',
+      stalled: stalled(),                      // 未訳が多いまま止まっている(読んだ記録を始めない=page/watch.js。工程S-1)
+      coolSec: coolLeft(),                     // 混雑のあとの待ちの、残りの秒数(0 = 待っていない。画面は、回数を使う所を押せなくして、秒数を出す。工程S-1)
       busy: working(),                         // 使用中(訳している・確かめている・熟語さがし・レベルの切り替え)。画面の側で、続き・訳し直す・レベルを押せなくする
       notice: notice ? util.clone(notice) : null
     };
@@ -8871,6 +8921,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
     // 熟語さがしのやり直し(1回分)
     async idioms(){
       if (!ready() || working() || ijob || !rec || !have.size) return status();
+      if (coolLeft()){ coolNotice('idioms'); return status(); }   // 混雑のあとの待ち(工程S-1)
       clearNotice(['idioms-failed', 'idioms-partial']);
       await idiomsFor(rec);
       return status();
@@ -8992,7 +9043,8 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       return true;
     },
     // 知らせを閉じる(画面の「×」・「あとにする」)。表示も保存も変えない。未訳や、熟語さがしの失敗は、status() の n.missing・idioms に残っている
-    dismiss(){ clearNotice(); },
+    //   未訳が多いまま止まっているときに閉じたら、このまま読む、として、読んだ記録を始める(工程S-1)
+    dismiss(){ if (stalled()) asIsTr = rec.tr; clearNotice(); emit('state', status()); },
     status,
     reading,
     // 単語の板(ui/word.js)に渡すもの: 今、その文に描いてある英文と熟語・日本語の原文・例文に付けるページの情報。描いていなければ null(通信しない)
@@ -10364,7 +10416,7 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
   // 失敗の種類ごとの文(§5-5)
   function errorText(n){
     const c = n.cause;
-    if (c === 'overload' || c === 'server') return ui.t('err.busy');
+    if (c === 'overload' || c === 'server') return ui.t('note.busyTr');   // 訳すときの混雑(工程S-1。混む日は続くことがある、と添える)
     if (c === 'bad') return n.message ? ui.t('err.detail', { text: ui.t('err.bad'), detail: clip(n.message, cfg.ui.noteMax) }) : ui.t('err.bad');
     return ui.t(Y.msg.has('err.' + c) ? 'err.' + c : 'err.other');
   }
@@ -10399,15 +10451,18 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       // Tampermonkey のメニューから押したのに、日本語の文が見つからなかった(工程8c-2)。失敗の形で、どうすればよいかを添える
       case 'nojp': return { text: ui.t('note.nojp'), acts: [] };
       case 'stuck': return { text: ui.t(n.ios ? 'note.stuckIos' : 'note.stuck'), acts: [{ label: ui.t('act.fix'), fn: () => { ui.show('fix'); } }] };
-      case 'error': return { text: errorText(n), acts: [] };
+      // 混雑で、1文も届かなかった: 押し直す所を出す(待っている間は、押せずに秒数が出る=draw。工程S-1)
+      case 'error': return { text: errorText(n), acts: n.act && (n.cause === 'overload' || n.cause === 'server')
+        ? [{ label: n.act === 'idioms' ? ui.withCost(ui.t('act.idioms'), 1) : ui.withCost(ui.t(n.act === 'more' ? 'act.more' : n.act === 'redo' ? 'act.redo' : 'act.retry'), 2), fn: n.act === 'idioms' ? () => Y.page.idioms() : again(n.act), busyOff: true }]
+        : [] };
       default: return { text: ui.t('err.other'), acts: [] };
     }
   }
 
   // a = { label, cost(下に小さく書く、通信の数), fn, busyOff }
   function button(cls, a, busy){
-    return ui.el('button', { class: cls, disabled: !!(a.busyOff && busy), 'data-busy-off': a.busyOff ? '1' : null, onclick: () => ui.run(a.fn) },
-      [ui.el('span', { text: a.label }), a.cost ? ui.el('span', { class: 'cost', text: a.cost }) : null]);
+    return ui.el('button', { class: cls, disabled: !!(a.busyOff && busy), 'data-busy-off': a.busyOff ? '1' : null, 'data-label': a.busyOff ? a.label : null, onclick: () => ui.run(a.fn) },
+      [ui.el('span', { class: 'label', text: a.label }), a.cost ? ui.el('span', { class: 'cost', text: a.cost }) : null]);
   }
   function fill(box, kids){
     while (box.firstChild) box.removeChild(box.firstChild);
@@ -10463,7 +10518,13 @@ ${JSON.stringify(o.list.map(t => ({ id: t.id, en: t.en, target_jp: t.target_jp }
       else if (n) ui.announce(noteText.textContent, !!toneOf(n));
     }
     // 使用中は、回数を使う所を押せなくする(同じ知らせが出たまま、使用中だけが変わることがある)
-    [noteActs, cardActs].forEach(box => Array.from(box.querySelectorAll('[data-busy-off]')).forEach(b => { b.disabled = !!s.busy; }));
+    //   混雑のあとの待ち(s.coolSec)の間も押せなくし、押す所の字を「あと ○ 秒で押せます」にする(工程S-1。押し続けるのを、やわらかく止める)
+    const wait = s.coolSec > 0;
+    [noteActs, cardActs].forEach(box => Array.from(box.querySelectorAll('[data-busy-off]')).forEach(b => {
+      b.disabled = !!s.busy || wait;
+      const label = b.querySelector('.label');
+      if (label) label.textContent = wait ? ui.t('note.waitSec', { sec: s.coolSec }) : b.getAttribute('data-label');
+    }));
   }
 
   ui.part('notice', { mount, draw });
